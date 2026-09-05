@@ -42,7 +42,59 @@ Instructions for AI agents (and humans) contributing to `vademecum`.
   the `v0.1.0` milestone if they block the release, otherwise unassigned.
   Do not silently widen the scope of the current issue.
 
-## 3. Branches, commits, pull requests
+## 3. Milestone session workflow
+
+Each milestone is worked in its own agent session. The user opens the session
+and names the milestone (for example "let's do milestone 2"). From there the
+agent drives the following, without needing to be told:
+
+### Start of session: plan before coding
+
+1. Read `README.md` in full and `AGENTS.md`. Then read the milestone's GitHub
+   Issue (`gh issue view <N>`), including its checklist state and comments,
+   and check the previous milestone's issue is closed.
+2. Check `git status`, `git log --oneline -10`, and that `main` is up to date
+   (`git pull --ff-only`). Confirm `make lint && make test` are green on
+   `main` before touching anything (skip for milestone 0, which creates
+   the Makefile and crate).
+3. Enter plan mode. Produce an implementation plan for **this milestone
+   only**: files to create or change (following the README architecture
+   tree), the order of work, how each Scope checklist item will be verified,
+   and any README ambiguities or gaps discovered. Ask the user only about
+   decisions that change the design; make routine calls yourself.
+4. If the plan needs a README change (design gap, wrong assumption, new
+   dependency), make that change as the first commit of the branch, before
+   implementation, and update the issue checklist to match.
+5. Only after the plan is approved: create the branch `m<N>-<slug>` and start.
+
+### During the session
+
+- Work through the Scope checklist in order; tick items on the issue as they
+  land (`gh issue edit <N> --body ...` or a comment summarising progress).
+- Prefer several small PRs over one big one for large milestones (TUI pager,
+  Links). Each PR body says `Part of #N`; the last says `Closes #N`.
+- Do not start work on the next milestone in the same session.
+
+### End of session: capture learnings
+
+Before declaring the milestone done, and again at the end of any partial
+session, do all of the following:
+
+1. **Update `README.md`** with anything learned that changes the design:
+   behaviour that differs from what was specified, decisions taken while
+   implementing, dependency or version changes, new flags or keys. The README
+   must describe the code as it now exists. Own commit, `docs:` prefix.
+2. **Update `AGENTS.md`** with process learnings: commands that turned out to
+   be needed, pitfalls (toolchain, CI, snapshot handling), conventions that
+   emerged. Keep it short and actionable; remove guidance that proved wrong.
+3. **Update the issue**: tick completed items, comment with what is done, what
+   is left (if partial), and links to the PRs. Close it only when every exit
+   criterion is met and the closing PR is merged.
+4. **Leave `main` green** and the working tree clean or the branch pushed.
+5. Finish with a short handover in the chat: state of the milestone, open
+   PRs, what the next session should pick up first.
+
+## 4. Branches, commits, pull requests
 
 - Never commit directly to `main`. One branch per issue, named
   `m<N>-<short-slug>` (for example `m0-scaffold`, `m4-tui-pager`). Large
@@ -62,7 +114,7 @@ Instructions for AI agents (and humans) contributing to `vademecum`.
     Windows, MSRV, audit) before asking for review.
   - Do not merge, tag, or publish without the user's explicit request.
 
-## 4. Before opening a PR
+## 5. Before opening a PR
 
 Run locally and make sure all pass:
 
@@ -75,7 +127,7 @@ make test     # cargo test
 Plus the milestone's exit criteria from its issue (for rendering work,
 review the `insta` snapshot diff deliberately; never `--accept` blindly).
 
-## 5. Code conventions
+## 6. Code conventions
 
 - Rust edition 2024, MSRV in `Cargo.toml` (`rust-version`), `rustfmt.toml`
   as committed (`max_width = 130`, `use_small_heuristics = "Max"`).
@@ -93,7 +145,7 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   mirror [Holodeck](https://github.com/otaviocc/Holodeck); when in doubt,
   look at how Holodeck does it.
 
-## 6. Communication
+## 7. Communication
 
 - State assumptions explicitly in the PR body when the README is ambiguous,
   and open a README amendment PR or issue to remove the ambiguity.
