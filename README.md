@@ -88,7 +88,7 @@ vademecum README.md                   # interactive TUI
 vademecum --plain README.md           # force stdout mode even on a TTY
 vademecum README.md | less -R         # stdout mode is automatic when piped
 vademecum --color always README.md > out.ansi
-vademecum --width 80 README.md        # wrap width (default: min(terminal, 100))
+vademecum --width 80 README.md        # wrap width (default: min(terminal - 2, 100))
 vademecum --theme catppuccin-mocha README.md
 vademecum --config ~/my-theme.toml README.md
 vademecum --root ~/notes README.md    # vault root for wikilink lookup
@@ -106,7 +106,7 @@ vademecum --list-syntax-themes        # syntect themes (built-in + user)
 | `<path>` or `-` | Markdown file to open, or stdin |
 | `--plain` | Stdout mode even when stdout is a TTY |
 | `--color <auto\|always\|never>` | ANSI colors in stdout mode. `auto` (default) colors only when stdout is a TTY; `NO_COLOR` forces `never` |
-| `--width <n>` | Wrap width. Default `min(terminal width, 100)`; `100` when not a TTY |
+| `--width <n>` | Wrap width. Default `min(terminal columns − 2, 100)`; `100` when not a TTY |
 | `--theme <name>` | Built-in or user theme by name |
 | `--config <file>` | Explicit theme file (overrides `--theme`) |
 | `--root <dir>` | Vault root for wikilink resolution |
@@ -330,6 +330,7 @@ enum Inline { Text(String), Emphasis(..), Strong(..), Strike(..), Code(String),
               SoftBreak, HardBreak, TaskMarker(bool) }
 enum LinkKind { External(Url), Local{path: PathBuf, fragment: Option<String>},
                 Wiki{target: String, fragment: Option<String>} }
+struct SourceBlock { line: usize, block: Block }
 
 // render/line.rs — the contract shared by the TUI and the stdout writer
 struct StyledSpan { text: String, style: Style }
@@ -337,6 +338,14 @@ struct LinkRef    { span_range: Range<usize>, kind: LinkKind, resolved: Option<P
 struct RenderedLine { spans: Vec<StyledSpan>, links: Vec<LinkRef>,
                       anchor: Option<String>, source_line: usize }
 ```
+
+`Url` is a newtype over `String`: destinations are kept verbatim and never
+re-serialized, so there is no URL-parsing dependency.
+
+`parse()` returns `Vec<SourceBlock>`, pairing every top-level block with the
+1-based line it starts on (from `Parser::into_offset_iter`). That line travels
+into every `RenderedLine` the block produces, which is what lets a resize
+re-layout and still put the cursor back on the same source line.
 
 Everything after parsing works on `Vec<RenderedLine>`: the TUI paints spans
 into the ratatui buffer, the stdout writer serializes them to ANSI, search
