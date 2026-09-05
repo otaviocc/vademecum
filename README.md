@@ -322,15 +322,17 @@ vademecum/
 
 ```rust
 // markdown/ast.rs
-enum Block { Heading{level, inlines, anchor}, Paragraph(Vec<Inline>), Quote(Vec<Block>),
+enum Block { Heading{level, inlines, anchor}, Paragraph(Vec<Inline>), Quote(Vec<SourceBlock>),
              List{ordered: Option<u64>, items: Vec<ListItem>}, CodeBlock{lang, text},
-             Table{header, rows, alignments}, Rule, Html(String), FootnoteDef{label, blocks} }
+             Table{header, rows, alignments}, Rule, Html(String),
+             FootnoteDef{label, blocks: Vec<SourceBlock>} }
 enum Inline { Text(String), Emphasis(..), Strong(..), Strike(..), Code(String),
-              Link{kind: LinkKind, inlines}, Image{alt, url}, FootnoteRef(String),
-              SoftBreak, HardBreak, TaskMarker(bool) }
+              Link{kind: LinkKind, inlines}, Image{alt, url}, Html(String),
+              FootnoteRef(String), SoftBreak, HardBreak, TaskMarker(bool) }
 enum LinkKind { External(Url), Local{path: PathBuf, fragment: Option<String>},
                 Wiki{target: String, fragment: Option<String>} }
 struct SourceBlock { line: usize, block: Block }
+struct ListItem   { blocks: Vec<SourceBlock> }
 
 // render/line.rs — the contract shared by the TUI and the stdout writer
 struct StyledSpan { text: String, style: Style }
@@ -342,10 +344,15 @@ struct RenderedLine { spans: Vec<StyledSpan>, links: Vec<LinkRef>,
 `Url` is a newtype over `String`: destinations are kept verbatim and never
 re-serialized, so there is no URL-parsing dependency.
 
-`parse()` returns `Vec<SourceBlock>`, pairing every top-level block with the
-1-based line it starts on (from `Parser::into_offset_iter`). That line travels
-into every `RenderedLine` the block produces, which is what lets a resize
-re-layout and still put the cursor back on the same source line.
+`parse()` returns `Vec<SourceBlock>`, pairing every block — at any depth, so
+a quote and a list item locate as precisely as a paragraph — with the 1-based
+line it starts on (from `Parser::into_offset_iter`). That line travels into
+every `RenderedLine` the block produces, which is what lets a resize re-layout
+and still put the cursor back on the same source line.
+
+`Inline::TaskMarker` stays where the parser puts it, first in a list item's
+opening paragraph; the renderer lifts it into the bullet column. Raw HTML has
+both a block and an inline form, and both are styled with `html`.
 
 Everything after parsing works on `Vec<RenderedLine>`: the TUI paints spans
 into the ratatui buffer, the stdout writer serializes them to ANSI, search
