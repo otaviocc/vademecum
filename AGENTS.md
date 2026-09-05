@@ -152,3 +152,18 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - Report test results faithfully. If something was not verified (for
   example, Windows behaviour on a macOS machine), say so.
 - Prefer small, reviewable PRs over one large drop per milestone.
+
+## 8. Toolchain notes
+
+- `Cargo.lock` is committed: CI runs `cargo test --locked` and the MSRV job
+  `cargo check --locked`. Regenerate it deliberately (`cargo update -p <crate>`),
+  never by deleting it.
+- Before pinning a dependency version from the README table, check it exists
+  and that its own MSRV is ≤ our `rust-version`. `cargo generate-lockfile`
+  prints "Locking N packages to latest Rust <msrv> compatible versions", which
+  confirms cargo honoured `rust-version` during resolution.
+- The MSRV lives only in `Cargo.toml`; the CI job greps it out, so bumping it
+  is a one-line change plus the README's Project conventions section.
+- This machine has a Homebrew `rustc`/`cargo` and **no `rustup`**, so a real
+  MSRV build cannot be run locally — the `msrv` CI job is the only proof. Say
+  so in the PR body rather than claiming it was verified locally.
