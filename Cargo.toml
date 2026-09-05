@@ -1,0 +1,36 @@
+[package]
+name = "vademecum"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A modern man for reading Markdown: a themeable terminal Markdown reader with wikilink navigation."
+repository = "https://github.com/otaviocc/vademecum"
+license = "MIT"
+readme = "README.md"
+keywords = ["markdown", "terminal", "tui", "pager", "viewer"]
+categories = ["command-line-utilities", "text-processing"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+notify = "8"
+notify-debouncer-mini = "0.6"
+open = "5"
+pulldown-cmark = "0.13"
+ratatui = { version = "0.30", features = ["crossterm"] }
+serde = { version = "1", features = ["derive"] }
+syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
+thiserror = "2"
+toml = "1"
+unicode-width = "0.2"
+
+[dev-dependencies]
+assert_cmd = "2"
+insta = "1"
+predicates = "3"
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
