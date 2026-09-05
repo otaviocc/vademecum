@@ -384,17 +384,28 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
 ### Layout rules
 
 - **Wrap width**: `--width`, else `min(terminal columns − 2, 100)`; `100`
-  when stdout is not a TTY. Content is left-aligned with a one-column gutter.
+  when stdout is not a TTY. Content is left-aligned with a one-column gutter,
+  which is taken *out* of the wrap width: no line is ever wider than the width
+  asked for.
 - **Word wrap** on whitespace using `unicode-width` for display width; a word
   longer than the width is broken hard.
 - **Code blocks** never wrap: lines longer than the width are truncated with
-  `…`. A blank fence line shows the language tag right-aligned.
+  `…`. A blank fence line shows the language tag right-aligned, a second one
+  closes the block, and every line is padded to the full width so the
+  background is an unbroken rectangle.
 - **Tables**: column width = max cell width; if the sum exceeds the wrap
   width, shrink columns proportionally (min 3) and wrap cells. Box-drawing
-  borders in `table_border`.
+  borders in `table_border`, a rule under the header and none between body
+  rows, and the column alignments from the source applied to the padding.
 - **Lists** indent 2 columns per level; ordered lists use the source start
-  number; task markers replace the bullet.
+  number; task markers replace the bullet. Bullets cycle `•`, `◦`, `▪` and
+  begin again at the fourth level. A nested list follows its item's text with
+  no blank line between them — the separator would split the list in two.
 - **Quotes** get a `┃ ` gutter per nesting level and wrap inside it.
+- **Footnote definitions** hang under a `[^1] ` marker in `footnote`.
+- **Body text inherits a base style**: `paragraph` at document level, `quote`
+  inside a quote. Inline styles patch on top of it, so a link inside a quote
+  is a link and the text around it is quoted.
 - Headings are followed by one blank line; blocks are separated by one
   blank line; the document never ends with trailing blank lines.
 
@@ -500,8 +511,10 @@ area, and a statusbar, separated by hairline `─` rules.
 ### Stdout mode (`render/ansi.rs`)
 
 - Selected when stdout is not a TTY or `--plain` is given.
-- `--color auto|always|never`; `NO_COLOR` set → `never`. With `never` the
-  output is the wrapped text with no escape codes at all.
+- `--color auto|always|never`; a non-empty `NO_COLOR` → `never`, whatever
+  `--color` says. With `never` the output is the wrapped text with no escape
+  codes at all, and trailing padding is trimmed so piping into `grep` and
+  `diff` stays clean.
 - External links are wrapped in OSC-8 (`ESC ] 8 ; ; url ESC \ … ESC ] 8 ; ; ESC \`)
   when color is on. ratatui cannot emit OSC-8, so this is stdout-only.
 - Styles are emitted as SGR sequences with a reset at the end of every line
