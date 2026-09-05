@@ -113,6 +113,7 @@ vademecum --list-syntax-themes        # syntect themes (built-in + user)
 | `--watch` | Re-render on file change (not allowed with stdin) |
 | `--mouse` | Enable mouse capture (wheel scroll) |
 | `--list-themes`, `--list-syntax-themes` | Print available names and exit |
+| `--resolve-links` | Debug: print each link and its resolved path, then exit (stdout mode) |
 
 ## Configuration
 
@@ -309,7 +310,7 @@ vademecum/
 │   └── watch.rs             # debounced directory watcher, re-armed on navigation
 └── tests/
     ├── stdout.rs            # assert_cmd + insta snapshots (--color always --width 80)
-    ├── links.rs             # vault fixture navigation via --plain --follow-check
+    ├── links.rs             # vault fixture navigation via --plain --resolve-links
     └── fixtures/
         ├── elements.md      # every Markdown construct
         ├── frontmatter.md
