@@ -1,0 +1,792 @@
+//! Block tree → `Vec<RenderedLine>` at a given width.
+//!
+//! Wrapping is the only place display width matters, so `unicode-width` is
+//! used here and nowhere else. Nesting — quotes inside quotes, lists inside
+//! list items — is handled by rendering the inner blocks at a narrower width
+//! and then prefixing every line they produced, which keeps the gutter and
+//! indent rules in one place each.
+
+use ratatui::style::Style;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+use crate::markdown::ast::{Alignment, Block, Inline, ListItem, SourceBlock, plain_text};
+use crate::markdown::links::LinkKind;
+use crate::render::line::{LinkRef, RenderedLine, StyledSpan};
+use crate::theme::{Element, Theme};
+
+/// The one-column gutter the content is laid out inside.
+const GUTTER: usize = 1;
+/// Bullets by nesting depth, cycling.
+const BULLETS: [&str; 3] = ["•", "◦", "▪"];
+
+/// Lay a document out at `width` columns, gutter included.
+pub fn render(blocks: &[SourceBlock], theme: &Theme, width: usize) -> Vec<RenderedLine> {
+    let content_width = width.saturating_sub(GUTTER).max(1);
+    let mut lines = blocks_to_lines(blocks, theme, theme.style(Element::Paragraph), content_width, 0);
+
+    let gutter = StyledSpan::new(" ".repeat(GUTTER), Style::default());
+    for line in &mut lines {
+        if !line.is_blank() {
+            line.prefix(gutter.clone());
+        }
+    }
+    lines
+}
+
+/// A run of blocks, separated by one blank line, with no blank line trailing.
+///
+/// `base` is the style body text inherits — the paragraph style at document
+/// level, the quote style inside a quote — which every inline then patches.
+fn blocks_to_lines(blocks: &[SourceBlock], theme: &Theme, base: Style, width: usize, depth: usize) -> Vec<RenderedLine> {
+    let mut lines: Vec<RenderedLine> = Vec::new();
+    for block in blocks {
+        if !lines.is_empty() {
+            lines.push(RenderedLine::blank());
+        }
+        lines.extend(block_to_lines(block, theme, base, width, depth));
+    }
+    lines
+}
+
+fn block_to_lines(block: &SourceBlock, theme: &Theme, base: Style, width: usize, depth: usize) -> Vec<RenderedLine> {
+    let line = block.line;
+    match &block.block {
+        Block::Paragraph(inlines) => wrap_inlines(inlines, theme, base, width, line),
+        Block::Heading { level, inlines, anchor } => {
+            let style = theme.style(Element::heading(*level));
+            let mut lines = wrap_inlines(inlines, theme, style, width, line);
+            if let Some(first) = lines.first_mut() {
+                first.anchor = Some(anchor.clone());
+            }
+            lines
+        }
+        Block::Quote(blocks) => quote_to_lines(blocks, theme, base, width, depth),
+        Block::List { ordered, items } => list_to_lines(*ordered, items, theme, base, width, depth),
+        Block::CodeBlock { lang, text } => code_to_lines(lang.as_deref(), text, theme, width, line),
+        Block::Table { header, rows, alignments } => table_to_lines(header, rows, alignments, theme, width, line),
+        Block::Rule => vec![styled_line("─".repeat(width), theme.style(Element::Hr), line)],
+        Block::Html(text) => {
+            text.lines().map(|html| styled_line(truncate(html, width), theme.style(Element::Html), line)).collect()
+        }
+        Block::FootnoteDef { label, blocks } => footnote_to_lines(label, blocks, theme, base, width, depth, line),
+    }
+}
+
+/// `┃ ` per nesting level, with the quoted blocks wrapped inside it.
+fn quote_to_lines(blocks: &[SourceBlock], theme: &Theme, base: Style, width: usize, depth: usize) -> Vec<RenderedLine> {
+    let gutter = StyledSpan::new("┃ ", Style::default().fg(theme.palette.muted));
+    // Quoted body text takes the quote style; a link or a `strong` inside it
+    // still patches its own on top.
+    let quoted = base.patch(theme.style(Element::Quote));
+
+    let mut lines = blocks_to_lines(blocks, theme, quoted, width.saturating_sub(gutter.width()).max(1), depth);
+    for line in &mut lines {
+        line.prefix(gutter.clone());
+    }
+    lines
+}
+
+fn list_to_lines(
+    ordered: Option<u64>,
+    items: &[ListItem],
+    theme: &Theme,
+    base: Style,
+    width: usize,
+    depth: usize,
+) -> Vec<RenderedLine> {
+    let mut lines = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let (marker, style) = marker_for(item, ordered, index, theme, depth);
+        let indent = marker.width();
+        let mut blocks = item.blocks.clone();
+        strip_task_marker(&mut blocks);
+
+        let mut item_lines = item_to_lines(&blocks, theme, base, width.saturating_sub(indent).max(1), depth + 1);
+        if item_lines.is_empty() {
+            item_lines.push(RenderedLine::blank());
+        }
+        for (offset, line) in item_lines.iter_mut().enumerate() {
+            let prefix = if offset == 0 {
+                StyledSpan::new(marker.clone(), style)
+            } else {
+                StyledSpan::new(" ".repeat(indent), Style::default())
+            };
+            line.prefix(prefix);
+        }
+        lines.extend(item_lines);
+    }
+    lines
+}
+
+/// An item's blocks. Unlike blocks at document level, a nested list follows
+/// its paragraph directly: the blank line would break the list in two.
+fn item_to_lines(blocks: &[SourceBlock], theme: &Theme, base: Style, width: usize, depth: usize) -> Vec<RenderedLine> {
+    let mut lines: Vec<RenderedLine> = Vec::new();
+    for block in blocks {
+        if !lines.is_empty() && !matches!(block.block, Block::List { .. }) {
+            lines.push(RenderedLine::blank());
+        }
+        lines.extend(block_to_lines(block, theme, base, width, depth));
+    }
+    lines
+}
+
+/// The bullet, number, or task box that opens an item, padded to its column.
+fn marker_for(item: &ListItem, ordered: Option<u64>, index: usize, theme: &Theme, depth: usize) -> (String, Style) {
+    match (item.task(), ordered) {
+        (Some(true), _) => ("☑ ".to_string(), theme.style(Element::TaskDone)),
+        (Some(false), _) => ("☐ ".to_string(), theme.style(Element::TaskTodo)),
+        (None, Some(start)) => {
+            let number = start.saturating_add(index as u64);
+            (format!("{number}. "), theme.style(Element::ListNumber))
+        }
+        (None, None) => (format!("{} ", BULLETS[depth % BULLETS.len()]), theme.style(Element::ListBullet)),
+    }
+}
+
+/// Drop the marker the bullet column now shows.
+fn strip_task_marker(blocks: &mut [SourceBlock]) {
+    if let Some(SourceBlock { block: Block::Paragraph(inlines), .. }) = blocks.first_mut()
+        && matches!(inlines.first(), Some(Inline::TaskMarker(_)))
+    {
+        inlines.remove(0);
+        // pulldown-cmark leaves the space after the marker in the text.
+        if let Some(Inline::Text(text)) = inlines.first_mut() {
+            let trimmed = text.trim_start().to_string();
+            *text = trimmed;
+        }
+    }
+}
+
+/// A fence line carrying the language tag, the code, and a closing fence line.
+/// Code never wraps: the background has to stay a clean rectangle, so a long
+/// line is truncated instead.
+fn code_to_lines(lang: Option<&str>, text: &str, theme: &Theme, width: usize, source_line: usize) -> Vec<RenderedLine> {
+    let block = theme.style(Element::CodeBlock);
+    let mut lines = vec![fence_line(lang, theme, width, source_line)];
+
+    for (offset, code) in text.trim_end_matches('\n').lines().enumerate() {
+        let text = pad_to(truncate(code, width), width);
+        lines.push(styled_line(text, block, source_line + offset + 1));
+    }
+
+    lines.push(styled_line(" ".repeat(width), block, source_line));
+    lines
+}
+
+fn fence_line(lang: Option<&str>, theme: &Theme, width: usize, source_line: usize) -> RenderedLine {
+    let block = theme.style(Element::CodeBlock);
+    let Some(lang) = lang.filter(|lang| lang.width() < width) else {
+        return styled_line(" ".repeat(width), block, source_line);
+    };
+
+    let padding = width - lang.width() - 1;
+    RenderedLine {
+        spans: vec![
+            StyledSpan::new(" ".repeat(padding), block),
+            StyledSpan::new(lang, theme.style(Element::CodeBlockLang)),
+            StyledSpan::new(" ", block),
+        ],
+        source_line,
+        ..RenderedLine::default()
+    }
+}
+
+/// `[^1] ` in front of the definition's blocks.
+fn footnote_to_lines(
+    label: &str,
+    blocks: &[SourceBlock],
+    theme: &Theme,
+    base: Style,
+    width: usize,
+    depth: usize,
+    source_line: usize,
+) -> Vec<RenderedLine> {
+    let marker = format!("[^{label}] ");
+    let indent = marker.width();
+    let style = theme.style(Element::Footnote);
+
+    let mut lines = blocks_to_lines(blocks, theme, base, width.saturating_sub(indent).max(1), depth);
+    if lines.is_empty() {
+        lines.push(RenderedLine { source_line, ..RenderedLine::default() });
+    }
+    for (offset, line) in lines.iter_mut().enumerate() {
+        let prefix = if offset == 0 {
+            StyledSpan::new(marker.clone(), style)
+        } else {
+            StyledSpan::new(" ".repeat(indent), Style::default())
+        };
+        line.prefix(prefix);
+    }
+    lines
+}
+
+fn table_to_lines(
+    header: &[Vec<Inline>],
+    rows: &[Vec<Vec<Inline>>],
+    alignments: &[Alignment],
+    theme: &Theme,
+    width: usize,
+    source_line: usize,
+) -> Vec<RenderedLine> {
+    let columns = header.len().max(rows.iter().map(Vec::len).max().unwrap_or(0));
+    if columns == 0 {
+        return Vec::new();
+    }
+    let widths = column_widths(header, rows, columns, width);
+    let border = theme.style(Element::TableBorder);
+    let align = |column: usize| alignments.get(column).copied().unwrap_or(Alignment::None);
+
+    let mut lines = vec![rule_line("┌", "┬", "┐", &widths, border, source_line)];
+    if !header.is_empty() {
+        lines.extend(row_to_lines(header, &widths, theme, theme.style(Element::TableHeader), &align, source_line));
+        lines.push(rule_line("├", "┼", "┤", &widths, border, source_line));
+    }
+    for row in rows {
+        lines.extend(row_to_lines(row, &widths, theme, theme.style(Element::Paragraph), &align, source_line));
+    }
+    lines.push(rule_line("└", "┴", "┘", &widths, border, source_line));
+    lines
+}
+
+/// Columns as wide as their widest cell, shrunk proportionally when the table
+/// does not fit.
+fn column_widths(header: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>], columns: usize, width: usize) -> Vec<usize> {
+    /// Nothing readable happens below three columns of text.
+    const MIN: usize = 3;
+
+    let mut widths = vec![0; columns];
+    for row in std::iter::once(header).chain(rows.iter().map(Vec::as_slice)) {
+        for (column, cell) in row.iter().enumerate().take(columns) {
+            widths[column] = widths[column].max(plain_text(cell).width());
+        }
+    }
+
+    // Borders and padding: one separator per column plus a closing one, and a
+    // space either side of every cell.
+    let furniture = 3 * columns + 1;
+    let natural: usize = widths.iter().sum();
+    let available = width.saturating_sub(furniture);
+    if natural <= available {
+        return widths;
+    }
+
+    let mut shrunk: Vec<usize> = widths.iter().map(|w| (w * available / natural.max(1)).max(MIN)).collect();
+    // Proportional shrinking rounds down; hand the remainder back left to right.
+    let mut slack = available.saturating_sub(shrunk.iter().sum::<usize>());
+    for (column, target) in shrunk.iter_mut().enumerate() {
+        let room = widths[column].saturating_sub(*target).min(slack);
+        *target += room;
+        slack -= room;
+    }
+    shrunk
+}
+
+fn row_to_lines(
+    cells: &[Vec<Inline>],
+    widths: &[usize],
+    theme: &Theme,
+    style: Style,
+    align: &impl Fn(usize) -> Alignment,
+    source_line: usize,
+) -> Vec<RenderedLine> {
+    let border = theme.style(Element::TableBorder);
+    let wrapped: Vec<Vec<RenderedLine>> = widths
+        .iter()
+        .enumerate()
+        .map(|(column, width)| {
+            let inlines = cells.get(column).map(Vec::as_slice).unwrap_or(&[]);
+            wrap_inlines(inlines, theme, style, *width, source_line)
+        })
+        .collect();
+
+    let height = wrapped.iter().map(Vec::len).max().unwrap_or(1).max(1);
+    (0..height)
+        .map(|offset| {
+            let mut line = RenderedLine { source_line, ..RenderedLine::default() };
+            for (column, width) in widths.iter().enumerate() {
+                line.push(StyledSpan::new("│ ", border));
+                let cell = wrapped[column].get(offset).cloned().unwrap_or_default();
+                let padding = width.saturating_sub(cell.width());
+                let (before, after) = pad_split(align(column), padding);
+                line.push(StyledSpan::new(" ".repeat(before), style));
+                line.append(cell);
+                line.push(StyledSpan::new(" ".repeat(after), style));
+                line.push(StyledSpan::new(" ", border));
+            }
+            line.push(StyledSpan::new("│", border));
+            line
+        })
+        .collect()
+}
+
+fn pad_split(alignment: Alignment, padding: usize) -> (usize, usize) {
+    match alignment {
+        Alignment::Right => (padding, 0),
+        Alignment::Center => (padding / 2, padding - padding / 2),
+        Alignment::None | Alignment::Left => (0, padding),
+    }
+}
+
+fn rule_line(left: &str, join: &str, right: &str, widths: &[usize], style: Style, source_line: usize) -> RenderedLine {
+    let mut text = String::from(left);
+    for (column, width) in widths.iter().enumerate() {
+        if column > 0 {
+            text.push_str(join);
+        }
+        text.push_str(&"─".repeat(width + 2));
+    }
+    text.push_str(right);
+    styled_line(text, style, source_line)
+}
+
+/// A run of inlines flattened, then wrapped to `width`.
+fn wrap_inlines(inlines: &[Inline], theme: &Theme, base: Style, width: usize, source_line: usize) -> Vec<RenderedLine> {
+    let mut flat = Flat::default();
+    flat.push_inlines(inlines, theme, base, None);
+    Wrapper::new(width, source_line, &flat.links).run(&flat.pieces)
+}
+
+/// A styled run of text, plus the link it belongs to.
+struct Piece {
+    text: String,
+    style: Style,
+    link: Option<usize>,
+    hard_break: bool,
+}
+
+#[derive(Default)]
+struct Flat {
+    pieces: Vec<Piece>,
+    links: Vec<LinkKind>,
+}
+
+impl Flat {
+    fn push_inlines(&mut self, inlines: &[Inline], theme: &Theme, base: Style, link: Option<usize>) {
+        for inline in inlines {
+            self.push_inline(inline, theme, base, link);
+        }
+    }
+
+    fn push_inline(&mut self, inline: &Inline, theme: &Theme, base: Style, link: Option<usize>) {
+        let text = |flat: &mut Self, text: String, style: Style| {
+            flat.pieces.push(Piece { text, style, link, hard_break: false });
+        };
+
+        match inline {
+            Inline::Text(value) => text(self, value.clone(), base),
+            Inline::Code(value) => text(self, value.clone(), base.patch(theme.style(Element::InlineCode))),
+            Inline::Html(value) => text(self, value.clone(), base.patch(theme.style(Element::Html))),
+            Inline::Image { alt, .. } => text(self, format!("[image: {alt}]"), base.patch(theme.style(Element::Image))),
+            Inline::FootnoteRef(label) => text(self, format!("[^{label}]"), base.patch(theme.style(Element::Footnote))),
+            // A soft break is where the author's line ended, not where the
+            // reader's will: it wraps like any other space.
+            Inline::SoftBreak => text(self, " ".to_string(), base),
+            Inline::Emphasis(children) => self.push_inlines(children, theme, base.patch(theme.style(Element::Emphasis)), link),
+            Inline::Strong(children) => self.push_inlines(children, theme, base.patch(theme.style(Element::Strong)), link),
+            Inline::Strike(children) => self.push_inlines(children, theme, base.patch(theme.style(Element::Strikethrough)), link),
+            Inline::Link { kind, inlines } => {
+                let element = match kind {
+                    LinkKind::External(_) => Element::Link,
+                    LinkKind::Local { .. } | LinkKind::Wiki { .. } => Element::Wikilink,
+                };
+                let id = self.links.len();
+                self.links.push(kind.clone());
+                self.push_inlines(inlines, theme, base.patch(theme.style(element)), Some(id));
+            }
+            Inline::HardBreak => self.pieces.push(Piece { text: String::new(), style: base, link, hard_break: true }),
+            // The bullet column shows it instead.
+            Inline::TaskMarker(_) => {}
+        }
+    }
+}
+
+/// Greedy word wrapper. Whitespace collapses at a break, a word too long for
+/// the width is broken hard, and a link crossing a break becomes one `LinkRef`
+/// per line.
+struct Wrapper<'a> {
+    width: usize,
+    source_line: usize,
+    kinds: &'a [LinkKind],
+    lines: Vec<RenderedLine>,
+    current: RenderedLine,
+    used: usize,
+    open: Option<(usize, usize)>,
+    /// The style and link of the whitespace waiting to be emitted, taken from
+    /// the text it followed — a space before a link is not part of the link.
+    pending_space: Option<(Style, Option<usize>)>,
+}
+
+impl<'a> Wrapper<'a> {
+    fn new(width: usize, source_line: usize, kinds: &'a [LinkKind]) -> Self {
+        Self {
+            width: width.max(1),
+            source_line,
+            kinds,
+            lines: Vec::new(),
+            current: RenderedLine { source_line, ..RenderedLine::default() },
+            used: 0,
+            open: None,
+            pending_space: None,
+        }
+    }
+
+    fn run(mut self, pieces: &[Piece]) -> Vec<RenderedLine> {
+        for piece in pieces {
+            if piece.hard_break {
+                self.newline();
+                continue;
+            }
+            for token in tokenize(&piece.text) {
+                match token {
+                    Token::Space if !self.current.spans.is_empty() => {
+                        self.pending_space = Some((piece.style, piece.link));
+                    }
+                    Token::Space => {}
+                    Token::Word(word) => self.word(word, piece.style, piece.link),
+                }
+            }
+        }
+        self.finish()
+    }
+
+    fn word(&mut self, word: &str, style: Style, link: Option<usize>) {
+        let space = usize::from(self.pending_space.is_some());
+        if !self.current.spans.is_empty() && self.used + space + word.width() > self.width {
+            self.newline();
+        }
+        if let Some((style, link)) = self.pending_space.take() {
+            self.emit(" ", style, link);
+        }
+
+        let mut rest = word;
+        while rest.width() > self.width.saturating_sub(self.used) {
+            let (head, tail) = split_at_width(rest, self.width - self.used);
+            if head.is_empty() {
+                // No room left on this line for even one character.
+                self.newline();
+                continue;
+            }
+            self.emit(head, style, link);
+            self.newline();
+            rest = tail;
+        }
+        if !rest.is_empty() {
+            self.emit(rest, style, link);
+        }
+    }
+
+    fn emit(&mut self, text: &str, style: Style, link: Option<usize>) {
+        self.pending_space = None;
+        if self.open.map(|(id, _)| id) != link {
+            self.close_link();
+            if let Some(id) = link {
+                self.open = Some((id, self.current.spans.len()));
+            }
+        }
+
+        match self.current.spans.last_mut() {
+            Some(last) if last.style == style => last.text.push_str(text),
+            _ => self.current.push(StyledSpan::new(text, style)),
+        }
+        self.used += text.width();
+    }
+
+    fn close_link(&mut self) {
+        if let Some((id, start)) = self.open.take()
+            && start < self.current.spans.len()
+        {
+            let kind = self.kinds[id].clone();
+            self.current.links.push(LinkRef { span_range: start..self.current.spans.len(), kind, resolved: None });
+        }
+    }
+
+    fn newline(&mut self) {
+        self.close_link();
+        let finished =
+            std::mem::replace(&mut self.current, RenderedLine { source_line: self.source_line, ..RenderedLine::default() });
+        self.lines.push(finished);
+        self.used = 0;
+        self.pending_space = None;
+    }
+
+    fn finish(mut self) -> Vec<RenderedLine> {
+        self.close_link();
+        if !self.current.spans.is_empty() {
+            self.lines.push(self.current);
+        }
+        self.lines
+    }
+}
+
+enum Token<'a> {
+    Word(&'a str),
+    Space,
+}
+
+/// Split text into words and the whitespace between them.
+fn tokenize(text: &str) -> Vec<Token<'_>> {
+    let mut tokens = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let whitespace = rest.starts_with(char::is_whitespace);
+        let end = rest.find(|c: char| c.is_whitespace() != whitespace).unwrap_or(rest.len());
+        let (head, tail) = rest.split_at(end);
+        tokens.push(if whitespace { Token::Space } else { Token::Word(head) });
+        rest = tail;
+    }
+    tokens
+}
+
+/// Split at the last char boundary that still fits in `width` columns.
+fn split_at_width(text: &str, width: usize) -> (&str, &str) {
+    let mut used = 0;
+    for (offset, c) in text.char_indices() {
+        let next = used + c.width().unwrap_or(0);
+        if next > width {
+            return text.split_at(offset);
+        }
+        used = next;
+    }
+    (text, "")
+}
+
+/// Cut to `width` columns, marking the cut with `…`.
+fn truncate(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        return text.to_string();
+    }
+    let (head, _) = split_at_width(text, width.saturating_sub(1));
+    format!("{head}…")
+}
+
+fn pad_to(text: String, width: usize) -> String {
+    let padding = width.saturating_sub(text.width());
+    text + &" ".repeat(padding)
+}
+
+fn styled_line(text: impl Into<String>, style: Style, source_line: usize) -> RenderedLine {
+    RenderedLine { spans: vec![StyledSpan::new(text, style)], source_line, ..RenderedLine::default() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::markdown::ast::parse;
+
+    fn lines(source: &str, width: usize) -> Vec<String> {
+        let theme = Theme::default();
+        render(&parse(source), &theme, width).iter().map(RenderedLine::text).collect()
+    }
+
+    /// Rendering without the gutter, so the assertions read as the layout rules
+    /// are written.
+    fn bare(source: &str, width: usize) -> Vec<String> {
+        let theme = Theme::default();
+        blocks_to_lines(&parse(source), &theme, theme.style(Element::Paragraph), width, 0)
+            .iter()
+            .map(RenderedLine::text)
+            .collect()
+    }
+
+    #[test]
+    fn a_paragraph_wraps_on_whitespace() {
+        assert_eq!(bare("one two three four\n", 9), ["one two", "three", "four"]);
+    }
+
+    #[test]
+    fn wrapping_never_exceeds_the_width() {
+        let source = "The quick brown fox jumps over the lazy dog and keeps on going.\n";
+        for width in 5..40 {
+            for line in bare(source, width) {
+                assert!(line.width() <= width, "{line:?} is wider than {width}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_gutter_takes_one_column_of_the_width() {
+        assert_eq!(lines("one two three four\n", 10), [" one two", " three", " four"]);
+    }
+
+    #[test]
+    fn a_word_longer_than_the_width_is_broken_hard() {
+        assert_eq!(bare("supercalifragilistic\n", 7), ["superca", "lifragi", "listic"]);
+    }
+
+    #[test]
+    fn cjk_counts_two_columns_per_character() {
+        assert_eq!(bare("日本語 テスト\n", 6), ["日本語", "テスト"]);
+    }
+
+    #[test]
+    fn a_hard_break_ends_the_line_early() {
+        assert_eq!(bare("a\\\nb\n", 40), ["a", "b"]);
+    }
+
+    #[test]
+    fn a_soft_break_wraps_like_a_space() {
+        assert_eq!(bare("a\nb\n", 40), ["a b"]);
+    }
+
+    #[test]
+    fn blocks_are_separated_by_one_blank_line() {
+        assert_eq!(bare("a\n\nb\n", 40), ["a", "", "b"]);
+    }
+
+    #[test]
+    fn the_document_never_ends_blank() {
+        let rendered = bare("# Heading\n\ntext\n", 40);
+        assert_eq!(rendered.last().map(String::as_str), Some("text"));
+    }
+
+    #[test]
+    fn headings_hide_their_hashes_and_anchor_their_first_line() {
+        let theme = Theme::default();
+        let rendered = render(&parse("## A Heading\n"), &theme, 40);
+        assert_eq!(rendered[0].text(), " A Heading");
+        assert_eq!(rendered[0].anchor.as_deref(), Some("a-heading"));
+    }
+
+    #[test]
+    fn bullets_change_with_nesting_depth() {
+        assert_eq!(bare("- a\n  - b\n    - c\n", 20), ["• a", "  ◦ b", "    ▪ c"]);
+    }
+
+    #[test]
+    fn ordered_lists_count_from_their_start_number() {
+        assert_eq!(bare("3. three\n4. four\n", 20), ["3. three", "4. four"]);
+    }
+
+    #[test]
+    fn task_markers_replace_the_bullet() {
+        assert_eq!(bare("- [x] done\n- [ ] todo\n", 20), ["☑ done", "☐ todo"]);
+    }
+
+    #[test]
+    fn list_continuation_lines_line_up_under_the_text() {
+        assert_eq!(bare("- one two three\n", 8), ["• one", "  two", "  three"]);
+    }
+
+    #[test]
+    fn quotes_get_a_gutter_per_level() {
+        assert_eq!(bare("> a\n>\n> > b\n", 20), ["┃ a", "┃ ", "┃ ┃ b"]);
+    }
+
+    #[test]
+    fn quoted_text_wraps_inside_the_gutter() {
+        assert_eq!(bare("> one two three\n", 7), ["┃ one", "┃ two", "┃ three"]);
+    }
+
+    #[test]
+    fn quoted_text_takes_the_quote_style_but_a_link_keeps_its_own() {
+        let theme = Theme::default();
+        let rendered = render(&parse("> quoted [link](https://example.com)\n"), &theme, 40);
+        let styles: Vec<_> = rendered[0].spans.iter().map(|span| span.style.fg).collect();
+        assert!(styles.contains(&Some(theme.palette.muted_text)), "quoted text should be muted: {styles:?}");
+        assert!(styles.contains(&Some(theme.palette.highlight)), "the link should stay a link: {styles:?}");
+    }
+
+    #[test]
+    fn code_blocks_truncate_rather_than_wrap() {
+        let rendered = bare("```\nthis line is far too long\n```\n", 10);
+        assert_eq!(rendered[1], "this line…");
+    }
+
+    #[test]
+    fn a_fence_line_carries_the_language_right_aligned() {
+        let rendered = bare("```rust\nfn main() {}\n```\n", 20);
+        assert_eq!(rendered[0], "               rust ");
+        assert_eq!(rendered[1], "fn main() {}        ");
+    }
+
+    #[test]
+    fn code_lines_are_padded_so_the_background_is_a_rectangle() {
+        let theme = Theme::default();
+        let rendered = blocks_to_lines(&parse("```\nab\n```\n"), &theme, theme.style(Element::Paragraph), 8, 0);
+        assert!(rendered.iter().all(|line| line.width() == 8), "{rendered:?}");
+    }
+
+    #[test]
+    fn a_rule_fills_the_width() {
+        assert_eq!(bare("---\n", 5), ["─────"]);
+    }
+
+    #[test]
+    fn images_render_as_a_label() {
+        assert_eq!(bare("![a cat](cat.png)\n", 40), ["[image: a cat]"]);
+    }
+
+    #[test]
+    fn html_blocks_are_shown_verbatim() {
+        assert_eq!(bare("<div>\n  <p>hi</p>\n</div>\n", 40), ["<div>", "  <p>hi</p>", "</div>"]);
+    }
+
+    #[test]
+    fn footnote_definitions_hang_under_their_marker() {
+        assert_eq!(bare("[^1]: one two\n", 9), ["[^1] one", "     two"]);
+    }
+
+    #[test]
+    fn a_table_that_fits_keeps_its_natural_widths() {
+        let rendered = bare("| a | bb |\n| - | - |\n| 1 | 2 |\n", 40);
+        assert_eq!(rendered, ["┌───┬────┐", "│ a │ bb │", "├───┼────┤", "│ 1 │ 2  │", "└───┴────┘"]);
+    }
+
+    #[test]
+    fn table_alignment_places_the_padding() {
+        let rendered = bare("| l | r | c |\n| :- | -: | :-: |\n| 1 | 2 | 3 |\n", 40);
+        assert_eq!(rendered[3], "│ 1 │ 2 │ 3 │");
+    }
+
+    #[test]
+    fn a_table_wider_than_the_width_shrinks_and_wraps() {
+        let source = "| alpha beta | gamma delta |\n| - | - |\n| one two | three four |\n";
+        let rendered = bare(source, 24);
+        for line in &rendered {
+            assert!(line.width() <= 24, "{line:?} is wider than 24");
+        }
+        assert!(rendered.len() > 5, "cells should have wrapped: {rendered:?}");
+    }
+
+    #[test]
+    fn links_are_recorded_with_the_spans_they_cover() {
+        let theme = Theme::default();
+        let rendered = render(&parse("see [the docs](https://example.com) now\n"), &theme, 40);
+        let link = &rendered[0].links[0];
+        assert_eq!(
+            rendered[0].spans[link.span_range.clone()].iter().map(|span| span.text.as_str()).collect::<String>(),
+            "the docs"
+        );
+        assert!(matches!(link.kind, LinkKind::External(_)));
+    }
+
+    #[test]
+    fn a_link_broken_across_lines_is_recorded_on_both() {
+        let theme = Theme::default();
+        let rendered = render(&parse("[one two three](a.md)\n"), &theme, 8);
+        assert!(rendered.len() > 1);
+        assert!(rendered.iter().all(|line| line.links.len() == 1), "{rendered:?}");
+    }
+
+    #[test]
+    fn every_line_knows_its_source_line() {
+        let theme = Theme::default();
+        let rendered = render(&parse("# One\n\npara\n"), &theme, 40);
+        assert_eq!(rendered[0].source_line, 1);
+        assert_eq!(rendered[2].source_line, 3);
+    }
+
+    #[test]
+    fn truncation_marks_the_cut() {
+        assert_eq!(truncate("abcdef", 4), "abc…");
+        assert_eq!(truncate("abc", 4), "abc");
+        assert_eq!(truncate("日本語", 4), "日…");
+    }
+
+    #[test]
+    fn splitting_respects_character_boundaries() {
+        assert_eq!(split_at_width("日本語", 3), ("日", "本語"));
+        assert_eq!(split_at_width("abc", 0), ("", "abc"));
+    }
+}

@@ -19,6 +19,12 @@ impl Url {
     }
 }
 
+impl<T: Into<String>> From<T> for Url {
+    fn from(value: T) -> Self {
+        Self(value.into())
+    }
+}
+
 impl std::fmt::Display for Url {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -45,7 +51,7 @@ pub fn classify(destination: &str, link_type: LinkType) -> LinkKind {
     }
 
     if matches!(link_type, LinkType::Autolink | LinkType::Email) || has_scheme(destination) {
-        return LinkKind::External(Url(destination.to_string()));
+        return LinkKind::External(Url::from(destination));
     }
 
     let (path, fragment) = split_fragment(destination);
@@ -90,9 +96,9 @@ mod tests {
 
     #[test]
     fn schemes_are_external() {
-        assert_eq!(inline("https://example.com/x"), LinkKind::External(Url("https://example.com/x".into())));
-        assert_eq!(inline("mailto:otavio@example.com"), LinkKind::External(Url("mailto:otavio@example.com".into())));
-        assert_eq!(inline("ftp://example.com"), LinkKind::External(Url("ftp://example.com".into())));
+        assert_eq!(inline("https://example.com/x"), LinkKind::External(Url::from("https://example.com/x")));
+        assert_eq!(inline("mailto:otavio@example.com"), LinkKind::External(Url::from("mailto:otavio@example.com")));
+        assert_eq!(inline("ftp://example.com"), LinkKind::External(Url::from("ftp://example.com")));
     }
 
     #[test]
