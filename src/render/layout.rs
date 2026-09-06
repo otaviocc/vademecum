@@ -797,6 +797,36 @@ mod tests {
     }
 
     #[test]
+    fn a_highlighted_line_truncates_and_stays_a_rectangle() {
+        // Highlighting splits the line into several spans, so the cut has to
+        // fall inside one of them and the rest of the line has to go.
+        let theme = Theme::default();
+        let rendered = blocks_to_lines(
+            &parse("```rust\nfn main() { println!(\"far too long\"); }\n```\n"),
+            &theme,
+            theme.style(Element::Paragraph),
+            12,
+            0,
+        );
+        assert_eq!(rendered[1].text(), "fn main() {…");
+        assert!(rendered.iter().all(|line| line.width() == 12), "{rendered:?}");
+        assert!(rendered[1].spans.len() > 1, "the line was not highlighted: {:?}", rendered[1]);
+    }
+
+    #[test]
+    fn a_highlighted_line_keeps_the_block_background() {
+        let theme = Theme::default();
+        let rendered = blocks_to_lines(&parse("```rust\nfn main() {}\n```\n"), &theme, theme.style(Element::Paragraph), 20, 0);
+        let block = theme.style(Element::CodeBlock);
+        assert!(
+            rendered[1].spans.iter().all(|span| span.style.bg == block.bg),
+            "a .tmTheme repainted the block: {:?}",
+            rendered[1]
+        );
+        assert!(rendered[1].spans.iter().any(|span| span.style.fg != block.fg), "nothing was highlighted: {:?}", rendered[1]);
+    }
+
+    #[test]
     fn a_fence_line_carries_the_language_right_aligned() {
         let rendered = bare("```rust\nfn main() {}\n```\n", 20);
         assert_eq!(rendered[0], "               rust ");
