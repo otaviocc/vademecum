@@ -27,14 +27,23 @@ expression: output
  [0;36;1mCode[0m
 
  [0;39;100m                                                                          [0;37;100mrust[0;39;100m [0m
- [0;39;100mfn main() {                                                                    [0m
- [0;39;100m    println!("syntect highlighting arrives in milestone 3");                   [0m
- [0;39;100m}                                                                              [0m
+ [0;38;2;180;142;173;100mfn[0;38;2;192;197;206;100m [0;38;2;143;161;179;100mmain[0;38;2;192;197;206;100m() {[0;39;100m                                                                    [0m
+ [0;38;2;192;197;206;100m    println!("[0;38;2;163;190;140;100msyntect highlighting arrives in milestone 3[0;38;2;192;197;206;100m");[0;39;100m                   [0m
+ [0;38;2;192;197;206;100m}[0;39;100m                                                                              [0m
  [0;39;100m                                                                               [0m
 
  [0;39;100m                                                                               [0m
  [0;39;100mAn unlabelled fence.                                                           [0m
  [0;39;100mA line long enough that it has to be truncated rather than wrapped, because co…[0m
+ [0;39;100m                                                                               [0m
+
+ [0;39;100m                                                                  [0;37;100mnotalanguage[0;39;100m [0m
+ [0;39;100mA fence tagged with a language nothing knows.                                  [0m
+ [0;39;100m                                                                               [0m
+
+ [0;39;100m                                                                               [0m
+ [0;38;2;101;115;126;100m#!/usr/bin/env python3[0;39;100m                                                         [0m
+ [0;38;2;150;181;180;100mprint[0;38;2;192;197;206;100m("[0;38;2;163;190;140;100ma shebang names the language when the fence tag does not[0;38;2;192;197;206;100m")[0;39;100m              [0m
  [0;39;100m                                                                               [0m
 
  [0;36;1mQuotes[0m
