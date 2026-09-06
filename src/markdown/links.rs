@@ -221,10 +221,7 @@ impl Vault {
     /// `--root` if the reader gave one, else the nearest ancestor of `base_dir`
     /// holding `.obsidian/`, else `base_dir` itself.
     pub fn discover(explicit: Option<&Path>, base_dir: &Path) -> Self {
-        let root = explicit
-            .map(Path::to_path_buf)
-            .or_else(|| base_dir.ancestors().find(|dir| dir.join(".obsidian").is_dir()).map(Path::to_path_buf))
-            .unwrap_or_else(|| base_dir.to_path_buf());
+        let root = explicit.map(Path::to_path_buf).unwrap_or_else(|| marked_root(base_dir));
         Self { root, index: OnceLock::new() }
     }
 
@@ -243,6 +240,9 @@ impl Vault {
                     Err(ResolveError::NotFound(path.display().to_string()))
                 }
             }
+            // `[[#Heading]]`: a fragment and nothing else, which is the
+            // wikilink spelling of `[text](#heading)` and means the same.
+            LinkKind::Wiki { target, .. } if target.is_empty() => Ok(Target::SameDocument),
             LinkKind::Wiki { target, .. } => self.resolve_wiki(target, &document.base_dir),
         }
     }
@@ -282,6 +282,38 @@ impl Vault {
     }
 }
 
+/// The nearest ancestor of `base_dir` holding `.obsidian/`, else `base_dir`.
+///
+/// The ancestors are walked on an **absolute** path. A relative `base_dir` runs
+/// out at the working directory, and its last ancestor is the empty path, which
+/// `join` then resolves against the working directory — so a document opened as
+/// `nested/note.md` from inside its own vault matched the marker at `""`, took
+/// the empty path as the root, and found nothing under it at all.
+///
+/// The answer is expressed back in `base_dir`'s own terms, by climbing the same
+/// number of levels, so a document addressed relatively keeps reporting
+/// relative paths.
+fn marked_root(base_dir: &Path) -> PathBuf {
+    let absolute = match base_dir.is_absolute() {
+        true => normalize(base_dir),
+        // No working directory to resolve against is not worth failing over:
+        // the document's own directory is always a usable vault.
+        false => match std::env::current_dir() {
+            Ok(working) => normalize(&working.join(base_dir)),
+            Err(_) => return base_dir.to_path_buf(),
+        },
+    };
+
+    let Some(depth) = absolute.ancestors().position(|dir| dir.join(".obsidian").is_dir()) else {
+        return base_dir.to_path_buf();
+    };
+    let mut root = base_dir.to_path_buf();
+    for _ in 0..depth {
+        root.push("..");
+    }
+    normalize(&root)
+}
+
 /// Every `.md` under `dir`, by lowercase file stem.
 ///
 /// Hidden directories are skipped, as the README says, and so are symlinks:
@@ -301,7 +333,9 @@ fn walk(dir: &Path, index: &mut HashMap<String, Vec<PathBuf>>) {
             && path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
             && let Some(stem) = path.file_stem()
         {
-            index.entry(stem.to_string_lossy().to_lowercase()).or_default().push(path);
+            // Normalized, so a root of `.` does not put `./` in front of every
+            // path the reader is shown.
+            index.entry(stem.to_string_lossy().to_lowercase()).or_default().push(normalize(&path));
         }
     }
 }

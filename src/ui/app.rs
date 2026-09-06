@@ -189,9 +189,17 @@ impl App {
             // not, so they are told why rather than left wondering.
             Err(error) => self.status = Status::Error(error.to_string()),
             Ok(Target::External) => {}
+            // Only a jump that goes somewhere is history. A fragment naming
+            // no heading would otherwise push a dead entry and, worse, clear
+            // the way forward.
             Ok(Target::SameDocument) => {
-                self.remember();
-                self.jump_to(kind.fragment());
+                if let Some(line) = self.anchor_line(kind.fragment()) {
+                    self.remember();
+                    self.go_to(line);
+                    // Nothing was re-laid out, but the reader has moved, and
+                    // `n` resumes from where they are.
+                    self.resume_search();
+                }
             }
             Ok(Target::File(path)) => self.open(&path, kind.fragment()),
         }
@@ -220,6 +228,7 @@ impl App {
         self.remember();
         self.show(document);
         self.jump_to(fragment);
+        self.resume_search();
         self.status = Status::Notice(format!("Opened {}", self.file));
     }
 
@@ -249,6 +258,7 @@ impl App {
         self.cursor = entry.cursor;
         self.top = entry.top;
         self.focus = entry.focus;
+        self.resume_search();
         self.status = Status::Notice(format!("Opened {}", self.file));
     }
 
@@ -264,22 +274,38 @@ impl App {
         self.focus = 0;
 
         // The lines are another document's, so the cached text and the offsets
-        // into it are stale. A standing query follows the reader across.
+        // into it are stale. A standing query follows the reader across, but
+        // only once the caller has placed them: `resume_search`.
         self.plain = None;
-        if !self.search.query.is_empty() {
-            self.rematch();
-        }
+    }
+
+    /// The line a `#fragment` names, if any line answers to it.
+    fn anchor_line(&self, fragment: Option<&str>) -> Option<usize> {
+        let slug = ast::slug(fragment?);
+        self.lines.iter().position(|line| line.anchor.as_deref() == Some(slug.as_str()))
     }
 
     /// Put the heading a `#fragment` names at the top of the view. One that
     /// matches no heading leaves the reader where the document opened, which
     /// is the top of it.
     fn jump_to(&mut self, fragment: Option<&str>) {
-        let Some(fragment) = fragment else { return };
-        let slug = ast::slug(fragment);
-        if let Some(index) = self.lines.iter().position(|line| line.anchor.as_deref() == Some(slug.as_str())) {
-            self.cursor = index;
-            self.top = index;
+        if let Some(line) = self.anchor_line(fragment) {
+            self.go_to(line);
+        }
+    }
+
+    fn go_to(&mut self, line: usize) {
+        self.cursor = line;
+        self.top = line;
+    }
+
+    /// Match a standing query against the lines as they are now. Called once
+    /// the reader has been put where they belong, never before: the search
+    /// resumes from the cursor, so doing it first would resume from the top of
+    /// a document nobody is looking at.
+    fn resume_search(&mut self) {
+        if !self.search.query.is_empty() {
+            self.rematch();
         }
     }
 
@@ -376,14 +402,21 @@ impl App {
     /// The wheel moves the viewport; the cursor is pulled to the nearest
     /// visible line rather than travelling with it.
     fn scroll(&mut self, delta: isize) {
-        self.focus = 0;
         let height = self.viewport_height();
         let last = self.lines.len().saturating_sub(1);
         // Bound the viewport before pulling the cursor into it. At the foot of
         // the document the view cannot move, and a window past the end would
         // drag the cursor down a notch at a time with nothing to show for it.
         self.top = offset(self.top, delta).min(last.saturating_sub(height - 1));
-        self.cursor = self.cursor.clamp(self.top, self.top + height - 1);
+
+        // Most notches leave the cursor where it was, and the focus with it:
+        // dropping the focus on every one of them would take the reader's
+        // chosen link away for scrolling past it and back.
+        let pulled = self.cursor.clamp(self.top, self.top + height - 1);
+        if pulled != self.cursor {
+            self.cursor = pulled;
+            self.focus = 0;
+        }
     }
 
     fn resize(&mut self, area: Size) {
@@ -410,13 +443,15 @@ impl App {
             .or_else(|| self.lines.iter().position(|line| !line.is_blank() && line.source_line >= anchor))
             .unwrap_or(self.cursor);
         self.top = self.cursor.saturating_sub(row);
+        // The line the cursor lands on is a different line, with its own links:
+        // a narrower width can leave the old index past the end of them, and
+        // `Enter` with nothing focused does nothing at all.
+        self.focus = 0;
 
         // The lines are new, so the cached text and the offsets into it are
         // stale. A live query is matched again against the new layout.
         self.plain = None;
-        if !self.search.query.is_empty() {
-            self.rematch();
-        }
+        self.resume_search();
     }
 
     /// The source line the cursor is on. Blank lines belong to no source line
@@ -1055,5 +1090,104 @@ mod tests {
         for found in &app.search.matches {
             assert!(found.line < app.lines.len(), "the offsets index the new document");
         }
+    }
+
+    #[test]
+    fn a_wheel_notch_that_does_not_move_the_cursor_keeps_the_focus() {
+        let mut app = inside_vault("[[note]] and [[missing]] on one line\n\n".to_string().repeat(30).as_str());
+        let line = app.lines.iter().position(|line| line.links.len() > 1).expect("a line with several links");
+        app.cursor = line;
+        app.apply(Action::Focus { forward: true });
+        assert_eq!(app.focus, 1);
+
+        // The cursor is in the middle of the view, so a notch does not touch it.
+        app.apply(Action::Move(Motion::HalfPage(1)));
+        app.cursor = app.top + app.viewport_height() / 2;
+        app.apply(Action::Focus { forward: true });
+        let (cursor, focus) = (app.cursor, app.focus);
+
+        app.apply(Action::Scroll(1));
+        assert_eq!((app.cursor, app.focus), (cursor, focus), "the reader's link survives a scroll past it");
+    }
+
+    #[test]
+    fn a_wheel_notch_that_drags_the_cursor_does_drop_the_focus() {
+        let mut app = inside_vault("[[note]] and [[missing]]\n\n".to_string().repeat(30).as_str());
+        let line = app.lines.iter().position(|line| line.links.len() > 1).expect("a line with several links");
+        app.cursor = line;
+        app.apply(Action::Focus { forward: true });
+        assert_eq!(app.focus, 1);
+
+        // Far enough that the cursor cannot stay where it is.
+        app.apply(Action::Scroll(app.viewport_height() as isize * 2));
+        assert_ne!(app.cursor, line);
+        assert_eq!(app.focus, 0, "a different line, so a different link");
+    }
+
+    #[test]
+    fn a_fragment_that_names_no_heading_does_not_spend_a_history_entry() {
+        let mut app = vault();
+        focus_link(&mut app, "note");
+        app.apply(Action::Follow);
+        app.apply(Action::History { forward: false });
+        assert_eq!(app.file, "index.md");
+
+        // A bare fragment matching nothing: it must not clear the way forward.
+        let mut app = inside_vault("[nowhere](#no-such-heading)\n");
+        focus_link(&mut app, "#no-such-heading");
+        let cursor = app.cursor;
+        app.apply(Action::Follow);
+        assert_eq!(app.cursor, cursor, "nothing to jump to");
+        app.apply(Action::History { forward: false });
+        assert_eq!(app.cursor, cursor, "and nothing was pushed to come back from");
+    }
+
+    #[test]
+    fn a_bare_fragment_wikilink_is_the_document_already_open() {
+        let mut app = inside_vault("# Scratch\n\n## A Heading\n\nGo to [[#A Heading]].\n");
+        focus_link(&mut app, "#A Heading");
+        app.apply(Action::Follow);
+
+        assert_eq!(app.file, "scratch.md", "it never left");
+        assert_eq!(app.lines[app.cursor].anchor.as_deref(), Some("a-heading"));
+    }
+
+    #[test]
+    fn a_query_resumes_from_where_the_reader_lands_not_from_the_top() {
+        // Two matches, one above the fragment and one below it. Landing on the
+        // heading has to make the one below it current.
+        let source = "# Top\n\nneedle above\n\n## A Heading\n\nneedle below\n";
+        let mut app = inside_vault(&format!("{source}\nGo to [[#A Heading]].\n"));
+        search_for(&mut app, "needle");
+        focus_link(&mut app, "#A Heading");
+        app.apply(Action::Follow);
+
+        let current = app.search.current.and_then(|index| app.search.matches.get(index)).expect("a current match");
+        assert!(current.line >= app.cursor, "the search resumed from the heading, not from the top");
+    }
+
+    #[test]
+    fn a_rewrap_does_not_leave_the_focus_pointing_past_the_line_it_is_on() {
+        // Wide enough that both links share a line, narrow enough afterwards
+        // that they do not.
+        let document = Document::new(
+            Some(PathBuf::from("tests/fixtures/vault/scratch.md")),
+            PathBuf::from("tests/fixtures/vault"),
+            "[[note]] and then some words and then [[missing]]\n".to_string(),
+        );
+        let mut app = App::new(document, Theme::default(), &Options::default(), Size::new(80, 24));
+        let line = app.lines.iter().position(|line| line.links.len() > 1).expect("both links on one line");
+        app.cursor = line;
+        app.apply(Action::Focus { forward: true });
+        assert_eq!(app.focus, 1);
+
+        app.apply(Action::Resize(Size::new(20, 24)));
+        assert!(
+            app.focus < app.lines[app.cursor].links.len().max(1),
+            "focus {} is past the {} link(s) on the line",
+            app.focus,
+            app.lines[app.cursor].links.len()
+        );
+        assert!(app.focused().is_some(), "Enter still has something to follow");
     }
 }

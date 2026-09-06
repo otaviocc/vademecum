@@ -11,6 +11,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use unicode_width::UnicodeWidthStr;
 
 use crate::cli::{Cli, ColorChoice};
 use crate::document::Document;
@@ -68,15 +69,25 @@ fn list(stdout: &std::io::Stdout, names: &[String]) -> std::io::Result<()> {
 /// so a document's links read as a table rather than as a ragged list.
 fn report_links(stdout: &std::io::Stdout, links: &[LinkKind], context: &Links) -> std::io::Result<()> {
     let destinations: Vec<String> = links.iter().map(LinkKind::destination).collect();
-    let kind_width = links.iter().map(|link| link.name().len()).max().unwrap_or(0);
-    let destination_width = destinations.iter().map(String::len).max().unwrap_or(0);
+    let kind_width = links.iter().map(|link| link.name().width()).max().unwrap_or(0);
+    let destination_width = destinations.iter().map(|destination| destination.width()).max().unwrap_or(0);
 
     let mut out = BufWriter::new(stdout.lock());
     for (link, destination) in links.iter().zip(&destinations) {
         let target = target_of(context.resolve(link), context);
-        writeln!(out, "{:kind_width$}  {destination:destination_width$}  -> {target}", link.name())?;
+        writeln!(out, "{}", row(link.name(), kind_width, destination, destination_width, &target))?;
     }
     out.flush()
+}
+
+/// One row of the report, padded to the column widths.
+///
+/// The padding is counted in display columns, not bytes: `{:width$}` counts
+/// characters, and a destination like `[[日本語ノート]]` is six characters wide
+/// and eighteen bytes long, either of which would misalign the table.
+fn row(kind: &str, kind_width: usize, destination: &str, destination_width: usize, target: &str) -> String {
+    let pad = |text: &str, width: usize| " ".repeat(width.saturating_sub(text.width()));
+    format!("{kind}{}  {destination}{}  -> {target}", pad(kind, kind_width), pad(destination, destination_width))
 }
 
 /// The third column: a path, `-` for a link that names no file, or the reason
@@ -137,6 +148,20 @@ mod tests {
 
     fn cli(args: &[&str]) -> Cli {
         Cli::parse_from(std::iter::once("vademecum").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn a_report_row_is_padded_in_columns_rather_than_bytes() {
+        // Six characters, twelve columns, eighteen bytes: every one of the
+        // three gives a different answer, and only columns line the table up.
+        let wide = row("wiki", 8, "日本語ノート", 12, "(broken)");
+        let plain = row("wiki", 8, "abcdefghijkl", 12, "(broken)");
+        assert_eq!(wide.find("->"), plain.find("->").map(|_| wide.find("->").expect("an arrow")));
+        assert_eq!(
+            wide.split(" -> ").next().expect("a left column").width(),
+            plain.split(" -> ").next().expect("a left column").width()
+        );
+        assert!(wide.starts_with("wiki      日本語ノート  -> "), "{wide:?}");
     }
 
     #[test]
