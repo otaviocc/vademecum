@@ -479,7 +479,13 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
    error in the statusbar listing the candidates.
 
 The vault root is `--root` if given, else the nearest ancestor of the start
-file containing `.obsidian/`, else the start file's directory. A target that
+file containing `.obsidian/`, else the start file's directory. A `--root` that
+is not a readable directory is a mistake in the command, not in the document:
+vademecum reports it on stderr and exits non-zero before rendering anything,
+as it does for an unknown `--theme`. Silence there would show a document of
+broken links and no reason for them. Everything *below* the root stays silent —
+one unreadable subdirectory does not stop a vault resolving — and a discovered
+root needs no check, having been found by looking. A target that
 cannot be followed — missing, or ambiguous — renders in `link_broken` style,
 and `Enter` shows the reason instead of navigating.
 

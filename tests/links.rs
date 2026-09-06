@@ -185,3 +185,29 @@ fn a_bare_fragment_wikilink_is_the_document_already_open() {
     let report = resolve(&["tests/fixtures/vault/note.md"]);
     assert_eq!(target(&report, "#A Heading"), "tests/fixtures/vault/note.md");
 }
+
+#[test]
+fn a_root_that_cannot_be_read_is_an_error_before_anything_is_rendered() {
+    // Silence here rendered a document of broken links and exited 0, so a typo
+    // in the flag looked like a fault in the notes.
+    let output = vademecum()
+        .args(["--plain", "--resolve-links", "--root", "no/such/dir", "tests/fixtures/vault/index.md"])
+        .output()
+        .expect("vademecum runs");
+
+    assert!(!output.status.success(), "an unreadable root is not a successful run");
+    assert!(output.stdout.is_empty(), "and nothing is rendered around it");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--root no/such/dir"), "the message names the flag and the path:\n{stderr}");
+}
+
+#[test]
+fn a_root_that_is_a_file_is_the_same_error() {
+    let output = vademecum()
+        .args(["--plain", "--resolve-links", "--root", "tests/fixtures/note.md", "tests/fixtures/vault/index.md"])
+        .output()
+        .expect("vademecum runs");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--root tests/fixtures/note.md"));
+}
