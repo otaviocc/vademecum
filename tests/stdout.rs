@@ -61,7 +61,9 @@ fn a_pipe_gets_no_color_without_being_asked() {
 
 #[test]
 fn nothing_is_wider_than_the_requested_width() {
-    for width in [40, 80, 100] {
+    // The narrow widths matter: a table's borders and padding have a floor
+    // that a narrow width cannot pay for, so the renderer has to cut instead.
+    for width in [8, 12, 20, 40, 80, 100] {
         let output = run(&["--color", "never", "--width", &width.to_string(), "tests/fixtures/elements.md"]);
         for line in output.lines() {
             let columns = unicode_width::UnicodeWidthStr::width(line);
@@ -94,6 +96,36 @@ fn stdin_is_read_from_a_dash() {
     let output = child.wait_with_output().expect("vademecum exits");
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim_end(), " hi");
+}
+
+#[test]
+fn a_closed_pipe_is_not_an_error() {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    // Big enough that the writer is still going when the reader walks away.
+    let long = "A paragraph, repeated until the pipe buffer cannot hold it.\n\n".repeat(20_000);
+    let document = tempfile::NamedTempFile::new().expect("temp file");
+    std::fs::write(document.path(), long).expect("write");
+
+    let mut child = vademecum()
+        .args(["--color", "never", "--width", "80"])
+        .arg(document.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("vademecum runs");
+
+    // Read a little, then drop the read end: this is `| less -R` and quitting.
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let mut head = [0u8; 64];
+    let _ = stdout.read(&mut head);
+    drop(stdout);
+
+    let output = child.wait_with_output().expect("vademecum exits");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "a closed pipe should exit cleanly, got {}: {stderr}", output.status);
+    assert!(stderr.is_empty(), "a closed pipe should say nothing: {stderr}");
 }
 
 #[test]
