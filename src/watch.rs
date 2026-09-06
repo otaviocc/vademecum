@@ -59,9 +59,6 @@ struct Armed {
     /// Canonical, so a symlinked document is recognised under the name its
     /// target carries rather than the one the reader typed.
     name: OsString,
-    /// The path as the reader named it, so re-arming on the same document
-    /// costs nothing.
-    origin: PathBuf,
 }
 
 /// A debounced watch over one directory.
@@ -69,6 +66,12 @@ pub struct Watcher {
     /// Dropping it stops the watch, so it is held for the pager's lifetime.
     debouncer: Debouncer<RecommendedWatcher>,
     armed: Option<Armed>,
+    /// The document `arm` was last asked for, whether or not it succeeded. It
+    /// is what makes a second ask about the same document free — and, when the
+    /// first one failed, what stops the pager retrying a directory it cannot
+    /// watch on every single keypress and overwriting whatever the reader was
+    /// being told at the time.
+    attempted: Option<PathBuf>,
 }
 
 impl Watcher {
@@ -83,16 +86,17 @@ impl Watcher {
             });
         })
         .map_err(Error::Start)?;
-        Ok(Self { debouncer, armed: None })
+        Ok(Self { debouncer, armed: None, attempted: None })
     }
 
     /// Watch the directory `path` lives in. Idempotent: re-arming on the
     /// document already armed does nothing at all, and following a link within
     /// one directory only changes the name being listened for.
     pub fn arm(&mut self, path: &Path) -> Result<(), Error> {
-        if self.armed.as_ref().is_some_and(|armed| armed.origin == path) {
+        if self.attempted.as_deref() == Some(path) {
             return Ok(());
         }
+        self.attempted = Some(path.to_path_buf());
         let Some(armed) = armed(path) else { return Ok(()) };
 
         // The directory is already watched, so only the name changes. Doing
@@ -139,7 +143,7 @@ fn armed(path: &Path) -> Option<Armed> {
         Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
         _ => PathBuf::from("."),
     };
-    Some(Armed { dir, name, origin: path.to_path_buf() })
+    Some(Armed { dir, name })
 }
 
 /// Whether an event path names the armed document. One directory is watched and
@@ -162,7 +166,7 @@ mod tests {
     }
 
     fn armed_on(dir: &str, name: &str) -> Armed {
-        Armed { dir: PathBuf::from(dir), name: OsString::from(name), origin: PathBuf::from(name) }
+        Armed { dir: PathBuf::from(dir), name: OsString::from(name) }
     }
 
     #[test]
@@ -174,7 +178,6 @@ mod tests {
         let armed = armed(&path).expect("a file names a directory");
         assert_eq!(armed.name, OsString::from("note.md"));
         assert_eq!(armed.dir, dir.path().canonicalize().expect("canonical temp dir"));
-        assert_eq!(armed.origin, path, "the path the reader named is kept, so re-arming can be free");
     }
 
     #[test]
@@ -271,6 +274,20 @@ mod tests {
         watcher.arm(&there).expect("arm elsewhere");
         assert!(watcher.wrote(&Change::Wrote(vec![there])), "the watch followed the reader");
         assert!(!watcher.wrote(&Change::Wrote(vec![here])), "and stopped answering for where they were");
+    }
+
+    /// A directory that cannot be watched is reported once, not on every wake.
+    /// The pager calls `arm` after each burst of events, so an `arm` that
+    /// failed and then retried would replace whatever the reader was being
+    /// told, on every keypress, for as long as they stayed in that document.
+    #[test]
+    fn a_directory_that_cannot_be_watched_is_answered_once() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let gone = dir.path().join("no-such-directory").join("note.md");
+
+        let mut watcher = Watcher::new(|_| {}).expect("a watcher");
+        assert!(watcher.arm(&gone).is_err(), "a directory that is not there cannot be watched");
+        assert!(watcher.arm(&gone).is_ok(), "the same document was asked about twice and answered twice");
     }
 
     /// The one test that waits on a real filesystem. It writes in a loop rather

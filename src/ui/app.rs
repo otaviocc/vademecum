@@ -97,6 +97,10 @@ pub struct App {
     /// Which of the cursor line's links `Enter` would follow. A line with one
     /// link focuses it without being asked, which is what 0 means here.
     pub focus: usize,
+    /// Whether the error on the statusbar is the last reload's own. A reload
+    /// that works disproves it; an error from anywhere else is not its to
+    /// clear.
+    reload_failed: bool,
     /// Where the reader has been, and where `l` would take them back to.
     back: Vec<Entry>,
     forward: Vec<Entry>,
@@ -130,6 +134,7 @@ impl App {
             title,
             file,
             focus: 0,
+            reload_failed: false,
             back: Vec::new(),
             forward: Vec::new(),
         }
@@ -143,6 +148,9 @@ impl App {
         // reader has not read yet.
         if !matches!(action, Action::Resize(_) | Action::Reload) {
             self.status = Status::Idle;
+            // The reader has acted, so whatever the last reload said is gone
+            // from the screen and is no longer anyone's to clear.
+            self.reload_failed = false;
         }
 
         // Neither a resize nor a reload is on this list: `rerender` puts the
@@ -486,6 +494,7 @@ impl App {
             // and the document stays, until the next write reloads it.
             Err(error) => {
                 self.status = Status::Error(format!("{error:#}"));
+                self.reload_failed = true;
                 return;
             }
             Ok(document) => document,
@@ -500,9 +509,12 @@ impl App {
         // the reader. An error is what they asked for and did not get, and
         // someone else saving the file is no reason to take it off the screen
         // before they have acted on it — the same ordering `Status` documents.
-        if !matches!(self.status, Status::Error(_)) {
+        // The one error this may overwrite is the last reload's own, which
+        // having just read the file it has disproved.
+        if self.reload_failed || !matches!(self.status, Status::Error(_)) {
             self.status = Status::Notice(format!("Reloaded {}", self.file));
         }
+        self.reload_failed = false;
     }
 
     /// Where the reader is standing, in terms that survive a re-layout: the
@@ -785,6 +797,21 @@ mod tests {
         app.apply(Action::Reload);
         assert!(matches!(app.status, Status::Error(_)), "a file that has gone said nothing: {:?}", app.status);
         assert_eq!(app.lines.len(), lines, "the reader lost the document as well as the file");
+    }
+
+    /// A reload that works disproves the last one's complaint. Without this the
+    /// statusbar goes on saying the file cannot be read while the reader is
+    /// looking at its new contents, and every later save reloads in silence.
+    #[test]
+    fn a_reload_that_works_clears_the_failure_that_came_before_it() {
+        let (dir, mut app) = on_disk(&numbered(10));
+        std::fs::remove_file(dir.path().join("note.md")).expect("remove");
+        app.apply(Action::Reload);
+        assert!(matches!(app.status, Status::Error(_)), "the failure was not reported");
+
+        rewrite(&dir, &numbered(12));
+        app.apply(Action::Reload);
+        assert_eq!(app.status, Status::Notice(String::from("Reloaded note.md")));
     }
 
     #[test]
