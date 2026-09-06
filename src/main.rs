@@ -5,10 +5,6 @@ mod markdown;
 mod render;
 mod theme;
 mod ui;
-// Removed by the commit that wires the watcher into the pager; until then every
-// item here is reachable only from its own tests, which is what `dead_code`
-// calls dead in a binary crate.
-#[allow(dead_code, reason = "wired into the pager two commits from now")]
 mod watch;
 
 use std::io::{BufWriter, IsTerminal, Write};
@@ -58,7 +54,7 @@ fn main() -> Result<()> {
     let theme = theme::loader::load(cli.config.as_deref(), cli.theme.as_deref())?;
 
     if is_terminal && !cli.plain {
-        return ui::run(document, theme, ui::Options { mouse: cli.mouse, width: cli.width, root: cli.root });
+        return ui::run(document, theme, ui::Options { mouse: cli.mouse, width: cli.width, root: cli.root, watch: cli.watch });
     }
 
     let blocks = markdown::ast::parse(&document.source);
