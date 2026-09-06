@@ -113,6 +113,15 @@ session, do all of the following:
   - CI must be green (`fmt`, `clippy -D warnings`, tests on Linux, macOS,
     Windows, MSRV, audit) before asking for review.
   - Do not merge, tag, or publish without the user's explicit request.
+- Merging a **stack** of PRs: retarget the PR above before deleting the branch
+  below it. `gh pr merge <lower> --merge --delete-branch` deletes the base of
+  the PR stacked on it, and GitHub answers by **closing** that PR rather than
+  retargeting it — after which `gh pr edit --base main` refuses ("cannot change
+  the base branch of a closed pull request") and `gh pr reopen` refuses too,
+  because the base is gone. Recovering means pushing the deleted branch back at
+  its old SHA, reopening, retargeting, then deleting it again. Merge the lower
+  PR without `--delete-branch`, `gh pr edit <upper> --base main`, and delete the
+  branch by hand.
 
 ## 5. Before opening a PR
 
