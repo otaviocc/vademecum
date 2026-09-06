@@ -494,6 +494,17 @@ root needs no check, having been found by looking. A target that
 cannot be followed — missing, or ambiguous — renders in `link_broken` style,
 and `Enter` shows the reason instead of navigating.
 
+The index behind step 2 is built once, on the first wikilink that needs it, and
+then **doubted once per document**. Opening a document — following a link,
+stepping through history, or reloading a file that changed on disk — marks it
+stale; the next wikilink that *fails* to resolve walks the vault again and
+retries, and the one after that does not. A name that resolves is never in
+doubt, so a document whose links all work never pays for a walk, however often
+it is saved. A document carrying a genuinely broken wikilink pays one walk per
+save, which is the price of a note created in another window appearing here
+without a restart. Ambiguity is a hit, not a miss: two candidates are an answer,
+and they do not send vademecum looking for a third.
+
 Resolution runs during layout, alongside the styling it decides, so a link's
 element depends on whether its target exists: `link` for External, `wikilink`
 for a Local or Wiki target that resolves, `link_broken` for one that does not.
