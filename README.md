@@ -287,8 +287,14 @@ Every element and its default derivation from the palette:
 | `help_window` | foreground | background | — | border in accent |
 
 The `ansi` built-in maps every slot to a `Color::Reset` or a 16-color ANSI
-name so it never asserts truecolor. Being the default, it is also the base
-every partial theme file merges over.
+name so it never asserts truecolor.
+
+What every partial theme file merges over is the **table above** — the palette
+defaults and the element derivations — not the `ansi` file. The two are the same
+thing for every slot and for all but five elements; where they part is the code
+and search styling `ansi` overrides for the reason given under Built-in themes.
+A theme file that names a real `subtle` therefore inherits the code backgrounds,
+which is what a theme with a real `subtle` wants.
 
 The `syntax_theme` key cleanly separates **element styling** (our TOML) from
 **code token coloring** (syntect). Only the syntect theme's *foreground*
