@@ -12,7 +12,7 @@
 //! why the caller patches these styles over the block style rather than the
 //! other way round: a `.tmTheme` must never repaint the block.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -102,11 +102,20 @@ fn theme_for(name: Option<&str>) -> (&'static str, &'static SyntectTheme) {
 /// document. The message waits in `WARNINGS` until a caller that owns a screen —
 /// or a stderr — comes to collect it.
 fn warn(name: &str) {
-    let mut warnings = warnings().lock().unwrap_or_else(PoisonError::into_inner);
-    let message = format!("no syntax theme named {name:?}; using {FALLBACK}");
-    if !warnings.contains(&message) {
-        warnings.push(message);
+    // `said` is never drained, and that is the whole of "once per distinct
+    // name". Deduplicating against the pending list instead would say it again
+    // after every collection — and `theme_for` runs before the cache lookup, so
+    // that is once per code block per layout, for the life of the session.
+    let mut said = said().lock().unwrap_or_else(PoisonError::into_inner);
+    if !said.insert(name.to_owned()) {
+        return;
     }
+    warnings().lock().unwrap_or_else(PoisonError::into_inner).push(format!("no syntax theme named {name:?}; using {FALLBACK}"));
+}
+
+fn said() -> &'static Mutex<HashSet<String>> {
+    static SAID: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SAID.get_or_init(Mutex::default)
 }
 
 fn warnings() -> &'static Mutex<Vec<String>> {
@@ -330,6 +339,9 @@ mod tests {
 
     #[test]
     fn the_same_block_twice_is_the_same_allocation() {
+        // Asserting on cache identity, so it has to be held against the test
+        // that fills the cache: `cargo test` runs them in parallel.
+        let _guard = exclusively();
         let text = "fn cached() -> bool { true }\n";
         let first = highlight(Some("rust"), text, Some("base16-ocean.dark"));
         let second = highlight(Some("rust"), text, Some("base16-ocean.dark"));
@@ -338,6 +350,7 @@ mod tests {
 
     #[test]
     fn the_syntax_theme_is_part_of_the_key() {
+        let _guard = exclusively();
         let text = "fn themed() {}\n";
         let dark = highlight(Some("rust"), text, Some("base16-ocean.dark"));
         let light = highlight(Some("rust"), text, Some("base16-ocean.light"));
@@ -348,6 +361,7 @@ mod tests {
     #[test]
     fn an_unknown_theme_falls_back_rather_than_failing() {
         let _guard = exclusively();
+        forget_what_was_said();
         let (name, _) = theme_for(Some("no-such-theme"));
         assert_eq!(name, FALLBACK);
         let (name, _) = theme_for(None);
@@ -367,6 +381,14 @@ mod tests {
     fn exclusively() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(Mutex::default).lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A clean slate for the warning tests. `said` is deliberately never
+    /// drained in production — that is what makes a name reported once — so a
+    /// test that wants to hear a name again has to forget it first.
+    fn forget_what_was_said() {
+        said().lock().unwrap_or_else(PoisonError::into_inner).clear();
+        let _ = take_warnings();
     }
 
     #[test]
@@ -399,7 +421,7 @@ mod tests {
     #[test]
     fn every_distinct_bad_theme_name_is_reported_once() {
         let _guard = exclusively();
-        let _ = take_warnings();
+        forget_what_was_said();
 
         theme_for(Some("no-such-theme"));
         theme_for(Some("no-such-theme"));
@@ -418,16 +440,36 @@ mod tests {
     #[test]
     fn taking_the_warnings_empties_them() {
         let _guard = exclusively();
-        let _ = take_warnings();
+        forget_what_was_said();
         theme_for(Some("gone-missing"));
         assert!(!take_warnings().is_empty());
         assert!(take_warnings().is_empty(), "a warning survived being collected");
     }
 
+    /// The fault this replaced: the pending list was deduplicated but drained,
+    /// so a name came back after every collection — and `theme_for` runs before
+    /// the cache lookup, i.e. once per code block per layout. Under `--watch`
+    /// that meant the statusbar carried the same warning forever and the
+    /// `Reloaded` notice was never seen again.
+    #[test]
+    fn a_name_already_reported_is_not_reported_again_after_collection() {
+        let _guard = exclusively();
+        forget_what_was_said();
+
+        theme_for(Some("only-once"));
+        assert_eq!(take_warnings().len(), 1);
+
+        // As many layouts as you like; the reader has already been told.
+        for _ in 0..5 {
+            theme_for(Some("only-once"));
+        }
+        assert!(take_warnings().is_empty(), "the same name was reported twice");
+    }
+
     #[test]
     fn a_theme_that_exists_says_nothing() {
         let _guard = exclusively();
-        let _ = take_warnings();
+        forget_what_was_said();
         theme_for(Some(FALLBACK));
         theme_for(None);
         assert!(take_warnings().is_empty());
