@@ -179,6 +179,19 @@ fn frontmatter_is_hidden() {
     assert!(output.contains("The Body"), "the body is missing: {output}");
 }
 
+/// The refusal has to arrive without stdin being read: `vademecum --watch -`
+/// typed at a terminal would otherwise sit waiting for input it was never
+/// going to use. Nothing is piped in here, so a hang is a failure.
+#[test]
+fn watching_stdin_is_refused_without_reading_it() {
+    let output = vademecum().args(["--watch", "-"]).output().expect("vademecum runs");
+
+    assert!(!output.status.success(), "watching a pipe was accepted");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot watch stdin"), "the reason was not given: {stderr}");
+    assert!(output.stdout.is_empty(), "a document was rendered anyway: {:?}", String::from_utf8_lossy(&output.stdout));
+}
+
 #[test]
 fn stdin_is_read_from_a_dash() {
     use std::io::Write;
