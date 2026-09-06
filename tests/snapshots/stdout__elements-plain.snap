@@ -46,6 +46,33 @@ expression: output
  print("a shebang names the language when the fence tag does not")
 
 
+ The four languages syntect's default set leaves out, which syntaxes/ supplies.
+
+                                                                          swift
+ let greeting: String = "hi"
+ func greet() { print(greeting) }
+
+
+                                                                         kotlin
+ fun greet() {
+     val greeting: String = "hi"
+     println(greeting)
+ }
+
+
+                                                                           toml
+ [package]
+ name = "vademecum"
+ edition = "2024"
+
+
+                                                                     typescript
+ const greeting: string = "hi";
+ function greet(): void {
+     console.log(greeting);
+ }
+
+
  Quotes
 
  ┃ A block quote, long enough to wrap inside its own gutter so the continuation

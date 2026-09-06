@@ -514,7 +514,14 @@ mod tests {
         // out of the buffer character for character. Paragraph-only fixtures
         // missed a table rendering as borders around nothing.
         let source = include_str!("../../tests/fixtures/elements.md");
-        let size = Size::new(82, 130);
+        // Tall enough for the whole fixture, measured rather than guessed: the
+        // fixture grows whenever a construct is added, and a literal height
+        // makes that show up here as a failure about the terminal rather than
+        // about the painting this test is for.
+        let width = 82;
+        let measured = app(source, Size::new(width, u16::MAX)).lines.len();
+        let size =
+            Size::new(width, u16::try_from(measured).expect("the fixture is not 65535 lines") + crate::ui::app::CHROME_ROWS);
         let app = app(source, size);
         assert!(app.lines.len() <= app.viewport_height(), "the whole fixture has to be on screen");
 

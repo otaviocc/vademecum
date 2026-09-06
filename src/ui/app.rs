@@ -20,7 +20,7 @@ use crate::ui::input::{Action, Motion};
 use crate::ui::search::{self, Search};
 
 /// Rows the chrome takes: header, its rule, the statusbar's rule, statusbar.
-const CHROME_ROWS: u16 = 4;
+pub(crate) const CHROME_ROWS: u16 = 4;
 /// What the header and statusbar call a document that came from stdin.
 const STDIN: &str = "stdin";
 
