@@ -168,6 +168,17 @@ already chosen one — their terminal's. It asserts no color of its own beyond
 the 16 the terminal defines, so vademecum looks like everything else on the
 screen until told otherwise.
 
+That is also why `ansi` gives code no background. The 16 ANSI colors have no
+dark grey in them: the nearest, `dark_gray`, is *bright black*, which most
+terminal schemes render as a mid grey. As the background of inline code and of
+whole code blocks that reads as a washed-out slab, and it collided with the
+cursor line, which used the same slot — so the bar vanished exactly where the
+README promises it stays visible. `ansi` therefore styles code by foreground
+alone and keeps `subtle` for the cursor line, which is the one place a filled
+band is wanted and the one place bright black is right. The three themed
+built-ins set `subtle` to a real near-background tint and keep their code
+backgrounds.
+
 ### Theme format
 
 ```toml
@@ -208,8 +219,14 @@ modifiers = ["bold", "underline"]
 
 [elements.inline_code]
 fg = "warning"
-bg = "subtle"
+bg = "none"      # no background at all — see below
 ```
+
+`bg = "none"` is the one value that is not a color: it removes an element's
+background rather than changing it, leaving whatever is underneath. It is
+accepted for `bg` alone — a foreground is what a glyph is drawn in and cannot be
+absent — and it is what `reset` is not: `reset` paints the terminal's own
+background *over* what is beneath, while `none` paints nothing.
 
 Every slot a file leaves out keeps its default, which is the `ansi` built-in:
 
@@ -224,9 +241,10 @@ Every slot a file leaves out keeps its default, which is the `ansi` built-in:
 | `selection_foreground` | `white` | | |
 | `error` | `red` | | |
 
-`subtle` is the one slot `ansi` cannot leave as `reset`: it is the background
-of the cursor line and of code blocks, and a background equal to the
-terminal's own would make both invisible.
+`subtle` is the one slot `ansi` cannot leave as `reset`: it is the background of
+the cursor line, and a background equal to the terminal's own would make the bar
+invisible. Under `ansi` it is the cursor line's alone — see the note on that
+theme above.
 
 Every element and its default derivation from the palette:
 
@@ -443,7 +461,8 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
 - **Code blocks** never wrap: lines longer than the width are truncated with
   `…`. A blank fence line shows the language tag right-aligned, a second one
   closes the block, and every line is padded to the full width so the
-  background is an unbroken rectangle.
+  background is an unbroken rectangle — invisible, and harmless, under a theme
+  that gives code no background.
 - **Tables**: column width = max cell width; if the sum exceeds the wrap
   width, shrink columns proportionally (min 3) and wrap cells. Box-drawing
   borders in `table_border`, a rule under the header and none between body
