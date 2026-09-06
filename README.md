@@ -494,12 +494,20 @@ restores scroll and cursor.
   created lazily once (`OnceLock`), plus user `.tmTheme` files from
   `<config>/syntax-themes/` via `ThemeSet::add_from_folder`.
 - Language lookup by fence tag (`find_syntax_by_token`), then by first-line
-  shebang, else plain text.
+  shebang, else plain text. The bundled set is syntect's own: Rust, C, C++,
+  Objective-C, Java, Scala, Go, Python, Ruby, Perl, PHP, JavaScript, HTML, CSS,
+  shell, Makefile, SQL, XML, YAML, JSON, LaTeX and the rest of the Sublime
+  Text defaults. Swift, TypeScript, Kotlin and TOML are *not* in it; a fence
+  tagged with one of those renders as plain code until their syntaxes are
+  bundled.
 - Each block is highlighted once with `HighlightLines` and cached by
   `(lang, text hash)`; the `fancy-regex` engine is slower than Oniguruma, so
   highlighting is never redone on scroll or resize.
 - syntect `Style` → our `Style`: foreground color and bold/italic/underline
   only; background comes from `code_block.bg`.
+- A `syntax_theme` naming a theme that is neither bundled nor present in
+  `<config>/syntax-themes/` is a warning on stderr, printed once, not an error:
+  the document still renders, highlighted with `base16-ocean.dark`.
 - `--list-syntax-themes` prints bundled and user theme names.
 
 ### UI layout & chrome
