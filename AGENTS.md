@@ -215,3 +215,34 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - Stage commits explicitly. `git add -A` after editing both the README and the
   source sweeps them into one commit, and a README amendment has to stand
   alone (§4).
+- `clippy -D warnings` also makes an unconstructed enum variant a build
+  failure, which is what decides how a TUI milestone splits. Slicing it by
+  module (search.rs, then app.rs, then view.rs) leaves `Mode::Search` and
+  `Status::Error` unbuilt for a PR or two; slicing it by **feature** — the
+  shell, then search and help — means every PR wires up what it adds. Leave a
+  variant out entirely until the milestone that constructs it.
+- `ratatui::try_init()` installs a panic hook that *chains*: it restores the
+  terminal and then calls whatever hook was already there. Anything of ours
+  that has to run on a panic — releasing mouse capture, say — must therefore be
+  installed **before** `try_init`, not after.
+- `Frame::buffer_mut` does exist in 0.30, but writing the view as `Widget`
+  impls is still worth it: a test can then render straight into a
+  `Buffer::empty(rect)` with no `Terminal` at all, and use
+  `Terminal::new(TestBackend::new(w, h))` plus `terminal.backend().buffer()`
+  only for whole frames. Assert on the buffer read back as text
+  (`buffer[(x, y)].symbol()`), not on `insta`: a second snapshot tree under
+  `src/` is churn the view tests do not need.
+- `Buffer::set_stringn(x, y, s, max, style) -> (u16, u16)` is the right
+  primitive for painting a `StyledSpan`: it clips to the area, skips control
+  characters and advances by display columns. Watch for it returning the same
+  `x` it was given — that is a full line, and a loop that ignores it spins.
+- Case-insensitive search must fold one character at a time against the
+  original text. Matching over a `to_lowercase()` copy of the line is easier
+  but its byte offsets index the copy, and `İ` folds to two characters, so the
+  highlight lands on the wrong bytes.
+- The TUI can be smoke-tested for real: `printf 'jjq' | script -q /dev/null sh
+  -c 'stty rows 24 cols 80; ./target/debug/vademecum README.md'`, then strip
+  the escapes with `perl -pe 's/\e\[[0-9;?]*[a-zA-Z]//g'`. Without the `stty`
+  the pty is 0x0 and the pager correctly draws nothing, which looks like a bug
+  and is not one. Keys reach it because crossterm reads `/dev/tty`, which is
+  also why `cat x.md | vademecum -` works.
