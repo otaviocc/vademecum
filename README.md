@@ -15,28 +15,7 @@ definitions are compiled in.
 
 *vade mecum*, Latin: "go with me" — the handbook you carry.
 
-```
- vademecum · README.md              ? help  / search  ⇥ link  ⏎ follow  h/l back/fwd  q quit
-────────────────────────────────────────────────────────────────────────────────────────────
-     file, because editors save by rename.
- 13. Mouse — the wheel scrolls, on by default. --no-mouse turns capture off and
-     gives the terminal back its own text selection.
-
- Usage
-
-
- vademecum README.md                   # interactive TUI
- vademecum --plain README.md           # force stdout mode even on a TTY
- vademecum README.md | less -R         # stdout mode is automatic when piped
- vademecum --color always README.md > out.ansi
- vademecum --width 80 README.md        # wrap width (default: min(terminal - 2, 100))
- vademecum --theme catppuccin-mocha README.md
- vademecum --config ~/my-theme.toml README.md
- vademecum --root ~/notes README.md    # vault root for wikilink lookup
- vademecum --watch README.md
-────────────────────────────────────────────────────────────────────────────────────────────
-README.md · line 87/964 · 8% · match 1/1
-```
+<img width="983" height="863" alt="Screenshot" src="https://github.com/user-attachments/assets/7b7a173e-8908-4d79-9d5c-622f149cf194" />
 
 ## Install
 
