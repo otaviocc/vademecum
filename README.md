@@ -168,16 +168,28 @@ already chosen one — their terminal's. It asserts no color of its own beyond
 the 16 the terminal defines, so vademecum looks like everything else on the
 screen until told otherwise.
 
-That is also why `ansi` gives code no background. The 16 ANSI colors have no
-dark grey in them: the nearest, `dark_gray`, is *bright black*, which most
-terminal schemes render as a mid grey. As the background of inline code and of
-whole code blocks that reads as a washed-out slab, and it collided with the
-cursor line, which used the same slot — so the bar vanished exactly where the
-README promises it stays visible. `ansi` therefore styles code by foreground
-alone and keeps `subtle` for the cursor line, which is the one place a filled
-band is wanted and the one place bright black is right. The three themed
-built-ins set `subtle` to a real near-background tint and keep their code
-backgrounds.
+That is also why **code carries no background by default**. The 16 ANSI colors
+have no dark grey in them: the nearest, `dark_gray`, is *bright black*, which
+most terminal schemes render as a mid grey. As the background of inline code and
+of whole code blocks that reads as a washed-out slab, and it collided with the
+cursor line, which uses the same slot — so the bar vanished exactly where this
+README promises it stays visible.
+
+The default therefore styles code by foreground alone and leaves `subtle` to the
+cursor line, which is the one place a filled band is wanted and the one place
+bright black is right. A theme whose `subtle` is a real near-background tint
+asks for the band back with `bg = "subtle"`, which is what the three themed
+built-ins do. Putting it this way round rather than overriding it inside
+`themes/ansi.toml` is deliberate: a partial theme file merges over the
+**defaults**, so a file naming nothing but an accent would otherwise inherit the
+slab while the shipped `ansi` looked clean.
+
+For the same reason `search_match` and `search_current` name `black` rather than
+`palette.background`. That was meant as an inversion and is not one: in `ansi`
+the background slot is `reset`, and `reset` as a *foreground* means the
+terminal's foreground, so a match painted default-on-yellow. In a light theme it
+fails differently — a pale background colour on an orange highlight reads no
+better. Black holds up on both yellow and magenta.
 
 ### Theme format
 
@@ -243,8 +255,8 @@ Every slot a file leaves out keeps its default, which is the `ansi` built-in:
 
 `subtle` is the one slot `ansi` cannot leave as `reset`: it is the background of
 the cursor line, and a background equal to the terminal's own would make the bar
-invisible. Under `ansi` it is the cursor line's alone — see the note on that
-theme above.
+invisible. By default it is the cursor line's alone — see the note under
+Built-in themes.
 
 Every element and its default derivation from the palette:
 
@@ -258,9 +270,9 @@ Every element and its default derivation from the palette:
 | `emphasis` | — | — | italic | |
 | `strong` | — | — | bold | |
 | `strikethrough` | muted_text | — | crossed_out | |
-| `inline_code` | warning | subtle | — | |
-| `code_block` | foreground | subtle | — | bg applies to the whole block; syntect fg colors layered on top |
-| `code_block_lang` | muted_text | subtle | — | language tag shown on the fence line |
+| `inline_code` | warning | — | — | see the note on `subtle` below |
+| `code_block` | foreground | — | — | a theme with a real `subtle` sets `bg = "subtle"`; syntect fg colors layer on top |
+| `code_block_lang` | muted_text | — | — | language tag shown on the fence line |
 | `quote` | muted_text | — | italic | `┃ ` gutter in `muted` |
 | `list_bullet` | accent | — | — | `•`, `◦`, `▪` by nesting depth |
 | `list_number` | accent | — | — | honors ordered-list start numbers |
@@ -282,19 +294,17 @@ Every element and its default derivation from the palette:
 | `status_notice` | notice | — | — | transient messages ("Opened x.md") |
 | `status_error` | error | — | bold | |
 | `cursor_line` | — | subtle | — | applied over the whole line |
-| `search_match` | background | warning | — | |
-| `search_current` | background | notice | bold | |
+| `search_match` | black | warning | — | black, not `background`: see below |
+| `search_current` | black | notice | bold | |
 | `help_window` | foreground | background | — | border in accent |
 
 The `ansi` built-in maps every slot to a `Color::Reset` or a 16-color ANSI
 name so it never asserts truecolor.
 
 What every partial theme file merges over is the **table above** — the palette
-defaults and the element derivations — not the `ansi` file. The two are the same
-thing for every slot and for all but five elements; where they part is the code
-and search styling `ansi` overrides for the reason given under Built-in themes.
-A theme file that names a real `subtle` therefore inherits the code backgrounds,
-which is what a theme with a real `subtle` wants.
+defaults and the element derivations. `themes/ansi.toml` is a readable copy of
+exactly that, which a test keeps true, so the default theme and the merge base
+cannot drift apart.
 
 The `syntax_theme` key cleanly separates **element styling** (our TOML) from
 **code token coloring** (syntect). Only the syntect theme's *foreground*

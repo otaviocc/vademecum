@@ -3,7 +3,7 @@
 
 use serde::Deserialize;
 
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 
 use crate::theme::color::ColorSpec;
 use crate::theme::palette::Palette;
@@ -165,9 +165,14 @@ pub fn default_style(element: Element, palette: &Palette) -> Style {
         Element::Emphasis => style.add_modifier(Modifier::ITALIC),
         Element::Strong => style.add_modifier(Modifier::BOLD),
         Element::Strikethrough => style.fg(palette.muted_text).add_modifier(Modifier::CROSSED_OUT),
-        Element::InlineCode => style.fg(palette.warning).bg(palette.subtle),
-        Element::CodeBlock => style.fg(palette.foreground).bg(palette.subtle),
-        Element::CodeBlockLang => style.fg(palette.muted_text).bg(palette.subtle),
+        // No background. The default palette is `ansi`'s, whose `subtle` is
+        // ANSI bright black — a mid grey in most schemes, and a washed-out slab
+        // behind code. A theme naming a real `subtle` asks for it back with
+        // `bg = "subtle"`, as the three themed built-ins do; a partial file that
+        // leaves `subtle` alone inherits a default that is safe with it.
+        Element::InlineCode => style.fg(palette.warning),
+        Element::CodeBlock => style.fg(palette.foreground),
+        Element::CodeBlockLang => style.fg(palette.muted_text),
         Element::Quote => style.fg(palette.muted_text).add_modifier(Modifier::ITALIC),
         Element::ListBullet | Element::ListNumber => style.fg(palette.accent),
         Element::TaskDone => style.fg(palette.success),
@@ -189,8 +194,14 @@ pub fn default_style(element: Element, palette: &Palette) -> Style {
         Element::StatusNotice => style.fg(palette.notice),
         Element::StatusError => style.fg(palette.error).add_modifier(Modifier::BOLD),
         Element::CursorLine => style.bg(palette.subtle),
-        Element::SearchMatch => style.fg(palette.background).bg(palette.warning),
-        Element::SearchCurrent => style.fg(palette.background).bg(palette.notice).add_modifier(Modifier::BOLD),
+        // Black rather than `palette.background`, which is the inversion these
+        // want and not what it does. In `ansi` the background slot is `reset`,
+        // and `reset` as a *foreground* means the terminal's foreground — so a
+        // match painted default-on-yellow. In a light theme it is worse: a pale
+        // background colour on an orange highlight reads no better. Black is
+        // the one foreground that holds up on both yellow and magenta.
+        Element::SearchMatch => style.fg(Color::Black).bg(palette.warning),
+        Element::SearchCurrent => style.fg(Color::Black).bg(palette.notice).add_modifier(Modifier::BOLD),
         Element::HelpWindow => style.fg(palette.foreground).bg(palette.background),
     }
 }

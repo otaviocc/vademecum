@@ -279,24 +279,44 @@ mod tests {
         // over; `themes/ansi.toml` is the readable copy of them, and this is
         // what keeps the two from drifting. Only the colors are compared: the
         // file also names a syntax theme, which the defaults have no opinion on.
-        //
-        // The exceptions are deliberate and listed one by one, so a sixth
-        // override cannot be added to the file without saying so here.
-        let overridden =
-            [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang, Element::SearchMatch, Element::SearchCurrent];
-
         let embedded = theme(BUILT_IN[0].1);
         let default = Theme::default();
         assert_eq!(embedded.palette, default.palette);
-        for element in Element::ALL.iter().filter(|element| !overridden.contains(element)) {
-            assert_eq!(embedded.style(*element), default.style(*element), "{element:?} differs from the default");
+        for element in Element::ALL {
+            assert_eq!(embedded.style(element), default.style(element), "{element:?} differs from the default");
+        }
+    }
+
+    /// Why the readability fix is in the defaults rather than in
+    /// `themes/ansi.toml`: a partial file merges over the defaults, so a theme
+    /// naming nothing but an accent must not inherit a slab behind its code or
+    /// a search highlight that fails to invert.
+    #[test]
+    fn a_partial_theme_inherits_the_readable_defaults() {
+        let theme = theme("name = \"mine\"\n[palette]\naccent = \"green\"\n");
+        for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
+            assert_eq!(theme.style(element).bg, None, "{element:?} inherited a background");
+        }
+        for element in [Element::SearchMatch, Element::SearchCurrent] {
+            assert_eq!(theme.style(element).fg, Some(Color::Black), "{element:?}");
+        }
+    }
+
+    /// And a theme whose `subtle` is a real tint asks for the band back, which
+    /// is what the three themed built-ins do.
+    #[test]
+    fn a_theme_with_a_real_subtle_can_have_its_code_background() {
+        for name in ["catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
+            let source = BUILT_IN.iter().find(|(built_in, _)| *built_in == name).expect("a built-in").1;
+            let built_in = theme(source);
+            for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
+                assert_eq!(built_in.style(element).bg, Some(built_in.palette.subtle), "{name} {element:?}");
+            }
         }
     }
 
     /// Bright black is what `dark_gray` means, and as the background of code it
-    /// reads as a washed-out slab. `ansi` styles code by foreground alone; the
-    /// three themed built-ins, whose `subtle` is a real near-background tint,
-    /// keep theirs.
+    /// reads as a washed-out slab.
     #[test]
     fn the_ansi_theme_gives_code_no_background() {
         let ansi = theme(BUILT_IN[0].1);

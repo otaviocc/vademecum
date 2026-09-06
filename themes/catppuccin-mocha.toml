@@ -17,3 +17,14 @@ accent               = "#cba6f7"   # mauve
 chrome               = "#cba6f7"   # mauve
 highlight            = "#89b4fa"   # blue
 notice               = "#f5c2e7"   # pink
+
+# This palette's `subtle` is a real near-background tint rather than ANSI bright
+# black, so code gets its band back; the default leaves it off for `ansi`'s sake.
+[elements.inline_code]
+bg = "subtle"
+
+[elements.code_block]
+bg = "subtle"
+
+[elements.code_block_lang]
+bg = "subtle"
