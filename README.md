@@ -525,19 +525,40 @@ area, and a statusbar, separated by hairline `─` rules.
 ```
 
 - **Header** — ` vademecum · <title> ` in `header_title` (title from
-  frontmatter, else the filename), shortcut hints right-aligned in `hint`,
-  hairline rule below.
-- **Statusbar** — priority: `status_error` (e.g. "note.md: not found") >
+  frontmatter, else the filename, else `stdin` when the document came from
+  there), shortcut hints right-aligned in `hint`, hairline rule below. The
+  hints list the bindings the build actually has, so they grow as milestones
+  land; when the title and the hints would collide, the hints give way.
+- **Statusbar** — priority: the `/` prompt in Search mode (the reader has to
+  see what they type) > `status_error` (e.g. "note.md: not found") >
   `status_notice` (transient, cleared on next key) > `status`
-  (`file · line X/Y · N%`, where Y is the rendered line count). In Search
-  mode it shows the `/` prompt and `match i/n`.
+  (`file · line X/Y · N%`, where `file` is the filename or `stdin`, Y is the
+  rendered line count, and N is `cursor · 100 / (Y − 1)` — the cursor line's
+  position, so the first line reads 0% and the last 100%). Whenever a search
+  query is active, ` · match i/n` is appended.
 - **Help overlay** — `?` opens a centered popup (60% width, height clamped
   to 40–90% of the terminal) listing every keybinding; `?`, `Esc`, or `q`
-  close it.
-- **Cursor line** — highlighted with `cursor_line`; moves with `j`/`k`,
-  scrolling the viewport when it hits the edge. Page and jump keys move both.
+  close it. It does not scroll: a terminal too short for the whole table
+  clips it.
+- **Cursor line** — highlighted with `cursor_line` across the full terminal
+  width, and over whatever background the line's own spans carry, so the
+  cursor stays visible inside a code block. It moves with `j`/`k`, scrolling
+  the viewport when it hits the edge. A page is the viewport height less one
+  line of context and a half page is half the viewport height; both move
+  cursor and viewport together.
+- **Search** — `/` collects a query and matching runs on `Enter`, not on every
+  keystroke, so typing stays responsive in a long document. The cursor jumps
+  to the first match at or after it, wrapping; every match is highlighted. A
+  query that matches nothing leaves the cursor where it is and says so in the
+  statusbar. `Esc` while typing abandons the text and leaves the previous
+  query and its highlights standing; `Esc` in Browse mode clears the query,
+  the matches and the highlight. Neither moves the cursor.
+- **Mouse** — with `--mouse`, a wheel notch scrolls the viewport three lines;
+  the cursor is pulled to the nearest visible line rather than travelling with
+  it.
 - **Resize** — re-layout from the cached AST, keep the cursor on the same
-  source line, recompute search matches.
+  source line, recompute search matches. Only a change of *width* re-lays the
+  document out; a taller or shorter terminal costs nothing.
 - **Panic hook** — leaves raw mode and the alternate screen before printing
   the panic, so a bug never leaves the terminal broken.
 - **Errors** during navigation or reload never exit the program; they land
@@ -559,9 +580,9 @@ area, and a statusbar, separated by hairline `─` rules.
 | `/` | Search (type, `Enter` to confirm, `Esc` to cancel) |
 | `n` / `N` | Next / previous match |
 | `?` | Help overlay |
-| `Esc` | Close overlay, clear search highlight |
+| `Esc` | Close overlay; abandon a search being typed; clear the search highlight |
 | `q`, `Ctrl-C` | Quit (restore terminal) |
-| Mouse wheel | Scroll (only with `--mouse`) |
+| Mouse wheel | Scroll the viewport three lines a notch (only with `--mouse`) |
 
 ### Stdout mode (`render/ansi.rs`)
 
