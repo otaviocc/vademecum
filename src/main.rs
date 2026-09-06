@@ -5,6 +5,7 @@ mod markdown;
 mod render;
 mod theme;
 mod ui;
+mod watch;
 
 use std::io::{BufWriter, IsTerminal, Write};
 use std::path::Path;
@@ -36,6 +37,7 @@ fn main() -> Result<()> {
     // here — before the document is loaded, before the alternate screen, and
     // before the lazy walk that would otherwise swallow it.
     check_root(cli.root.as_deref())?;
+    check_watch(cli.watch, cli.path.as_deref())?;
 
     let document = load(&cli)?;
 
@@ -52,7 +54,7 @@ fn main() -> Result<()> {
     let theme = theme::loader::load(cli.config.as_deref(), cli.theme.as_deref())?;
 
     if is_terminal && !cli.plain {
-        return ui::run(document, theme, ui::Options { mouse: cli.mouse, width: cli.width, root: cli.root });
+        return ui::run(document, theme, ui::Options { mouse: cli.mouse, width: cli.width, root: cli.root, watch: cli.watch });
     }
 
     let blocks = markdown::ast::parse(&document.source);
@@ -137,6 +139,21 @@ fn check_root(root: Option<&Path>) -> Result<()> {
     }
 }
 
+/// `--watch` asks to re-read a file whenever it changes. A pipe names no file
+/// to re-read and offers no second chance to be read at all, so asking to watch
+/// one is a mistake in the command.
+///
+/// The order matters: this runs *before* the document is loaded, because
+/// `Document::from_stdin` reads to EOF. Checking afterwards would leave
+/// `vademecum --watch -` typed at a terminal waiting for input it was never
+/// going to use.
+fn check_watch(watch: bool, path: Option<&Path>) -> Result<()> {
+    match watch && path == Some(Path::new("-")) {
+        true => bail!("--watch: cannot watch stdin; pass a file path instead"),
+        false => Ok(()),
+    }
+}
+
 fn load(cli: &Cli) -> Result<Document> {
     match cli.path.as_deref() {
         Some(path) if path == Path::new("-") => Document::from_stdin(),
@@ -200,6 +217,16 @@ mod tests {
     #[test]
     fn a_missing_path_is_an_error_rather_than_a_hang() {
         assert!(load(&cli(&[])).is_err());
+    }
+
+    #[test]
+    fn watching_needs_a_file_and_says_so_before_reading_anything() {
+        assert!(check_watch(true, Some(Path::new("-"))).is_err());
+        assert!(check_watch(true, Some(Path::new("notes.md"))).is_ok());
+        // Without the flag a dash is the ordinary way to read a pipe.
+        assert!(check_watch(false, Some(Path::new("-"))).is_ok());
+        // No path at all is `load`'s complaint to make, not this one's.
+        assert!(check_watch(true, None).is_ok());
     }
 
     #[test]

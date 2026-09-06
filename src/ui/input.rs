@@ -59,6 +59,9 @@ pub enum Action {
     History {
         forward: bool,
     },
+    /// The watcher saw the open document change on disk. No key produces it —
+    /// the event loop raises it — so it is not in the table below.
+    Reload,
 }
 
 /// The one mapping from a terminal event to an action, given what keys mean

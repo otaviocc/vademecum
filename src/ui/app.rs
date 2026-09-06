@@ -52,6 +52,15 @@ struct Entry {
     focus: usize,
 }
 
+/// Where the reader is standing, in terms that survive a re-layout.
+#[derive(Debug, Clone, Copy)]
+struct Place {
+    /// The source line under the cursor.
+    anchor: usize,
+    /// The screen row it sits on, signed: the wheel can put it off either end.
+    row: isize,
+}
+
 /// Everything the pager knows.
 pub struct App {
     pub theme: Theme,
@@ -88,6 +97,10 @@ pub struct App {
     /// Which of the cursor line's links `Enter` would follow. A line with one
     /// link focuses it without being asked, which is what 0 means here.
     pub focus: usize,
+    /// Whether the error on the statusbar is the last reload's own. A reload
+    /// that works disproves it; an error from anywhere else is not its to
+    /// clear.
+    reload_failed: bool,
     /// Where the reader has been, and where `l` would take them back to.
     back: Vec<Entry>,
     forward: Vec<Entry>,
@@ -121,6 +134,7 @@ impl App {
             title,
             file,
             focus: 0,
+            reload_failed: false,
             back: Vec::new(),
             forward: Vec::new(),
         }
@@ -128,15 +142,20 @@ impl App {
 
     /// The reducer. Every state change in the pager comes through here.
     pub fn apply(&mut self, action: Action) {
-        // A notice lasts until the next key. A resize is not a key: dragging
-        // the window should not swallow what the pager just said.
-        if !matches!(action, Action::Resize(_)) {
+        // A notice lasts until the next key. Neither a resize nor a reload is
+        // a key: dragging the window, or someone else saving the file, should
+        // not swallow what the pager just said — least of all an error the
+        // reader has not read yet.
+        if !matches!(action, Action::Resize(_) | Action::Reload) {
             self.status = Status::Idle;
+            // The reader has acted, so whatever the last reload said is gone
+            // from the screen and is no longer anyone's to clear.
+            self.reload_failed = false;
         }
 
-        // A resize is not on this list: `relayout` puts the cursor back at the
-        // height it was already at, off-screen included, and revealing it would
-        // pull a scrolled-away viewport back.
+        // Neither a resize nor a reload is on this list: `rerender` puts the
+        // cursor back at the height it was already at, off-screen included, and
+        // revealing it would pull a scrolled-away viewport back.
         let moves_cursor = matches!(
             action,
             Action::Move(_) | Action::SearchConfirm | Action::SearchStep { .. } | Action::Follow | Action::History { .. }
@@ -147,6 +166,7 @@ impl App {
             Action::Move(motion) => self.move_cursor(motion),
             Action::Scroll(delta) => self.scroll(delta),
             Action::Resize(area) => self.resize(area),
+            Action::Reload => self.reload(),
             Action::ToggleHelp => self.mode = if self.mode == Mode::Help { Mode::Browse } else { Mode::Help },
             Action::Dismiss => self.search.clear(),
             Action::SearchStart => {
@@ -371,6 +391,19 @@ impl App {
         self.search.seek_from(self.cursor)
     }
 
+    /// The document on screen, when it came from a file. The event loop needs
+    /// it to keep the watch pointed at what the reader is reading.
+    pub fn path(&self) -> Option<&Path> {
+        self.links.document.path.as_deref()
+    }
+
+    /// A failure the reducer cannot see, because it happened to the event loop
+    /// rather than to the pager: the watch losing its footing when the reader
+    /// navigates. Transient like any other error — the next key clears it.
+    pub fn report(&mut self, error: &str) {
+        self.status = Status::Error(error.to_string());
+    }
+
     /// Rows the document itself gets. Always at least one, so a terminal too
     /// short for the chrome still shows a line rather than dividing by zero.
     pub fn viewport_height(&self) -> usize {
@@ -440,20 +473,72 @@ impl App {
     /// Lay the cached blocks out again, and put the reader back where they
     /// were: on the same source line, at the same height on the screen.
     fn relayout(&mut self) {
-        let anchor = self.anchor();
-        // Signed, because the wheel can leave the cursor above or below the
-        // viewport and a rewrap should not quietly pull it back into it.
-        let row = self.cursor as isize - self.top as isize;
+        let place = self.place();
+        self.rerender(place);
+    }
 
+    /// The file changed under the reader. Re-read it, re-parse it, and lay it
+    /// out again at the place they were standing — the same promise a resize
+    /// makes, for the same reason.
+    ///
+    /// It reuses neither `show` nor `remember`: the first is navigation and
+    /// resets the reader to the top of the document, and a reload is not
+    /// history — an entry would clear the way forward and leave `h` stepping
+    /// onto a stale copy of the file already on screen.
+    fn reload(&mut self) {
+        // A document that came from a pipe has nothing to re-read.
+        let Some(path) = self.links.document.path.clone() else { return };
+        let document = match Document::load(&path) {
+            // Deleted, or unreadable, or caught mid-rename. None of those is a
+            // reason to take the text away from the reader: the error is said
+            // and the document stays, until the next write reloads it.
+            Err(error) => {
+                self.status = Status::Error(format!("{error:#}"));
+                self.reload_failed = true;
+                return;
+            }
+            Ok(document) => document,
+        };
+
+        let place = self.place();
+        (self.title, self.file) = names(&document);
+        self.blocks = ast::parse(&document.source);
+        self.links.open(document);
+        self.rerender(place);
+        // A notice, and only over a statusbar that is not already answering
+        // the reader. An error is what they asked for and did not get, and
+        // someone else saving the file is no reason to take it off the screen
+        // before they have acted on it — the same ordering `Status` documents.
+        // The one error this may overwrite is the last reload's own, which
+        // having just read the file it has disproved.
+        if self.reload_failed || !matches!(self.status, Status::Error(_)) {
+            self.status = Status::Notice(format!("Reloaded {}", self.file));
+        }
+        self.reload_failed = false;
+    }
+
+    /// Where the reader is standing, in terms that survive a re-layout: the
+    /// source line under the cursor, and the screen row it sits on.
+    fn place(&self) -> Place {
+        // The row is signed, because the wheel can leave the cursor above or
+        // below the viewport and neither a rewrap nor a reload should quietly
+        // pull it back into it.
+        Place { anchor: self.anchor(), row: self.cursor as isize - self.top as isize }
+    }
+
+    /// Lay the blocks out at the current width and put the reader back at
+    /// `place`. The blocks may be the ones that were already there — a resize —
+    /// or freshly parsed from a file that changed under the reader.
+    fn rerender(&mut self, place: Place) {
         self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
 
         self.cursor = self
             .lines
             .iter()
-            .position(|line| line.source_line == anchor)
-            .or_else(|| self.lines.iter().position(|line| !line.is_blank() && line.source_line >= anchor))
+            .position(|line| line.source_line == place.anchor)
+            .or_else(|| self.lines.iter().position(|line| !line.is_blank() && line.source_line >= place.anchor))
             .unwrap_or(self.cursor);
-        self.top = offset(self.cursor, -row);
+        self.top = offset(self.cursor, -place.row);
         // The line the cursor lands on is a different line, with its own links:
         // a narrower width can leave the old index past the end of them, and
         // `Enter` with nothing focused does nothing at all.
@@ -647,6 +732,131 @@ mod tests {
         app.apply(Action::Move(Motion::Line(-1)));
         assert_eq!(app.cursor, 8, "snapped to the last visible line of a ten-row viewport, then moved");
         assert_eq!(app.top, 0);
+    }
+
+    /// A document on disk, so the reload path has a real file to re-read. The
+    /// directory is returned with it: dropping it would take the file away.
+    fn on_disk(source: &str) -> (tempfile::TempDir, App) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, source).expect("write");
+        let document = Document::load(&path).expect("load");
+        let app = App::new(document, Theme::default(), &Options { width: Some(40), ..Options::default() }, Size::new(60, 14));
+        (dir, app)
+    }
+
+    fn rewrite(dir: &tempfile::TempDir, source: &str) {
+        std::fs::write(dir.path().join("note.md"), source).expect("write");
+    }
+
+    #[test]
+    fn a_reload_keeps_the_reader_on_the_line_they_were_reading() {
+        let (dir, mut app) = on_disk(&numbered(40));
+        app.apply(Action::Move(Motion::Page(1)));
+        // Blank lines belong to no source line and the anchor walks back off
+        // them; park on real text so the assertion is about the reload.
+        while app.lines[app.cursor].is_blank() {
+            app.apply(Action::Move(Motion::Line(1)));
+        }
+        let (source_line, row, lines) = (app.lines[app.cursor].source_line, app.cursor - app.top, app.lines.len());
+
+        // Appended, not prepended: the anchor is a source line number, so
+        // adding text above the reader legitimately moves them.
+        rewrite(&dir, &format!("{}{}", numbered(40), numbered(10)));
+        app.apply(Action::Reload);
+
+        assert!(app.lines.len() > lines, "the file on disk was not re-read");
+        assert_eq!(app.lines[app.cursor].source_line, source_line, "the reader lost the line they were on");
+        assert_eq!(app.cursor - app.top, row, "and the height on the screen it was at");
+    }
+
+    /// The reason a reload goes through `apply` rather than being called
+    /// directly: `bound` runs there, and without it a file that shrank leaves
+    /// the cursor and the viewport pointing past the end of the document.
+    #[test]
+    fn a_reload_that_shortens_the_file_keeps_the_cursor_on_a_line_that_exists() {
+        let (dir, mut app) = on_disk(&numbered(40));
+        app.apply(Action::Move(Motion::Bottom));
+
+        rewrite(&dir, "just the one paragraph now\n");
+        app.apply(Action::Reload);
+
+        assert!(app.cursor < app.lines.len(), "cursor {} is past the {} lines left", app.cursor, app.lines.len());
+        assert!(app.top <= app.cursor, "the viewport starts after the cursor");
+    }
+
+    #[test]
+    fn a_reload_says_so_and_a_file_that_has_gone_says_why() {
+        let (dir, mut app) = on_disk(&numbered(10));
+        rewrite(&dir, &numbered(12));
+        app.apply(Action::Reload);
+        assert_eq!(app.status, Status::Notice(String::from("Reloaded note.md")));
+
+        let lines = app.lines.len();
+        std::fs::remove_file(dir.path().join("note.md")).expect("remove");
+        app.apply(Action::Reload);
+        assert!(matches!(app.status, Status::Error(_)), "a file that has gone said nothing: {:?}", app.status);
+        assert_eq!(app.lines.len(), lines, "the reader lost the document as well as the file");
+    }
+
+    /// A reload that works disproves the last one's complaint. Without this the
+    /// statusbar goes on saying the file cannot be read while the reader is
+    /// looking at its new contents, and every later save reloads in silence.
+    #[test]
+    fn a_reload_that_works_clears_the_failure_that_came_before_it() {
+        let (dir, mut app) = on_disk(&numbered(10));
+        std::fs::remove_file(dir.path().join("note.md")).expect("remove");
+        app.apply(Action::Reload);
+        assert!(matches!(app.status, Status::Error(_)), "the failure was not reported");
+
+        rewrite(&dir, &numbered(12));
+        app.apply(Action::Reload);
+        assert_eq!(app.status, Status::Notice(String::from("Reloaded note.md")));
+    }
+
+    #[test]
+    fn a_reload_does_not_wipe_an_error_the_reader_has_not_read() {
+        let (dir, mut app) = on_disk("[[missing]] link\n");
+        app.apply(Action::Follow);
+        let Status::Error(error) = app.status.clone() else { panic!("expected an error, got {:?}", app.status) };
+
+        rewrite(&dir, "[[missing]] link\n\nand more\n");
+        app.apply(Action::Reload);
+        assert_eq!(app.status, Status::Error(error), "someone else's save swallowed the reader's answer");
+    }
+
+    #[test]
+    fn a_reload_matches_a_standing_query_against_the_text_that_is_there_now() {
+        let (dir, mut app) = on_disk("needle once\n\nfiller\n");
+        search_for(&mut app, "needle");
+        let before = app.search.matches.len();
+
+        rewrite(&dir, "needle once\n\nfiller\n\nneedle twice\n");
+        app.apply(Action::Reload);
+
+        assert!(app.search.matches.len() > before, "the new text was not searched");
+        for found in &app.search.matches {
+            let text = app.lines[found.line].text();
+            assert_eq!(&text[found.start..found.end], "needle", "the offsets index the new lines");
+        }
+    }
+
+    #[test]
+    fn a_piped_document_has_nothing_to_reload() {
+        let piped = Document::new(None, PathBuf::from("."), numbered(10));
+        let mut app = App::new(piped, Theme::default(), &Options::default(), Size::new(60, 14));
+        app.apply(Action::Reload);
+        assert_eq!(app.status, Status::Idle, "there is no file behind a pipe to have failed");
+    }
+
+    #[test]
+    fn the_open_document_names_the_file_the_watch_should_follow() {
+        let mut app = vault();
+        assert_eq!(app.path(), Some(Path::new("tests/fixtures/vault/index.md")));
+
+        focus_link(&mut app, "note");
+        app.apply(Action::Follow);
+        assert_eq!(app.path(), Some(Path::new("tests/fixtures/vault/note.md")), "the watch has somewhere new to follow");
     }
 
     #[test]

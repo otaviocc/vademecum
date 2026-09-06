@@ -179,6 +179,51 @@ fn frontmatter_is_hidden() {
     assert!(output.contains("The Body"), "the body is missing: {output}");
 }
 
+/// The refusal has to arrive *without stdin being read*: `vademecum --watch -`
+/// typed at a terminal would otherwise sit waiting for input it was never
+/// going to use.
+///
+/// Which is why the pipe is held open and never written to. `Command::output`
+/// would give the child a closed stdin, and a regression that read it would hit
+/// EOF at once and go on to refuse anyway — the test would pass while the bug
+/// it names was back. An open pipe is the only stdin that tells the two apart,
+/// so here a regression hangs, and the deadline turns that into a failure.
+#[test]
+fn watching_stdin_is_refused_without_reading_it() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let mut child = vademecum()
+        .args(["--watch", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("vademecum runs");
+    // Held for the whole test: dropping it would close the pipe and hand a
+    // regression the EOF this test exists to withhold.
+    let pipe = child.stdin.take().expect("stdin is piped");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        match child.try_wait().expect("vademecum can be waited on") {
+            Some(status) => break status,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                panic!("vademecum --watch - is waiting on stdin instead of refusing it");
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    drop(pipe);
+
+    let output = child.wait_with_output().expect("vademecum can be collected");
+    assert!(!status.success(), "watching a pipe was accepted");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot watch stdin"), "the reason was not given: {stderr}");
+    assert!(output.stdout.is_empty(), "a document was rendered anyway: {:?}", String::from_utf8_lossy(&output.stdout));
+}
+
 #[test]
 fn stdin_is_read_from_a_dash() {
     use std::io::Write;

@@ -77,7 +77,8 @@ you from shell to shell.
 11. **Frontmatter** — leading YAML (`---`) or TOML (`+++`) frontmatter is
     hidden from the rendered document; a `title:` key becomes the header title.
 12. **Live reload** — `--watch` re-renders the document when it changes on
-    disk, preserving scroll position.
+    disk, keeping the reader on the line they were reading. It watches the
+    file's *directory* rather than the file, because editors save by rename.
 13. **Mouse (opt-in)** — `--mouse` enables wheel scrolling. Off by default
     because mouse capture disables the terminal's native text selection.
 
@@ -110,7 +111,7 @@ vademecum --list-syntax-themes        # syntect themes (built-in + user)
 | `--theme <name>` | Built-in or user theme by name |
 | `--config <file>` | Explicit theme file (overrides `--theme`) |
 | `--root <dir>` | Vault root for wikilink resolution |
-| `--watch` | Re-render on file change (not allowed with stdin) |
+| `--watch` | Re-render on file change. Needs a file: refused with stdin, ignored in stdout mode |
 | `--mouse` | Enable mouse capture (wheel scroll) |
 | `--list-themes`, `--list-syntax-themes` | Print available names and exit |
 | `--resolve-links` | Debug: print each link and its resolved path, then exit (stdout mode) |
@@ -427,6 +428,10 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
    `ui/` runs the ratatui event loop.
 6. **Navigate** — following a link pushes `(Document, scroll, cursor)` onto
    the history, loads and renders the target, and re-arms the watcher.
+7. **Wake** — the pager waits on one channel. A thread forwards terminal
+   events onto it and, with `--watch`, the watcher posts changes onto the same
+   channel, so the loop blocks on a single `recv` and there is no timer
+   anywhere — an idle reader costs nothing whether or not they are watching.
 
 ### Layout rules
 
@@ -620,6 +625,25 @@ area, and a statusbar, separated by hairline `─` rules.
 - **Resize** — re-layout from the cached AST, keep the cursor on the same
   source line, recompute search matches. Only a change of *width* re-lays the
   document out; a taller or shorter terminal costs nothing.
+- **Live reload** — with `--watch`, a write to the open document re-reads it,
+  re-parses it and lays it out again, putting the reader back exactly as a
+  resize does: on the same source line, at the same height on the screen, with
+  a standing search matched against the new text. It says `Reloaded <file>` as
+  a notice — unless the statusbar is already carrying an error, which is the
+  answer to something the reader asked for and did not get: someone else saving
+  the file is no reason to take that off the screen before they have acted on
+  it. What is watched is the file's **directory**, not the file: editors
+  save by renaming a new file into place, so a watch on the file itself goes
+  deaf after the first save, and a document that is deleted and restored comes
+  back on its own. Writes are debounced, so one save is one reload. A file that
+  cannot be read — deleted, or unreadable — is a statusbar error and nothing
+  more: the document stays on screen and the next write reloads it. The help
+  overlay does not suppress a reload; it swallows the reader's keys, not the
+  world's changes. `--watch -` names no file to re-read, and a pipe offers no
+  second chance to be read at all, so it is refused — `--watch: cannot watch
+  stdin; pass a file path instead` on stderr, and a non-zero exit **before**
+  stdin is drained, which is what keeps `vademecum --watch -` from hanging at a
+  terminal waiting for input it would never use.
 - **Panic hook** — leaves raw mode and the alternate screen before printing
   the panic, so a bug never leaves the terminal broken.
 - **A terminal too short** for the chrome draws whatever rows it has and no
@@ -678,6 +702,13 @@ area, and a statusbar, separated by hairline `─` rules.
     colors; unknown language yields one style; cache hit on repeated block.
   - `ui/search.rs` — smart-case, match positions, wrap-around for `n`/`N`.
   - `ui/input.rs` — key → action table, mode transitions (Browse/Search/Help).
+  - `ui/app.rs` — reload keeps the source line and the screen row; a file that
+    shrank leaves the cursor on a line that exists; an unreadable one is a
+    statusbar error that leaves the document on screen.
+  - `watch.rs` — the armed directory and name of a path (a symlink arms on its
+    target's directory); which event paths name the open document; a watcher
+    error counts as a change. One test writes to a real file and waits for the
+    watch to see it.
 - **Integration tests** (`tests/`, via `assert_cmd`)
   - `vademecum --plain --color always --width 80 fixtures/elements.md`
     snapshot with `insta` (one snapshot per built-in theme).
