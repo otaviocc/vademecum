@@ -26,6 +26,7 @@ const HELP: &[(&str, &str)] = &[
     ("Tab / Shift-Tab", "Cycle the links on the cursor line, counted on the statusbar"),
     ("Enter", "Follow focused local/wiki link"),
     ("o", "Open focused external link in the browser"),
+    ("y / Y", "Copy the cursor line / the focused link's target"),
     ("h / Backspace, l", "History back, forward"),
     ("/", "Search (Enter confirms, Esc cancels)"),
     ("n / N", "Next / previous match"),
@@ -408,8 +409,8 @@ mod tests {
         let popup = help_area(area);
         assert_eq!(popup.width, 60);
         assert_eq!(popup.x, 20, "centred");
-        assert_eq!(popup.height, 16);
-        assert_eq!(popup.y, 12, "centred");
+        assert_eq!(popup.height, 17);
+        assert_eq!(popup.y, 11, "centred");
     }
 
     #[test]
@@ -581,7 +582,7 @@ mod tests {
 
     #[test]
     fn the_help_overlay_lists_every_binding_the_readme_names() {
-        for key in ["Tab / Shift-Tab", "Enter", "o", "h / Backspace, l"] {
+        for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "h / Backspace, l"] {
             assert!(HELP.iter().any(|(row, _)| *row == key), "{key} is not in the help table");
         }
     }

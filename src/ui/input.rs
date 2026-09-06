@@ -35,6 +35,8 @@ pub enum Action {
     Follow,
     OpenExternal,
     History { forward: bool },
+    Yank,
+    YankLink,
     Reload,
 }
 
@@ -83,6 +85,8 @@ fn browse(key: KeyEvent) -> Option<Action> {
         KeyCode::BackTab => Some(Action::Focus { forward: false }),
         KeyCode::Enter => Some(Action::Follow),
         KeyCode::Char('o') => Some(Action::OpenExternal),
+        KeyCode::Char('y') => Some(Action::Yank),
+        KeyCode::Char('Y') => Some(Action::YankLink),
         KeyCode::Char('h') | KeyCode::Backspace => Some(Action::History { forward: false }),
         KeyCode::Char('l') => Some(Action::History { forward: true }),
         KeyCode::Char('/') => Some(Action::SearchStart),
@@ -172,6 +176,8 @@ mod tests {
             (press(KeyCode::BackTab), Action::Focus { forward: false }),
             (press(KeyCode::Enter), Action::Follow),
             (press(KeyCode::Char('o')), Action::OpenExternal),
+            (press(KeyCode::Char('y')), Action::Yank),
+            (press(KeyCode::Char('Y')), Action::YankLink),
             (press(KeyCode::Char('h')), Action::History { forward: false }),
             (press(KeyCode::Backspace), Action::History { forward: false }),
             (press(KeyCode::Char('l')), Action::History { forward: true }),

@@ -67,6 +67,7 @@ pub struct App {
     pub file: String,
     pub focus: usize,
     reload_failed: bool,
+    copied: Option<String>,
     back: Vec<Entry>,
     forward: Vec<Entry>,
 }
@@ -101,6 +102,7 @@ impl App {
             file,
             focus: 0,
             reload_failed: false,
+            copied: None,
             back: Vec::new(),
             forward: Vec::new(),
         }
@@ -144,6 +146,8 @@ impl App {
             Action::Follow => self.follow(),
             Action::OpenExternal => self.open_external(),
             Action::History { forward } => self.travel(forward),
+            Action::Yank => self.yank(),
+            Action::YankLink => self.yank_link(),
         }
 
         self.bound();
@@ -188,6 +192,35 @@ impl App {
         if let Err(error) = open::that_detached(url.as_str()) {
             self.status = Status::Error(format!("{url}: {error}"));
         }
+    }
+
+    fn yank(&mut self) {
+        let Some(line) = self.lines.get(self.cursor) else { return };
+        let text = line.text();
+        let text = text[line.byte_at(layout::GUTTER)..].trim_end().to_string();
+        self.copy(text, String::from("Copied the line"));
+    }
+
+    fn yank_link(&mut self) {
+        let Some(kind) = self.focused().map(|link| link.kind.clone()) else {
+            self.status = Status::Notice(String::from("no link on this line"));
+            return;
+        };
+        let destination = kind.destination();
+        let notice = format!("Copied {destination}");
+        self.copy(destination, notice);
+    }
+
+    fn copy(&mut self, text: String, notice: String) {
+        if text.is_empty() {
+            return;
+        }
+        self.copied = Some(text);
+        self.status = Status::Notice(notice);
+    }
+
+    pub fn take_copy(&mut self) -> Option<String> {
+        self.copied.take()
     }
 
     fn open(&mut self, path: &Path, fragment: Option<&str>) {
@@ -992,6 +1025,53 @@ mod tests {
             source.to_string(),
         );
         App::new(document, Theme::default(), &Options { width: Some(78), ..Options::default() }, Size::new(80, 24))
+    }
+
+    #[test]
+    fn yanking_copies_the_cursor_line_without_the_gutter() {
+        let mut app = app("a paragraph to copy\n", 14);
+        app.apply(Action::Yank);
+
+        assert_eq!(app.take_copy().as_deref(), Some("a paragraph to copy"));
+        assert_eq!(app.status, Status::Notice(String::from("Copied the line")));
+    }
+
+    #[test]
+    fn a_copy_is_handed_over_once() {
+        let mut app = app("a paragraph to copy\n", 14);
+        app.apply(Action::Yank);
+
+        assert!(app.take_copy().is_some());
+        assert_eq!(app.take_copy(), None);
+    }
+
+    #[test]
+    fn yanking_a_blank_line_copies_nothing() {
+        let mut app = app("first\n\nthird\n", 14);
+        app.apply(Action::Move(Motion::Line(1)));
+        app.apply(Action::Yank);
+
+        assert_eq!(app.take_copy(), None);
+        assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn yanking_a_link_copies_where_it_points_rather_than_its_label() {
+        let mut app = inside_vault("see [the note](notes/note.md) for more\n");
+        focus_link(&mut app, "notes/note.md");
+        app.apply(Action::YankLink);
+
+        assert_eq!(app.take_copy().as_deref(), Some("notes/note.md"));
+        assert_eq!(app.status, Status::Notice(String::from("Copied notes/note.md")));
+    }
+
+    #[test]
+    fn yanking_a_link_off_a_line_that_has_none_says_so() {
+        let mut app = app("no links here\n", 14);
+        app.apply(Action::YankLink);
+
+        assert_eq!(app.take_copy(), None);
+        assert_eq!(app.status, Status::Notice(String::from("no link on this line")));
     }
 
     fn focus_link(app: &mut App, destination: &str) {
