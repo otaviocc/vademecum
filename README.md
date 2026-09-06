@@ -19,8 +19,8 @@ definitions are compiled in.
  vademecum · README.md              ? help  / search  ⇥ link  ⏎ follow  h/l back/fwd  q quit
 ────────────────────────────────────────────────────────────────────────────────────────────
      file, because editors save by rename.
- 13. Mouse (opt-in) — --mouse enables wheel scrolling. Off by default because mouse
-     capture disables the terminal's native text selection.
+ 13. Mouse — the wheel scrolls, on by default. --no-mouse turns capture off and
+     gives the terminal back its own text selection.
 
  Usage
 
@@ -221,8 +221,9 @@ TOML. Origins and licences for the added ones are in
 | `Esc` | Close the overlay, or clear the search |
 | `q`, `Ctrl-C` | Quit |
 
-With `--mouse`, the wheel scrolls three lines a notch. It is off by default
-because capturing the mouse takes away your terminal's own text selection.
+The wheel scrolls three lines a notch. Capturing the mouse takes your terminal's
+own text selection away, so `--no-mouse` turns it off; most terminals also let
+you hold `Shift` while dragging to select through a capturing program.
 
 ## Flags
 
@@ -236,7 +237,7 @@ because capturing the mouse takes away your terminal's own text selection.
 | `--config <file>` | Explicit theme file, beats `--theme` |
 | `--root <dir>` | Vault root for wikilink lookup |
 | `--watch` | Re-render on change. Needs a file |
-| `--mouse` | Wheel scrolling |
+| `--no-mouse` | Give up wheel scrolling, keep the terminal's own selection |
 | `--list-themes`, `--list-syntax-themes` | Print available names and exit |
 | `--resolve-links` | Print every link and where it resolves, then exit |
 
