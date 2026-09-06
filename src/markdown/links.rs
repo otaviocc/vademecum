@@ -94,6 +94,14 @@ impl LinkKind {
         }
     }
 
+    /// The `#heading` a link carries, if it carries one.
+    pub fn fragment(&self) -> Option<&str> {
+        match self {
+            Self::External(_) => None,
+            Self::Local { fragment, .. } | Self::Wiki { fragment, .. } => fragment.as_deref(),
+        }
+    }
+
     /// The link as written, fragment included.
     pub fn destination(&self) -> String {
         let with_fragment = |body: String, fragment: &Option<String>| match fragment {
@@ -164,6 +172,12 @@ impl Links {
     pub fn new(document: Document, root: Option<&Path>) -> Self {
         let vault = Vault::discover(root, &document.base_dir);
         Self { document, vault }
+    }
+
+    /// Move to another document without rediscovering the vault: following a
+    /// link stays inside the collection the reader started in.
+    pub fn open(&mut self, document: Document) {
+        self.document = document;
     }
 
     pub fn resolve(&self, kind: &LinkKind) -> Result<Target, ResolveError> {
