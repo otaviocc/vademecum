@@ -12,11 +12,30 @@ use crate::render::layout;
 use crate::render::line::RenderedLine;
 use crate::theme::Theme;
 use crate::ui::input::{Action, Motion};
+use crate::ui::search::{self, Search};
 
 /// Rows the chrome takes: header, its rule, the statusbar's rule, statusbar.
 const CHROME_ROWS: u16 = 4;
 /// What the header and statusbar call a document that came from stdin.
 const STDIN: &str = "stdin";
+
+/// What keys mean right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    #[default]
+    Browse,
+    Search,
+    Help,
+}
+
+/// The statusbar's transient line. A notice is cleared by the next key, which
+/// is what makes it transient.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Status {
+    #[default]
+    Idle,
+    Notice(String),
+}
 
 /// Everything the pager knows.
 pub struct App {
@@ -37,6 +56,13 @@ pub struct App {
     /// Index into `lines`: the first visible row.
     pub top: usize,
     pub quit: bool,
+    pub mode: Mode,
+    pub status: Status,
+    pub search: Search,
+    /// The plain text of every line, which is what search scans. Built the
+    /// first time a query is confirmed and dropped on a re-layout, so opening
+    /// a document never pays for it.
+    plain: Option<Vec<String>>,
     /// Header title: frontmatter title, else the file name, else `stdin`.
     pub title: String,
     /// Statusbar file: the file name, else `stdin`.
@@ -56,18 +82,99 @@ impl App {
         let width = layout::wrap_width(width_override, Some(area.width));
         let lines = layout::render(&blocks, &theme, width);
 
-        Self { theme, blocks, lines, width_override, width, area, cursor: 0, top: 0, quit: false, title, file }
+        Self {
+            theme,
+            blocks,
+            lines,
+            width_override,
+            width,
+            area,
+            cursor: 0,
+            top: 0,
+            quit: false,
+            mode: Mode::default(),
+            status: Status::default(),
+            search: Search::default(),
+            plain: None,
+            title,
+            file,
+        }
     }
 
     /// The reducer. Every state change in the pager comes through here.
     pub fn apply(&mut self, action: Action) {
+        // A notice lasts until the next key. A resize is not a key: dragging
+        // the window should not swallow what the pager just said.
+        if !matches!(action, Action::Resize(_)) {
+            self.status = Status::Idle;
+        }
+
         match action {
             Action::Quit => self.quit = true,
             Action::Move(motion) => self.move_cursor(motion),
             Action::Scroll(delta) => self.scroll(delta),
             Action::Resize(area) => self.resize(area),
+            Action::ToggleHelp => self.mode = if self.mode == Mode::Help { Mode::Browse } else { Mode::Help },
+            Action::Dismiss => self.search.clear(),
+            Action::SearchStart => {
+                self.mode = Mode::Search;
+                self.search.input.clear();
+            }
+            Action::SearchType(character) => self.search.input.push(character),
+            Action::SearchErase => {
+                self.search.input.pop();
+            }
+            Action::SearchCancel => {
+                self.mode = Mode::Browse;
+                self.search.input.clear();
+            }
+            Action::SearchConfirm => self.confirm_search(),
+            Action::SearchStep { forward } => self.step_search(forward),
         }
         self.clamp();
+    }
+
+    /// `Enter` on a query: match once, over the whole document, and take the
+    /// reader to the first hit at or after where they are.
+    fn confirm_search(&mut self) {
+        self.mode = Mode::Browse;
+        let query = std::mem::take(&mut self.search.input);
+        if query.is_empty() {
+            self.search.clear();
+            return;
+        }
+
+        self.cache_plain();
+        let matches = search::find(self.plain.as_deref().unwrap_or_default(), &query);
+        self.search.matches = matches;
+        self.search.current = None;
+        self.search.query = query;
+        let found = self.search.seek_from(self.cursor);
+        self.go_to_match(found);
+    }
+
+    /// `n` / `N`.
+    fn step_search(&mut self, forward: bool) {
+        if self.search.query.is_empty() {
+            self.status = Status::Notice(String::from("nothing to search for yet"));
+            return;
+        }
+        let found = self.search.step(forward);
+        self.go_to_match(found);
+    }
+
+    fn go_to_match(&mut self, found: Option<search::Match>) {
+        match found {
+            // `clamp` scrolls the viewport to it; that is its whole job.
+            Some(found) => self.cursor = found.line,
+            None => self.status = Status::Notice(format!("no matches for \"{}\"", self.search.query)),
+        }
+    }
+
+    fn cache_plain(&mut self) {
+        if self.plain.is_none() {
+            self.plain = Some(self.lines.iter().map(RenderedLine::text).collect());
+        }
     }
 
     /// Rows the document itself gets. Always at least one, so a terminal too
@@ -143,6 +250,16 @@ impl App {
             .or_else(|| self.lines.iter().position(|line| !line.is_blank() && line.source_line >= anchor))
             .unwrap_or(self.cursor);
         self.top = self.cursor.saturating_sub(row);
+
+        // The lines are new, so the cached text and the offsets into it are
+        // stale. A live query is matched again against the new layout.
+        self.plain = None;
+        if !self.search.query.is_empty() {
+            self.cache_plain();
+            self.search.matches = search::find(self.plain.as_deref().unwrap_or_default(), &self.search.query);
+            self.search.current = None;
+            self.search.seek_from(self.cursor);
+        }
     }
 
     /// The source line the cursor is on. Blank lines belong to no source line
@@ -325,6 +442,145 @@ mod tests {
         let app = App::new(piped, Theme::default(), None, Size::new(60, 14));
         assert_eq!(app.title, STDIN);
         assert_eq!(app.file, STDIN);
+    }
+
+    /// Type a query and confirm it.
+    fn search_for(app: &mut App, query: &str) {
+        app.apply(Action::SearchStart);
+        for character in query.chars() {
+            app.apply(Action::SearchType(character));
+        }
+        app.apply(Action::SearchConfirm);
+    }
+
+    #[test]
+    fn typing_a_query_stays_in_search_mode_until_it_is_confirmed() {
+        let mut app = paged();
+        app.apply(Action::SearchStart);
+        assert_eq!(app.mode, Mode::Search);
+
+        app.apply(Action::SearchType('l'));
+        app.apply(Action::SearchType('x'));
+        app.apply(Action::SearchErase);
+        assert_eq!(app.search.input, "l");
+        assert_eq!(app.mode, Mode::Search);
+
+        app.apply(Action::SearchConfirm);
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.search.query, "l");
+    }
+
+    #[test]
+    fn confirming_takes_the_reader_to_the_first_match_at_or_after_the_cursor() {
+        let mut app = paged();
+        search_for(&mut app, "line 7");
+        assert_eq!(app.lines[app.cursor].text().trim(), "line 7");
+        assert!(app.top <= app.cursor && app.cursor < app.top + app.viewport_height());
+    }
+
+    #[test]
+    fn a_search_wraps_when_there_is_nothing_below_the_cursor() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::Bottom));
+        // The only match is well above the cursor, so it can only be found by
+        // wrapping.
+        search_for(&mut app, "line 9");
+        assert_eq!(app.lines[app.cursor].text().trim(), "line 9");
+    }
+
+    #[test]
+    fn stepping_cycles_through_the_matches_both_ways() {
+        let mut app = paged();
+        search_for(&mut app, "line 1");
+        let first = app.cursor;
+
+        app.apply(Action::SearchStep { forward: true });
+        assert_ne!(app.cursor, first);
+        app.apply(Action::SearchStep { forward: false });
+        assert_eq!(app.cursor, first);
+    }
+
+    #[test]
+    fn a_fruitless_search_says_so_and_leaves_the_reader_alone() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::Line(1)));
+        let before = app.cursor;
+
+        search_for(&mut app, "nothing here");
+        assert_eq!(app.cursor, before);
+        assert_eq!(app.status, Status::Notice(String::from("no matches for \"nothing here\"")));
+    }
+
+    #[test]
+    fn a_notice_is_cleared_by_the_next_key_but_survives_a_resize() {
+        let mut app = paged();
+        search_for(&mut app, "nothing here");
+
+        app.apply(Action::Resize(Size::new(60, 20)));
+        assert!(matches!(app.status, Status::Notice(_)), "a drag of the window is not a keypress");
+
+        app.apply(Action::Move(Motion::Line(1)));
+        assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn escape_while_typing_keeps_the_query_that_was_already_standing() {
+        let mut app = paged();
+        search_for(&mut app, "line 1");
+        let matches = app.search.matches.len();
+
+        app.apply(Action::SearchStart);
+        app.apply(Action::SearchType('z'));
+        app.apply(Action::SearchCancel);
+
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.search.query, "line 1");
+        assert_eq!(app.search.matches.len(), matches);
+    }
+
+    #[test]
+    fn escape_while_browsing_drops_the_highlight_without_moving_the_reader() {
+        let mut app = paged();
+        search_for(&mut app, "line 7");
+        let before = app.cursor;
+
+        app.apply(Action::Dismiss);
+        assert!(app.search.query.is_empty());
+        assert!(app.search.matches.is_empty());
+        assert_eq!(app.cursor, before);
+    }
+
+    #[test]
+    fn a_rewrap_matches_the_query_against_the_new_layout() {
+        let source = (1..=20).map(|n| format!("paragraph {n} with a needle in it somewhere\n\n")).collect::<String>();
+        let document = Document::new(Some(PathBuf::from("x.md")), PathBuf::from("."), source);
+        let mut app = App::new(document, Theme::default(), None, Size::new(70, 14));
+        search_for(&mut app, "needle");
+        let before = app.search.matches.len();
+
+        app.apply(Action::Resize(Size::new(30, 14)));
+        assert_eq!(app.search.matches.len(), before, "every needle is still found");
+        for found in &app.search.matches {
+            let text = app.lines[found.line].text();
+            assert_eq!(&text[found.start..found.end], "needle", "the offsets index the new lines");
+        }
+    }
+
+    #[test]
+    fn n_without_a_query_says_there_is_nothing_to_repeat() {
+        let mut app = paged();
+        app.apply(Action::SearchStep { forward: true });
+        assert!(matches!(app.status, Status::Notice(_)));
+    }
+
+    #[test]
+    fn the_help_overlay_toggles_and_holds_the_reader_still_while_it_is_open() {
+        let mut app = paged();
+        app.apply(Action::ToggleHelp);
+        assert_eq!(app.mode, Mode::Help);
+
+        app.apply(Action::ToggleHelp);
+        assert_eq!(app.mode, Mode::Browse);
     }
 
     #[test]

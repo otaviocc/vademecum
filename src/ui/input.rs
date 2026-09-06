@@ -8,6 +8,8 @@
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::layout::Size;
 
+use crate::ui::app::Mode;
+
 /// Lines a wheel notch scrolls.
 const WHEEL_LINES: isize = 3;
 
@@ -32,24 +34,50 @@ pub enum Action {
     /// The wheel: move the viewport, the cursor following it into view.
     Scroll(isize),
     Resize(Size),
+    /// `?`: open the help overlay, or close it.
+    ToggleHelp,
+    /// `Esc` in Browse: drop the search highlight.
+    Dismiss,
+    SearchStart,
+    SearchType(char),
+    SearchErase,
+    SearchConfirm,
+    SearchCancel,
+    /// `n` / `N`.
+    SearchStep {
+        forward: bool,
+    },
 }
 
-/// The one mapping from a terminal event to an action.
-pub fn action(event: &Event) -> Option<Action> {
+/// The one mapping from a terminal event to an action, given what keys mean
+/// right now.
+pub fn action(event: &Event, mode: Mode) -> Option<Action> {
     match event {
         // Windows reports a Release for every Press; without the filter every
         // key would fire twice.
-        Event::Key(key) if key.kind == KeyEventKind::Press => key_action(*key),
+        Event::Key(key) if key.kind == KeyEventKind::Press => key_action(*key, mode),
         Event::Mouse(mouse) => mouse_action(*mouse),
         Event::Resize(columns, rows) => Some(Action::Resize(Size::new(*columns, *rows))),
         _ => None,
     }
 }
 
-fn key_action(key: KeyEvent) -> Option<Action> {
+fn key_action(key: KeyEvent, mode: Mode) -> Option<Action> {
+    // The one binding that means the same thing everywhere, including with a
+    // half-typed query on screen.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        return Some(Action::Quit);
+    }
+    match mode {
+        Mode::Browse => browse(key),
+        Mode::Search => typing(key),
+        Mode::Help => overlay(key),
+    }
+}
+
+fn browse(key: KeyEvent) -> Option<Action> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return match key.code {
-            KeyCode::Char('c') => Some(Action::Quit),
             KeyCode::Char('d') => Some(Action::Move(Motion::HalfPage(1))),
             KeyCode::Char('u') => Some(Action::Move(Motion::HalfPage(-1))),
             _ => None,
@@ -70,7 +98,38 @@ fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('b') | KeyCode::PageUp => Some(Action::Move(Motion::Page(-1))),
         KeyCode::Char('g') | KeyCode::Home => Some(Action::Move(Motion::Top)),
         KeyCode::Char('G') | KeyCode::End => Some(Action::Move(Motion::Bottom)),
+        KeyCode::Char('/') => Some(Action::SearchStart),
+        KeyCode::Char('n') => Some(Action::SearchStep { forward: true }),
+        KeyCode::Char('N') => Some(Action::SearchStep { forward: false }),
+        KeyCode::Char('?') => Some(Action::ToggleHelp),
+        KeyCode::Esc => Some(Action::Dismiss),
         KeyCode::Char('q') => Some(Action::Quit),
+        _ => None,
+    }
+}
+
+/// While a query is being typed every printable key is text, so `q` does not
+/// quit and `?` does not open the help.
+fn typing(key: KeyEvent) -> Option<Action> {
+    if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char(character) => Some(Action::SearchType(character)),
+        KeyCode::Backspace => Some(Action::SearchErase),
+        KeyCode::Enter => Some(Action::SearchConfirm),
+        KeyCode::Esc => Some(Action::SearchCancel),
+        _ => None,
+    }
+}
+
+/// The overlay swallows everything but the keys that close it.
+fn overlay(key: KeyEvent) -> Option<Action> {
+    if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc => Some(Action::ToggleHelp),
         _ => None,
     }
 }
@@ -100,6 +159,11 @@ mod tests {
         Event::Mouse(MouseEvent { kind, column: 0, row: 0, modifiers: KeyModifiers::NONE })
     }
 
+    /// What the key does while reading, which is most of the table.
+    fn browsing(event: &Event) -> Option<Action> {
+        action(event, Mode::Browse)
+    }
+
     #[test]
     fn every_documented_key_maps_to_its_action() {
         let table = [
@@ -119,55 +183,100 @@ mod tests {
             (press(KeyCode::Home), Action::Move(Motion::Top)),
             (press(KeyCode::Char('G')), Action::Move(Motion::Bottom)),
             (press(KeyCode::End), Action::Move(Motion::Bottom)),
+            (press(KeyCode::Char('/')), Action::SearchStart),
+            (press(KeyCode::Char('n')), Action::SearchStep { forward: true }),
+            (press(KeyCode::Char('N')), Action::SearchStep { forward: false }),
+            (press(KeyCode::Char('?')), Action::ToggleHelp),
+            (press(KeyCode::Esc), Action::Dismiss),
             (press(KeyCode::Char('q')), Action::Quit),
             (control('c'), Action::Quit),
         ];
         for (event, expected) in table {
-            assert_eq!(action(&event), Some(expected), "{event:?}");
+            assert_eq!(browsing(&event), Some(expected), "{event:?}");
         }
     }
 
     #[test]
     fn a_shifted_capital_still_reaches_its_binding() {
         let shifted = Event::Key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT));
-        assert_eq!(action(&shifted), Some(Action::Move(Motion::Bottom)));
+        assert_eq!(browsing(&shifted), Some(Action::Move(Motion::Bottom)));
     }
 
     #[test]
     fn a_release_is_not_a_second_press() {
         let mut key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
         key.kind = KeyEventKind::Release;
-        assert_eq!(action(&Event::Key(key)), None);
+        assert_eq!(browsing(&Event::Key(key)), None);
     }
 
     #[test]
     fn a_control_binding_does_not_answer_to_its_bare_letter_twice_over() {
         // Ctrl-b is not Page up: only the letters the table names are bound.
-        assert_eq!(action(&control('b')), None);
-        assert_eq!(action(&control('q')), None);
+        assert_eq!(browsing(&control('b')), None);
+        assert_eq!(browsing(&control('q')), None);
     }
 
     #[test]
     fn alt_disqualifies_a_key() {
         let alt = Event::Key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT));
-        assert_eq!(action(&alt), None);
+        assert_eq!(browsing(&alt), None);
     }
 
     #[test]
     fn the_wheel_scrolls_and_the_buttons_do_nothing() {
-        assert_eq!(action(&wheel(MouseEventKind::ScrollDown)), Some(Action::Scroll(WHEEL_LINES)));
-        assert_eq!(action(&wheel(MouseEventKind::ScrollUp)), Some(Action::Scroll(-WHEEL_LINES)));
-        assert_eq!(action(&wheel(MouseEventKind::Down(MouseButton::Left))), None);
+        assert_eq!(browsing(&wheel(MouseEventKind::ScrollDown)), Some(Action::Scroll(WHEEL_LINES)));
+        assert_eq!(browsing(&wheel(MouseEventKind::ScrollUp)), Some(Action::Scroll(-WHEEL_LINES)));
+        assert_eq!(browsing(&wheel(MouseEventKind::Down(MouseButton::Left))), None);
     }
 
     #[test]
-    fn a_resize_carries_the_new_size() {
-        assert_eq!(action(&Event::Resize(80, 24)), Some(Action::Resize(Size::new(80, 24))));
+    fn the_wheel_and_a_resize_reach_the_pager_in_every_mode() {
+        for mode in [Mode::Browse, Mode::Search, Mode::Help] {
+            assert_eq!(action(&Event::Resize(80, 24), mode), Some(Action::Resize(Size::new(80, 24))), "{mode:?}");
+            assert_eq!(action(&wheel(MouseEventKind::ScrollDown), mode), Some(Action::Scroll(WHEEL_LINES)), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn ctrl_c_quits_from_anywhere() {
+        for mode in [Mode::Browse, Mode::Search, Mode::Help] {
+            assert_eq!(action(&control('c'), mode), Some(Action::Quit), "{mode:?}");
+        }
     }
 
     #[test]
     fn an_unbound_key_is_ignored_rather_than_guessed_at() {
-        assert_eq!(action(&press(KeyCode::Char('z'))), None);
-        assert_eq!(action(&press(KeyCode::Insert)), None);
+        assert_eq!(browsing(&press(KeyCode::Char('z'))), None);
+        assert_eq!(browsing(&press(KeyCode::Insert)), None);
+    }
+
+    #[test]
+    fn a_printable_key_is_text_while_a_query_is_being_typed() {
+        for character in ['q', 'j', '?', '/', 'G', ' '] {
+            let event = press(KeyCode::Char(character));
+            assert_eq!(action(&event, Mode::Search), Some(Action::SearchType(character)), "{character:?}");
+        }
+    }
+
+    #[test]
+    fn the_query_is_edited_confirmed_and_abandoned() {
+        assert_eq!(action(&press(KeyCode::Backspace), Mode::Search), Some(Action::SearchErase));
+        assert_eq!(action(&press(KeyCode::Enter), Mode::Search), Some(Action::SearchConfirm));
+        assert_eq!(action(&press(KeyCode::Esc), Mode::Search), Some(Action::SearchCancel));
+    }
+
+    #[test]
+    fn a_control_chord_does_not_type_its_letter_into_the_query() {
+        assert_eq!(action(&control('d'), Mode::Search), None);
+    }
+
+    #[test]
+    fn the_overlay_answers_only_to_the_keys_that_close_it() {
+        for code in [KeyCode::Char('?'), KeyCode::Char('q'), KeyCode::Esc] {
+            assert_eq!(action(&press(code), Mode::Help), Some(Action::ToggleHelp), "{code:?}");
+        }
+        for code in [KeyCode::Char('j'), KeyCode::Char('/'), KeyCode::Down] {
+            assert_eq!(action(&press(code), Mode::Help), None, "{code:?}");
+        }
     }
 }
