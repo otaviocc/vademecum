@@ -501,8 +501,9 @@ restores scroll and cursor.
   tagged with one of those renders as plain code until their syntaxes are
   bundled.
 - Each block is highlighted once with `HighlightLines` and cached by
-  `(lang, text hash)`; the `fancy-regex` engine is slower than Oniguruma, so
-  highlighting is never redone on scroll or resize.
+  `(syntax, syntax theme, text hash)` — the three things its colors depend on;
+  the `fancy-regex` engine is slower than Oniguruma, so highlighting is never
+  redone on scroll or resize.
 - syntect `Style` → our `Style`: foreground color and bold/italic/underline
   only; background comes from `code_block.bg`.
 - A `syntax_theme` naming a theme that is neither bundled nor present in
