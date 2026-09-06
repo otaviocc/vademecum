@@ -1,8 +1,4 @@
 //! Colors as a theme file writes them.
-//!
-//! A value is an 8-bit index, a hex triplet, `reset`, or one of the sixteen
-//! ANSI names. An element's `fg`/`bg` may additionally name a palette slot; a
-//! slot may not, since a slot naming a slot is a cycle.
 
 use std::fmt;
 
@@ -11,15 +7,12 @@ use serde::de::{self, Deserialize, Deserializer, Visitor};
 
 use crate::theme::palette::Palette;
 
-/// A color exactly as written, before it is known what it resolves to. TOML
-/// spells an index as an integer and everything else as a string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ColorSpec {
     Index(u8),
     Name(String),
 }
 
-/// A value that is not any accepted form of color.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{value} is not a color: expected {expected}")]
 pub struct ColorError {
@@ -29,13 +22,10 @@ pub struct ColorError {
 
 const PALETTE_FORMS: &str = "an ANSI color name, an index 0-255, #rrggbb, or reset";
 const ELEMENT_FORMS: &str = "a palette slot, an ANSI color name, an index 0-255, #rrggbb, or reset";
-/// What `bg` accepts and no other key does: the absence of a color.
 const NO_COLOR: &str = "none";
 const NONE_FORMS: &str = "a color; \"none\" removes a background and is accepted for bg alone";
 
 impl ColorSpec {
-    /// Resolve as a `[palette]` value: no slot names, since they are what is
-    /// being defined.
     pub fn resolve(&self) -> Result<Color, ColorError> {
         match self {
             ColorSpec::Index(index) => Ok(Color::Indexed(*index)),
@@ -43,14 +33,9 @@ impl ColorSpec {
         }
     }
 
-    /// Resolve as an `[elements.*]` value, where a palette slot is a color.
-    /// The slot wins over a literal of the same spelling; none of the fourteen
-    /// slot names is also an ANSI name, so there is nothing to shadow.
     pub fn resolve_against(&self, palette: &Palette) -> Result<Color, ColorError> {
         match self {
             ColorSpec::Index(index) => Ok(Color::Indexed(*index)),
-            // Reached only where a color is required. A background asks
-            // `removes_color` first and never gets here.
             ColorSpec::Name(name) if name == NO_COLOR => Err(ColorError::new(name, NONE_FORMS)),
             ColorSpec::Name(name) => {
                 palette.slot(name).or_else(|| literal(name)).ok_or_else(|| ColorError::new(name, ELEMENT_FORMS))
@@ -58,12 +43,6 @@ impl ColorSpec {
         }
     }
 
-    /// `bg = "none"`: strip the element's background instead of setting one.
-    ///
-    /// Not the same as `reset`, which is a color — the terminal's own
-    /// background, painted *over* whatever is beneath. `none` paints nothing,
-    /// which is what lets `ansi` style code by foreground alone and leave the
-    /// cursor line's band to show through.
     pub fn removes_color(&self) -> bool {
         matches!(self, ColorSpec::Name(name) if name == NO_COLOR)
     }
@@ -75,7 +54,6 @@ impl ColorError {
     }
 }
 
-/// `reset`, an ANSI name, or `#rrggbb`.
 fn literal(value: &str) -> Option<Color> {
     if let Some(hex) = value.strip_prefix('#') {
         return rgb(hex);
@@ -102,8 +80,6 @@ fn literal(value: &str) -> Option<Color> {
     })
 }
 
-/// Exactly six hex digits. Three-digit shorthand is not accepted: guessing
-/// which of two readings a file meant is worse than saying it is unreadable.
 fn rgb(hex: &str) -> Option<Color> {
     if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
@@ -113,9 +89,6 @@ fn rgb(hex: &str) -> Option<Color> {
 }
 
 impl<'de> Deserialize<'de> for ColorSpec {
-    /// Hand-written rather than `#[serde(untagged)]`: these values arrive
-    /// through a flattened map, whose buffered deserializer does not give an
-    /// untagged enum the integer type it was written with.
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_any(ColorSpecVisitor)
     }

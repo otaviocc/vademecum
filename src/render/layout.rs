@@ -1,10 +1,4 @@
 //! Block tree → `Vec<RenderedLine>` at a given width.
-//!
-//! Wrapping is the only place display width matters, so `unicode-width` is
-//! used here and nowhere else. Nesting — quotes inside quotes, lists inside
-//! list items — is handled by rendering the inner blocks at a narrower width
-//! and then prefixing every line they produced, which keeps the gutter and
-//! indent rules in one place each.
 
 use std::path::PathBuf;
 
@@ -17,21 +11,11 @@ use crate::render::code;
 use crate::render::line::{self, LinkRef, RenderedLine, StyledSpan};
 use crate::theme::{Element, Theme};
 
-/// The one-column gutter the content is laid out inside.
 const GUTTER: usize = 1;
-/// Wrap width when there is no terminal to measure.
 const DEFAULT_WIDTH: usize = 100;
-/// Leaves a column either side of the content.
 const TERMINAL_MARGIN: usize = 2;
-/// Bullets by nesting depth, cycling.
 const BULLETS: [&str; 3] = ["•", "◦", "▪"];
 
-/// The width to lay a document out at: `--width` if the reader pinned one,
-/// else the terminal less a margin, capped at 100. `None` columns means there
-/// is no terminal to measure — a pipe, or a size query that failed.
-///
-/// Both callers need the same answer: stdout asks once at startup, the pager
-/// asks again on every resize.
 pub fn wrap_width(explicit: Option<u16>, columns: Option<u16>) -> usize {
     if let Some(width) = explicit {
         return usize::from(width).max(1);
@@ -42,10 +26,6 @@ pub fn wrap_width(explicit: Option<u16>, columns: Option<u16>) -> usize {
     }
 }
 
-/// What layout needs besides the blocks and the width: how to paint an
-/// element, and where its links point. The two travel together because
-/// resolution decides styling — a wikilink whose target is missing is painted
-/// `link_broken`, so the renderer cannot style a link without resolving it.
 pub struct Ctx<'a> {
     pub theme: &'a Theme,
     pub links: &'a Links,
@@ -57,7 +37,6 @@ impl<'a> Ctx<'a> {
     }
 }
 
-/// Lay a document out at `width` columns, gutter included.
 pub fn render(blocks: &[SourceBlock], ctx: &Ctx<'_>, width: usize) -> Vec<RenderedLine> {
     let content_width = width.saturating_sub(GUTTER).max(1);
     let mut lines = blocks_to_lines(blocks, ctx, ctx.theme.style(Element::Paragraph), content_width, 0);
@@ -67,16 +46,11 @@ pub fn render(blocks: &[SourceBlock], ctx: &Ctx<'_>, width: usize) -> Vec<Render
         if !line.is_blank() {
             line.prefix(gutter.clone());
         }
-        // Wrapping keeps almost everything inside the width on its own, but a
-        // table's borders and padding have a floor that a narrow width cannot
-        // pay for. Enforcing the invariant in one place means no caller has to
-        // be trusted with it.
         clamp_to_width(line, width);
     }
     lines
 }
 
-/// Cut a line to `width` columns, marking the cut with `…` as code blocks do.
 fn clamp_to_width(line: &mut RenderedLine, width: usize) {
     if line.width() <= width {
         return;
@@ -101,17 +75,12 @@ fn clamp_to_width(line: &mut RenderedLine, width: usize) {
         break;
     }
 
-    // A link is only followable if all of its text survived the cut.
     let kept = spans.len();
     line.links.retain(|link| link.span_range.end <= kept);
     spans.push(StyledSpan::new("…", cut_style));
     line.spans = spans;
 }
 
-/// A run of blocks, separated by one blank line, with no blank line trailing.
-///
-/// `base` is the style body text inherits — the paragraph style at document
-/// level, the quote style inside a quote — which every inline then patches.
 fn blocks_to_lines(blocks: &[SourceBlock], ctx: &Ctx<'_>, base: Style, width: usize, depth: usize) -> Vec<RenderedLine> {
     let mut lines: Vec<RenderedLine> = Vec::new();
     for block in blocks {
@@ -147,11 +116,8 @@ fn block_to_lines(block: &SourceBlock, ctx: &Ctx<'_>, base: Style, width: usize,
     }
 }
 
-/// `┃ ` per nesting level, with the quoted blocks wrapped inside it.
 fn quote_to_lines(blocks: &[SourceBlock], ctx: &Ctx<'_>, base: Style, width: usize, depth: usize) -> Vec<RenderedLine> {
     let gutter = StyledSpan::new("┃ ", Style::default().fg(ctx.theme.palette.muted));
-    // Quoted body text takes the quote style; a link or a `strong` inside it
-    // still patches its own on top.
     let quoted = base.patch(ctx.theme.style(Element::Quote));
 
     let mut lines = blocks_to_lines(blocks, ctx, quoted, width.saturating_sub(gutter.width()).max(1), depth);
@@ -193,8 +159,6 @@ fn list_to_lines(
     lines
 }
 
-/// An item's blocks. Unlike blocks at document level, a nested list follows
-/// its paragraph directly: the blank line would break the list in two.
 fn item_to_lines(blocks: &[SourceBlock], ctx: &Ctx<'_>, base: Style, width: usize, depth: usize) -> Vec<RenderedLine> {
     let mut lines: Vec<RenderedLine> = Vec::new();
     for block in blocks {
@@ -206,7 +170,6 @@ fn item_to_lines(blocks: &[SourceBlock], ctx: &Ctx<'_>, base: Style, width: usiz
     lines
 }
 
-/// The bullet, number, or task box that opens an item, padded to its column.
 fn marker_for(item: &ListItem, ordered: Option<u64>, index: usize, ctx: &Ctx<'_>, depth: usize) -> (String, Style) {
     match (item.task(), ordered) {
         (Some(true), _) => ("☑ ".to_string(), ctx.theme.style(Element::TaskDone)),
@@ -219,13 +182,11 @@ fn marker_for(item: &ListItem, ordered: Option<u64>, index: usize, ctx: &Ctx<'_>
     }
 }
 
-/// Drop the marker the bullet column now shows.
 fn strip_task_marker(blocks: &mut [SourceBlock]) {
     if let Some(SourceBlock { block: Block::Paragraph(inlines), .. }) = blocks.first_mut()
         && matches!(inlines.first(), Some(Inline::TaskMarker(_)))
     {
         inlines.remove(0);
-        // pulldown-cmark leaves the space after the marker in the text.
         if let Some(Inline::Text(text)) = inlines.first_mut() {
             let trimmed = text.trim_start().to_string();
             *text = trimmed;
@@ -233,9 +194,6 @@ fn strip_task_marker(blocks: &mut [SourceBlock]) {
     }
 }
 
-/// A fence line carrying the language tag, the code, and a closing fence line.
-/// Code never wraps: the background has to stay a clean rectangle, so a long
-/// line is truncated instead.
 fn code_to_lines(lang: Option<&str>, text: &str, ctx: &Ctx<'_>, width: usize, source_line: usize) -> Vec<RenderedLine> {
     let block = ctx.theme.style(Element::CodeBlock);
     let mut lines = vec![fence_line(lang, ctx, width, source_line)];
@@ -248,13 +206,9 @@ fn code_to_lines(lang: Option<&str>, text: &str, ctx: &Ctx<'_>, width: usize, so
     lines
 }
 
-/// One highlighted code line, cut to `width` and padded back out to it. The
-/// syntect styles are patched *over* the block style, so the block keeps its
-/// background and the `.tmTheme` contributes only foregrounds and font styles.
 fn code_line(code: &[StyledSpan], block: Style, width: usize, source_line: usize) -> RenderedLine {
     let total: usize = code.iter().map(StyledSpan::width).sum();
     let cut = total > width;
-    // The `…` needs a column of its own, exactly as `truncate` gives it one.
     let budget = if cut { width.saturating_sub(1) } else { width };
 
     let mut spans: Vec<StyledSpan> = Vec::with_capacity(code.len() + 1);
@@ -268,9 +222,6 @@ fn code_line(code: &[StyledSpan], block: Style, width: usize, source_line: usize
             used += head.width();
             spans.push(StyledSpan::new(head, block.patch(span.style)));
         }
-        // The first span that does not fit whole ends the line, even when a
-        // later one would still fit in the columns a wide character could not
-        // use. What is shown is always a prefix of the source.
         if !tail.is_empty() {
             break;
         }
@@ -281,8 +232,6 @@ fn code_line(code: &[StyledSpan], block: Style, width: usize, source_line: usize
         spans.push(StyledSpan::new("…", style));
         used += 1;
     }
-    // Padding to the full width is what makes the background a rectangle; a
-    // blank code line is nothing but padding.
     spans.push(StyledSpan::new(" ".repeat(width.saturating_sub(used)), block));
 
     RenderedLine { spans: line::merge(spans), source_line, ..RenderedLine::default() }
@@ -306,7 +255,6 @@ fn fence_line(lang: Option<&str>, ctx: &Ctx<'_>, width: usize, source_line: usiz
     }
 }
 
-/// `[^1] ` in front of the definition's blocks.
 fn footnote_to_lines(
     label: &str,
     blocks: &[SourceBlock],
@@ -363,10 +311,7 @@ fn table_to_lines(
     lines
 }
 
-/// Columns as wide as their widest cell, shrunk proportionally when the table
-/// does not fit.
 fn column_widths(header: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>], columns: usize, width: usize) -> Vec<usize> {
-    /// Nothing readable happens below three columns of text.
     const MIN: usize = 3;
 
     let mut widths = vec![0; columns];
@@ -376,8 +321,6 @@ fn column_widths(header: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>], columns: usi
         }
     }
 
-    // Borders and padding: one separator per column plus a closing one, and a
-    // space either side of every cell.
     let furniture = 3 * columns + 1;
     let natural: usize = widths.iter().sum();
     let available = width.saturating_sub(furniture);
@@ -385,12 +328,9 @@ fn column_widths(header: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>], columns: usi
         return widths;
     }
 
-    // Three columns of text per column is the goal, not a promise: at a narrow
-    // enough width holding it would push the table past the wrap width.
     let floor = MIN.min(available / columns).max(1);
     let mut shrunk: Vec<usize> = widths.iter().map(|w| (w * available / natural.max(1)).max(floor)).collect();
 
-    // Proportional shrinking rounds down; hand the remainder back left to right.
     let mut slack = available.saturating_sub(shrunk.iter().sum::<usize>());
     for (column, target) in shrunk.iter_mut().enumerate() {
         let room = widths[column].saturating_sub(*target).min(slack);
@@ -398,8 +338,6 @@ fn column_widths(header: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>], columns: usi
         slack -= room;
     }
 
-    // Rounding up to the floor can push the total back over. Take those columns
-    // back off the widest first, so the widest column pays for the narrow ones.
     let mut total: usize = shrunk.iter().sum();
     while total > available {
         let widest = shrunk.iter().enumerate().filter(|(_, width)| **width > floor).max_by_key(|(_, width)| **width);
@@ -468,14 +406,12 @@ fn rule_line(left: &str, join: &str, right: &str, widths: &[usize], style: Style
     styled_line(text, style, source_line)
 }
 
-/// A run of inlines flattened, then wrapped to `width`.
 fn wrap_inlines(inlines: &[Inline], ctx: &Ctx<'_>, base: Style, width: usize, source_line: usize) -> Vec<RenderedLine> {
     let mut flat = Flat::default();
     flat.push_inlines(inlines, ctx, base, None);
     Wrapper::new(width, source_line, &flat.links).run(&flat.pieces)
 }
 
-/// A styled run of text, plus the link it belongs to.
 struct Piece {
     text: String,
     style: Style,
@@ -483,15 +419,11 @@ struct Piece {
     hard_break: bool,
 }
 
-/// A link and the file it resolved to, kept together so the wrapper can put
-/// both into every `LinkRef` the link produces.
 struct Resolved {
     kind: LinkKind,
     target: Option<PathBuf>,
 }
 
-/// The file a resolved link names. `SameDocument` and `External` name none:
-/// one is already open and the other is not a file at all.
 fn file_of(target: Result<Target, ResolveError>) -> Option<PathBuf> {
     match target {
         Ok(Target::File(path)) => Some(path),
@@ -523,8 +455,6 @@ impl Flat {
             Inline::Html(value) => text(self, value.clone(), base.patch(ctx.theme.style(Element::Html))),
             Inline::Image { alt, .. } => text(self, format!("[image: {alt}]"), base.patch(ctx.theme.style(Element::Image))),
             Inline::FootnoteRef(label) => text(self, format!("[^{label}]"), base.patch(ctx.theme.style(Element::Footnote))),
-            // A soft break is where the author's line ended, not where the
-            // reader's will: it wraps like any other space.
             Inline::SoftBreak => text(self, " ".to_string(), base),
             Inline::Emphasis(children) => self.push_inlines(children, ctx, base.patch(ctx.theme.style(Element::Emphasis)), link),
             Inline::Strong(children) => self.push_inlines(children, ctx, base.patch(ctx.theme.style(Element::Strong)), link),
@@ -532,8 +462,6 @@ impl Flat {
                 self.push_inlines(children, ctx, base.patch(ctx.theme.style(Element::Strikethrough)), link)
             }
             Inline::Link { kind, inlines } => {
-                // Resolution and styling are the same decision: a link the
-                // reader cannot follow has to look like one.
                 let target = ctx.links.resolve(kind);
                 let element = match (kind, &target) {
                     (LinkKind::External(_), _) => Element::Link,
@@ -545,15 +473,11 @@ impl Flat {
                 self.push_inlines(inlines, ctx, base.patch(ctx.theme.style(element)), Some(id));
             }
             Inline::HardBreak => self.pieces.push(Piece { text: String::new(), style: base, link, hard_break: true }),
-            // The bullet column shows it instead.
             Inline::TaskMarker(_) => {}
         }
     }
 }
 
-/// Greedy word wrapper. Whitespace collapses at a break, a word too long for
-/// the width is broken hard, and a link crossing a break becomes one `LinkRef`
-/// per line.
 struct Wrapper<'a> {
     width: usize,
     source_line: usize,
@@ -562,8 +486,6 @@ struct Wrapper<'a> {
     current: RenderedLine,
     used: usize,
     open: Option<(usize, usize)>,
-    /// The style and link of the whitespace waiting to be emitted, taken from
-    /// the text it followed — a space before a link is not part of the link.
     pending_space: Option<(Style, Option<usize>)>,
 }
 
@@ -618,13 +540,9 @@ impl<'a> Wrapper<'a> {
             let (head, tail) = split_at_width(rest, room);
             if head.is_empty() {
                 if !self.current.spans.is_empty() {
-                    // No room left on this line, but a fresh one will have some.
                     self.newline();
                     continue;
                 }
-                // The character is wider than the whole line. Emitting it and
-                // overflowing by a column is the only way forward: looping for
-                // room that can never appear would hang.
                 let (head, tail) = split_first_char(rest);
                 self.emit(head, style, link);
                 self.newline();
@@ -651,8 +569,6 @@ impl<'a> Wrapper<'a> {
         }
 
         match self.current.spans.last_mut() {
-            // Two adjacent links share a style, so merging on style alone would
-            // fuse them into one span — and one of the two links would be lost.
             Some(last) if last.style == style && same_link => last.text.push_str(text),
             _ => self.current.push(StyledSpan::new(text, style)),
         }
@@ -695,7 +611,6 @@ enum Token<'a> {
     Space,
 }
 
-/// Split text into words and the whitespace between them.
 fn tokenize(text: &str) -> Vec<Token<'_>> {
     let mut tokens = Vec::new();
     let mut rest = text;
@@ -709,12 +624,10 @@ fn tokenize(text: &str) -> Vec<Token<'_>> {
     tokens
 }
 
-/// Split off the first character, which is always progress.
 fn split_first_char(text: &str) -> (&str, &str) {
     text.split_at(text.chars().next().map_or(0, char::len_utf8))
 }
 
-/// Split at the last char boundary that still fits in `width` columns.
 fn split_at_width(text: &str, width: usize) -> (&str, &str) {
     let mut used = 0;
     for (offset, c) in text.char_indices() {
@@ -727,7 +640,6 @@ fn split_at_width(text: &str, width: usize) -> (&str, &str) {
     (text, "")
 }
 
-/// Cut to `width` columns, marking the cut with `…`.
 fn truncate(text: &str, width: usize) -> String {
     if text.width() <= width {
         return text.to_string();
@@ -771,9 +683,6 @@ mod tests {
         assert_eq!(wrap_width(None, Some(1)), 1);
     }
 
-    /// Layout is about wrapping, not about the vault. Nothing these tests link
-    /// to exists on disk, so their local links render broken — which is the
-    /// right answer, and none of them assert otherwise.
     fn detached() -> Links {
         Links::new(Document::new(None, PathBuf::from("."), String::new()), None)
     }
@@ -784,8 +693,6 @@ mod tests {
         render(&parse(source), &Ctx::new(&theme, &links), width).iter().map(RenderedLine::text).collect()
     }
 
-    /// Rendering without the gutter, so the assertions read as the layout rules
-    /// are written.
     fn bare(source: &str, width: usize) -> Vec<String> {
         let theme = Theme::default();
         let links = detached();
@@ -903,8 +810,6 @@ mod tests {
 
     #[test]
     fn a_highlighted_line_truncates_and_stays_a_rectangle() {
-        // Highlighting splits the line into several spans, so the cut has to
-        // fall inside one of them and the rest of the line has to go.
         let theme = Theme::default();
         let links = detached();
         let rendered = blocks_to_lines(
@@ -921,9 +826,6 @@ mod tests {
 
     #[test]
     fn a_cut_that_lands_inside_a_wide_character_stops_there() {
-        // The line is several spans, and the one being cut is wider than the
-        // budget left. What follows it must not be pulled forward to fill the
-        // gap: the truncated line is always a prefix of the source.
         let theme = Theme::default();
         let links = detached();
         for width in 4..14 {
@@ -1052,8 +954,6 @@ mod tests {
 
     #[test]
     fn a_character_wider_than_the_line_still_terminates() {
-        // Every nesting level narrows what is left, so a width that looks
-        // absurd at document level is reachable inside a quote or a list.
         for source in ["日本\n", "> 日\n", "- - - 日\n", "| 日 | 本 |\n| - | - |\n| 一 | 二 |\n"] {
             for width in 1..8 {
                 let rendered = lines(source, width);

@@ -1,5 +1,4 @@
-//! Rendering: the block tree laid out into styled lines, and those lines
-//! written out.
+//! Rendering: the block tree laid out into styled lines.
 
 pub mod ansi;
 pub mod code;

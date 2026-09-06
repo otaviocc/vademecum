@@ -1,5 +1,4 @@
-//! The element table: every styled thing vademecum draws, and how its default
-//! style derives from the palette.
+//! The element table: every styled thing vademecum draws.
 
 use serde::Deserialize;
 
@@ -8,8 +7,6 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::theme::color::ColorSpec;
 use crate::theme::palette::Palette;
 
-/// Everything that can be styled. Theme files address elements by these names
-/// in `snake_case`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Element {
     Paragraph,
@@ -52,7 +49,6 @@ pub enum Element {
 }
 
 impl Element {
-    /// Every element, in discriminant order.
     pub const ALL: [Element; 37] = [
         Element::Paragraph,
         Element::Heading1,
@@ -93,7 +89,6 @@ impl Element {
         Element::HelpWindow,
     ];
 
-    /// The name a theme file addresses this element by, under `[elements.*]`.
     pub fn key(self) -> &'static str {
         match self {
             Element::Paragraph => "paragraph",
@@ -136,12 +131,10 @@ impl Element {
         }
     }
 
-    /// The element a theme file's `[elements.<key>]` addresses, if any.
     pub fn from_key(key: &str) -> Option<Self> {
         Element::ALL.into_iter().find(|element| element.key() == key)
     }
 
-    /// The element a heading of this level is styled with.
     pub fn heading(level: u8) -> Self {
         match level {
             1 => Element::Heading1,
@@ -154,7 +147,6 @@ impl Element {
     }
 }
 
-/// An element's style before any theme file has its say.
 pub fn default_style(element: Element, palette: &Palette) -> Style {
     let style = Style::default();
     match element {
@@ -165,11 +157,6 @@ pub fn default_style(element: Element, palette: &Palette) -> Style {
         Element::Emphasis => style.add_modifier(Modifier::ITALIC),
         Element::Strong => style.add_modifier(Modifier::BOLD),
         Element::Strikethrough => style.fg(palette.muted_text).add_modifier(Modifier::CROSSED_OUT),
-        // No background. The default palette is `ansi`'s, whose `subtle` is
-        // ANSI bright black — a mid grey in most schemes, and a washed-out slab
-        // behind code. A theme naming a real `subtle` asks for it back with
-        // `bg = "subtle"`, as the three themed built-ins do; a partial file that
-        // leaves `subtle` alone inherits a default that is safe with it.
         Element::InlineCode => style.fg(palette.warning),
         Element::CodeBlock => style.fg(palette.foreground),
         Element::CodeBlockLang => style.fg(palette.muted_text),
@@ -194,33 +181,21 @@ pub fn default_style(element: Element, palette: &Palette) -> Style {
         Element::StatusNotice => style.fg(palette.notice),
         Element::StatusError => style.fg(palette.error).add_modifier(Modifier::BOLD),
         Element::CursorLine => style.bg(palette.subtle),
-        // Black rather than `palette.background`, which is the inversion these
-        // want and not what it does. In `ansi` the background slot is `reset`,
-        // and `reset` as a *foreground* means the terminal's foreground — so a
-        // match painted default-on-yellow. In a light theme it is worse: a pale
-        // background colour on an orange highlight reads no better. Black is
-        // the one foreground that holds up on both yellow and magenta.
         Element::SearchMatch => style.fg(Color::Black).bg(palette.warning),
         Element::SearchCurrent => style.fg(Color::Black).bg(palette.notice).add_modifier(Modifier::BOLD),
         Element::HelpWindow => style.fg(palette.foreground).bg(palette.background),
     }
 }
 
-/// An `[elements.*]` table as a theme file writes it. The three keys fall back
-/// to the default style independently, so naming a color does not quietly
-/// discard the modifiers that came with it.
 #[derive(Debug, Default, Deserialize)]
 pub struct ElementFile {
     pub fg: Option<ColorSpec>,
     pub bg: Option<ColorSpec>,
-    /// `None` keeps the default modifiers; `Some([])` clears them.
     pub modifiers: Option<Vec<String>>,
-    /// Anything else the file wrote here. Warned about, never fatal.
     #[serde(flatten)]
     pub unknown: std::collections::BTreeMap<String, toml::Value>,
 }
 
-/// The modifiers a theme file may name.
 pub fn modifier(name: &str) -> Option<Modifier> {
     Some(match name {
         "bold" => Modifier::BOLD,

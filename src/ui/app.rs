@@ -1,8 +1,4 @@
 //! The pager's state, and the reducer that is the only way to change it.
-//!
-//! The document is parsed once. A resize re-runs layout — and only when the
-//! *width* changed, because a taller or shorter terminal lays out identically —
-//! so scrolling a very long file never touches the parser or the renderer.
 
 use std::path::Path;
 
@@ -19,12 +15,9 @@ use crate::ui::Options;
 use crate::ui::input::{Action, Motion};
 use crate::ui::search::{self, Search};
 
-/// Rows the chrome takes: header, its rule, the statusbar's rule, statusbar.
 pub(crate) const CHROME_ROWS: u16 = 4;
-/// What the header and statusbar call a document that came from stdin.
 const STDIN: &str = "stdin";
 
-/// What keys mean right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
     #[default]
@@ -33,9 +26,6 @@ pub enum Mode {
     Help,
 }
 
-/// The statusbar's transient line. Both are cleared by the next key, which is
-/// what makes them transient; an error outranks a notice, because it is the
-/// answer to something the reader just asked for and did not get.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Status {
     #[default]
@@ -44,7 +34,6 @@ pub enum Status {
     Error(String),
 }
 
-/// A place in the collection, as the history remembers it.
 struct Entry {
     document: Document,
     top: usize,
@@ -52,56 +41,31 @@ struct Entry {
     focus: usize,
 }
 
-/// Where the reader is standing, in terms that survive a re-layout.
 #[derive(Debug, Clone, Copy)]
 struct Place {
-    /// The source line under the cursor.
     anchor: usize,
-    /// The screen row it sits on, signed: the wheel can put it off either end.
     row: isize,
 }
 
-/// Everything the pager knows.
 pub struct App {
     pub theme: Theme,
-    /// The open document and the vault its links resolve against. Layout needs
-    /// both, because whether a link resolves is what decides how it is styled.
     pub links: Links,
-    /// Parsed once; a resize re-lays it out but never re-parses it.
     blocks: Vec<SourceBlock>,
-    /// The document laid out at `width`. The view borrows this; it is never
-    /// cloned per frame.
     pub lines: Vec<RenderedLine>,
-    /// `--width`, when the reader pinned one; otherwise the width follows the
-    /// terminal.
     width_override: Option<u16>,
-    /// The width `lines` was laid out at.
     width: usize,
     area: Size,
-    /// Index into `lines`: the reader's position.
     pub cursor: usize,
-    /// Index into `lines`: the first visible row.
     pub top: usize,
     pub quit: bool,
     pub mode: Mode,
     pub status: Status,
     pub search: Search,
-    /// The plain text of every line, which is what search scans. Built the
-    /// first time a query is confirmed and dropped on a re-layout, so opening
-    /// a document never pays for it.
     plain: Option<Vec<String>>,
-    /// Header title: frontmatter title, else the file name, else `stdin`.
     pub title: String,
-    /// Statusbar file: the file name, else `stdin`.
     pub file: String,
-    /// Which of the cursor line's links `Enter` would follow. A line with one
-    /// link focuses it without being asked, which is what 0 means here.
     pub focus: usize,
-    /// Whether the error on the statusbar is the last reload's own. A reload
-    /// that works disproves it; an error from anywhere else is not its to
-    /// clear.
     reload_failed: bool,
-    /// Where the reader has been, and where `l` would take them back to.
     back: Vec<Entry>,
     forward: Vec<Entry>,
 }
@@ -115,8 +79,6 @@ impl App {
         let links = Links::new(document, options.root.as_deref());
         let width = layout::wrap_width(width_override, Some(area.width));
         let lines = layout::render(&blocks, &Ctx::new(&theme, &links), width);
-        // Layout may have had something to say — an unknown syntax theme, say.
-        // It cannot print it: the alternate screen is up by now.
         let status = complaint().unwrap_or_default();
 
         Self {
@@ -143,22 +105,12 @@ impl App {
         }
     }
 
-    /// The reducer. Every state change in the pager comes through here.
     pub fn apply(&mut self, action: Action) {
-        // A notice lasts until the next key. Neither a resize nor a reload is
-        // a key: dragging the window, or someone else saving the file, should
-        // not swallow what the pager just said — least of all an error the
-        // reader has not read yet.
         if !matches!(action, Action::Resize(_) | Action::Reload) {
             self.status = Status::Idle;
-            // The reader has acted, so whatever the last reload said is gone
-            // from the screen and is no longer anyone's to clear.
             self.reload_failed = false;
         }
 
-        // Neither a resize nor a reload is on this list: `rerender` puts the
-        // cursor back at the height it was already at, off-screen included, and
-        // revealing it would pull a scrolled-away viewport back.
         let moves_cursor = matches!(
             action,
             Action::Move(_) | Action::SearchConfirm | Action::SearchStep { .. } | Action::Follow | Action::History { .. }
@@ -193,22 +145,15 @@ impl App {
         }
 
         self.bound();
-        // Only an action that moves the cursor drags the viewport after it.
-        // The wheel is the reason: it leaves the cursor where the reader put
-        // it, off-screen if need be, and revealing it here would undo the
-        // scroll on the same tick.
         if moves_cursor {
             self.reveal();
         }
     }
 
-    /// The link `Enter` would follow: the focused one on the cursor line.
     fn focused(&self) -> Option<&LinkRef> {
         self.lines.get(self.cursor).and_then(|line| line.links.get(self.focus))
     }
 
-    /// `Tab` / `Shift-Tab`. A line with one link needs neither: focus starts at
-    /// the first one and there is nowhere else to go.
     fn cycle_focus(&mut self, forward: bool) {
         let count = self.lines.get(self.cursor).map_or(0, |line| line.links.len());
         if count == 0 {
@@ -220,23 +165,15 @@ impl App {
         };
     }
 
-    /// `Enter`. An External link is left to `o`, as the README pairs them.
     fn follow(&mut self) {
         let Some(kind) = self.focused().map(|link| link.kind.clone()) else { return };
         match self.links.resolve(&kind) {
-            // Missing or ambiguous: the reader asked to go somewhere and did
-            // not, so they are told why rather than left wondering.
             Err(error) => self.status = Status::Error(error.to_string()),
             Ok(Target::External) => {}
-            // Only a jump that goes somewhere is history. A fragment naming
-            // no heading would otherwise push a dead entry and, worse, clear
-            // the way forward.
             Ok(Target::SameDocument) => {
                 if let Some(line) = self.anchor_line(kind.fragment()) {
                     self.remember();
                     self.go_to(line);
-                    // Nothing was re-laid out, but the reader has moved, and
-                    // `n` resumes from where they are.
                     self.resume_search();
                 }
             }
@@ -244,8 +181,6 @@ impl App {
         }
     }
 
-    /// `o`. Nothing to do on a Local or Wiki link: opening files in an editor
-    /// is out of scope.
     fn open_external(&mut self) {
         let Some(LinkKind::External(url)) = self.focused().map(|link| link.kind.clone()) else { return };
         if let Err(error) = open::that_detached(url.as_str()) {
@@ -253,8 +188,6 @@ impl App {
         }
     }
 
-    /// Load another document and show it. A file that cannot be read is a
-    /// statusbar error, never an exit: the reader is already inside the pager.
     fn open(&mut self, path: &Path, fragment: Option<&str>) {
         let document = match Document::load(path) {
             Ok(document) => document,
@@ -271,8 +204,6 @@ impl App {
         self.opened();
     }
 
-    /// Push where the reader is onto the back stack. Going somewhere new is
-    /// what makes the forward stack stale, so it is dropped here.
     fn remember(&mut self) {
         self.back.push(self.here());
         self.forward.clear();
@@ -282,8 +213,6 @@ impl App {
         Entry { document: self.links.document.clone(), top: self.top, cursor: self.cursor, focus: self.focus }
     }
 
-    /// `h` / `l`. The two stacks are symmetric: whichever one is being popped,
-    /// the other one gets where the reader was standing.
     fn travel(&mut self, forward: bool) {
         let Some(entry) = (if forward { self.forward.pop() } else { self.back.pop() }) else { return };
         let here = self.here();
@@ -301,24 +230,17 @@ impl App {
         self.opened();
     }
 
-    /// "Opened x.md", unless the statusbar is already carrying an error — a
-    /// warning from laying the document out, say. The same ordering `Status`
-    /// documents and `reload` already follows: an error outranks a notice.
     fn opened(&mut self) {
         if !matches!(self.status, Status::Error(_)) {
             self.status = Status::Notice(format!("Opened {}", self.file));
         }
     }
 
-    /// Make `document` the one on screen, at the top of it.
     fn show(&mut self, document: Document) {
         (self.title, self.file) = names(&document);
         self.blocks = ast::parse(&document.source);
         self.links.open(document);
         self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
-        // Collected here rather than left in the list: a warning raised laying
-        // out this document would otherwise surface at the next resize, under
-        // whatever document was on screen by then.
         if let Some(complaint) = complaint() {
             self.status = complaint;
         }
@@ -327,24 +249,14 @@ impl App {
         self.top = 0;
         self.focus = 0;
 
-        // The lines are another document's, so the cached text and the offsets
-        // into it are stale. A standing query follows the reader across, but
-        // only once the caller has placed them: `resume_search`.
         self.plain = None;
     }
 
-    /// The line a `#fragment` names, if any line answers to it.
     fn anchor_line(&self, fragment: Option<&str>) -> Option<usize> {
-        // Decoded first: an editor that writes `my%20note.md` writes
-        // `#A%20Heading` beside it, and the raw form slugs to `a20heading`,
-        // which matches no heading and silently opens the document at its top.
         let slug = ast::slug(&crate::markdown::links::decode_fragment(fragment?));
         self.lines.iter().position(|line| line.anchor.as_deref() == Some(slug.as_str()))
     }
 
-    /// Put the heading a `#fragment` names at the top of the view. One that
-    /// matches no heading leaves the reader where the document opened, which
-    /// is the top of it.
     fn jump_to(&mut self, fragment: Option<&str>) {
         if let Some(line) = self.anchor_line(fragment) {
             self.go_to(line);
@@ -356,24 +268,16 @@ impl App {
         self.top = line;
     }
 
-    /// Match a standing query against the lines as they are now. Called once
-    /// the reader has been put where they belong, never before: the search
-    /// resumes from the cursor, so doing it first would resume from the top of
-    /// a document nobody is looking at.
     fn resume_search(&mut self) {
         if !self.search.query.is_empty() {
             self.rematch();
         }
     }
 
-    /// `Enter` on a query: match once, over the whole document, and take the
-    /// reader to the first hit at or after where they are.
     fn confirm_search(&mut self) {
         self.mode = Mode::Browse;
         let query = std::mem::take(&mut self.search.input);
         if query.is_empty() {
-            // Confirming nothing is not a search. A stray `/` then `Enter`
-            // leaves a standing query and its highlights where they were.
             return;
         }
 
@@ -382,7 +286,6 @@ impl App {
         self.go_to_match(found);
     }
 
-    /// `n` / `N`.
     fn step_search(&mut self, forward: bool) {
         if self.search.query.is_empty() {
             self.status = Status::Notice(String::from("nothing to search for yet"));
@@ -394,45 +297,30 @@ impl App {
 
     fn go_to_match(&mut self, found: Option<search::Match>) {
         match found {
-            // `clamp` scrolls the viewport to it; that is its whole job.
             Some(found) => self.cursor = found.line,
             None => self.status = Status::Notice(format!("no matches for \"{}\"", self.search.query)),
         }
     }
 
-    /// Match the standing query against the lines as they are now, and take
-    /// the first hit at or after the cursor. Both the confirm and the re-layout
-    /// need exactly this.
     fn rematch(&mut self) -> Option<search::Match> {
-        // Built on first use, so opening a document never pays for it, and
-        // borrowed field-wise so the query can be read alongside it.
         let plain = self.plain.get_or_insert_with(|| self.lines.iter().map(RenderedLine::text).collect());
         self.search.matches = search::find(plain, &self.search.query);
         self.search.current = None;
         self.search.seek_from(self.cursor)
     }
 
-    /// The document on screen, when it came from a file. The event loop needs
-    /// it to keep the watch pointed at what the reader is reading.
     pub fn path(&self) -> Option<&Path> {
         self.links.document.path.as_deref()
     }
 
-    /// A failure the reducer cannot see, because it happened to the event loop
-    /// rather than to the pager: the watch losing its footing when the reader
-    /// navigates. Transient like any other error — the next key clears it.
     pub fn report(&mut self, error: &str) {
         self.status = Status::Error(error.to_string());
     }
 
-    /// Rows the document itself gets. Always at least one, so a terminal too
-    /// short for the chrome still shows a line rather than dividing by zero.
     pub fn viewport_height(&self) -> usize {
         usize::from(self.area.height.saturating_sub(CHROME_ROWS)).max(1)
     }
 
-    /// The cursor line's position through the document, so the first line reads
-    /// 0% and the last 100%.
     pub fn percent(&self) -> usize {
         match self.lines.len() {
             0 | 1 => 100,
@@ -441,20 +329,14 @@ impl App {
     }
 
     fn move_cursor(&mut self, motion: Motion) {
-        // The reader has left the line the focus was on, so it is not their
-        // link any more.
         self.focus = 0;
         let height = self.viewport_height();
         let last = self.lines.len().saturating_sub(1);
 
-        // A motion key is a statement of position, so it starts from what the
-        // reader can see: the wheel may have left the cursor off-screen, and
-        // pressing `j` there means "carry on reading here", not "go back".
         self.cursor = self.cursor.clamp(self.top, self.top + height - 1).min(last);
 
         match motion {
             Motion::Line(delta) => self.cursor = offset(self.cursor, delta),
-            // A page keeps one line of context; a half page is half the view.
             Motion::HalfPage(delta) => self.jump(delta * (height / 2).max(1) as isize),
             Motion::Page(delta) => self.jump(delta * height.saturating_sub(1).max(1) as isize),
             Motion::Top => {
@@ -468,16 +350,11 @@ impl App {
         }
     }
 
-    /// Move cursor and viewport together, which is what a page key does: the
-    /// text under the cursor moves by exactly one page.
     fn jump(&mut self, delta: isize) {
         self.cursor = offset(self.cursor, delta);
         self.top = offset(self.top, delta);
     }
 
-    /// The wheel moves the viewport and nothing else. The cursor keeps its
-    /// document line and may scroll off the screen, so scrolling away and back
-    /// puts the reader exactly where they were — with the focused link intact.
     fn scroll(&mut self, delta: isize) {
         self.top = offset(self.top, delta);
     }
@@ -491,28 +368,14 @@ impl App {
         }
     }
 
-    /// Lay the cached blocks out again, and put the reader back where they
-    /// were: on the same source line, at the same height on the screen.
     fn relayout(&mut self) {
         let place = self.place();
         self.rerender(place);
     }
 
-    /// The file changed under the reader. Re-read it, re-parse it, and lay it
-    /// out again at the place they were standing — the same promise a resize
-    /// makes, for the same reason.
-    ///
-    /// It reuses neither `show` nor `remember`: the first is navigation and
-    /// resets the reader to the top of the document, and a reload is not
-    /// history — an entry would clear the way forward and leave `h` stepping
-    /// onto a stale copy of the file already on screen.
     fn reload(&mut self) {
-        // A document that came from a pipe has nothing to re-read.
         let Some(path) = self.links.document.path.clone() else { return };
         let document = match Document::load(&path) {
-            // Deleted, or unreadable, or caught mid-rename. None of those is a
-            // reason to take the text away from the reader: the error is said
-            // and the document stays, until the next write reloads it.
             Err(error) => {
                 self.status = Status::Error(format!("{error:#}"));
                 self.reload_failed = true;
@@ -526,30 +389,16 @@ impl App {
         self.blocks = ast::parse(&document.source);
         self.links.open(document);
         self.rerender(place);
-        // A notice, and only over a statusbar that is not already answering
-        // the reader. An error is what they asked for and did not get, and
-        // someone else saving the file is no reason to take it off the screen
-        // before they have acted on it — the same ordering `Status` documents.
-        // The one error this may overwrite is the last reload's own, which
-        // having just read the file it has disproved.
         if self.reload_failed || !matches!(self.status, Status::Error(_)) {
             self.status = Status::Notice(format!("Reloaded {}", self.file));
         }
         self.reload_failed = false;
     }
 
-    /// Where the reader is standing, in terms that survive a re-layout: the
-    /// source line under the cursor, and the screen row it sits on.
     fn place(&self) -> Place {
-        // The row is signed, because the wheel can leave the cursor above or
-        // below the viewport and neither a rewrap nor a reload should quietly
-        // pull it back into it.
         Place { anchor: self.anchor(), row: self.cursor as isize - self.top as isize }
     }
 
-    /// Lay the blocks out at the current width and put the reader back at
-    /// `place`. The blocks may be the ones that were already there — a resize —
-    /// or freshly parsed from a file that changed under the reader.
     fn rerender(&mut self, place: Place) {
         self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
         if let Some(complaint) = complaint() {
@@ -563,20 +412,12 @@ impl App {
             .or_else(|| self.lines.iter().position(|line| !line.is_blank() && line.source_line >= place.anchor))
             .unwrap_or(self.cursor);
         self.top = offset(self.cursor, -place.row);
-        // The line the cursor lands on is a different line, with its own links:
-        // a narrower width can leave the old index past the end of them, and
-        // `Enter` with nothing focused does nothing at all.
         self.focus = 0;
 
-        // The lines are new, so the cached text and the offsets into it are
-        // stale. A live query is matched again against the new layout.
         self.plain = None;
         self.resume_search();
     }
 
-    /// The source line the cursor is on. Blank lines belong to no source line
-    /// in particular and carry 0, so the search walks back to the last line
-    /// that does know where it came from.
     fn anchor(&self) -> usize {
         if self.lines.is_empty() {
             return 0;
@@ -588,8 +429,6 @@ impl App {
             .map_or(0, |line| line.source_line)
     }
 
-    /// The invariants that hold after *every* action: the cursor is on a line
-    /// that exists, and the viewport does not run past the end of the document.
     fn bound(&mut self) {
         let height = self.viewport_height();
         let last = self.lines.len().saturating_sub(1);
@@ -598,8 +437,6 @@ impl App {
         self.top = self.top.min(last.saturating_sub(height.saturating_sub(1)));
     }
 
-    /// Scroll the viewport the least it can to contain the cursor. Only for
-    /// actions that moved the cursor; see `apply`.
     fn reveal(&mut self) {
         let height = self.viewport_height();
 
@@ -608,16 +445,11 @@ impl App {
     }
 }
 
-/// Whatever layout had to say, as a statusbar error. Highlighting runs inside
-/// layout, which has no screen to print to and must not take this one, so it
-/// leaves its warnings to be collected here.
 fn complaint() -> Option<Status> {
     let warnings = crate::render::code::take_warnings();
     (!warnings.is_empty()).then(|| Status::Error(warnings.join("; ")))
 }
 
-/// A document's header title and statusbar name: the frontmatter title, else
-/// the file name, else `stdin` for a document that came from a pipe.
 fn names(document: &Document) -> (String, String) {
     let file = document
         .path
@@ -628,7 +460,6 @@ fn names(document: &Document) -> (String, String) {
     (title, file)
 }
 
-/// Signed movement over an index, saturating at both ends.
 fn offset(index: usize, delta: isize) -> usize {
     if delta >= 0 { index.saturating_add(delta as usize) } else { index.saturating_sub(delta.unsigned_abs()) }
 }
@@ -640,8 +471,6 @@ mod tests {
 
     use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
-    /// A document of `count` one-line paragraphs, which lay out one line each
-    /// with a blank line between them.
     fn numbered(count: usize) -> String {
         (1..=count).map(|n| format!("line {n}\n\n")).collect()
     }
@@ -651,7 +480,6 @@ mod tests {
         App::new(document, Theme::default(), &Options { width: Some(40), ..Options::default() }, Size::new(60, height))
     }
 
-    /// Ten rows of chrome-free viewport.
     fn paged() -> App {
         app(&numbered(40), 14)
     }
@@ -659,7 +487,6 @@ mod tests {
     #[test]
     fn the_viewport_is_the_terminal_less_the_chrome() {
         assert_eq!(paged().viewport_height(), 10);
-        // A terminal with no room left still gets a line to draw on.
         assert_eq!(app(&numbered(3), 2).viewport_height(), 1);
     }
 
@@ -714,7 +541,6 @@ mod tests {
         app.apply(Action::Move(Motion::Line(1)));
         let cursor = app.cursor;
 
-        // Three screenfuls out, well past anything the viewport can show.
         for _ in 0..10 {
             app.apply(Action::Scroll(3));
         }
@@ -738,7 +564,6 @@ mod tests {
         assert_eq!((app.top, app.cursor), (top, cursor), "the view is already at the head");
 
         app.apply(Action::Move(Motion::Bottom));
-        // Park the reader at the top of the last screenful.
         app.cursor = app.top;
         let (top, cursor) = (app.top, app.cursor);
         for _ in 0..5 {
@@ -758,7 +583,6 @@ mod tests {
         assert_eq!(app.cursor, 31, "snapped to the first visible line, then moved");
         assert_eq!(app.top, 30, "and the viewport the reader chose is left alone");
 
-        // The other way round: the cursor below the viewport, scrolled back up.
         app.apply(Action::Scroll(-30));
         assert_eq!((app.top, app.cursor), (0, 31));
         app.apply(Action::Move(Motion::Line(-1)));
@@ -766,8 +590,6 @@ mod tests {
         assert_eq!(app.top, 0);
     }
 
-    /// A document on disk, so the reload path has a real file to re-read. The
-    /// directory is returned with it: dropping it would take the file away.
     fn on_disk(source: &str) -> (tempfile::TempDir, App) {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("note.md");
@@ -785,15 +607,11 @@ mod tests {
     fn a_reload_keeps_the_reader_on_the_line_they_were_reading() {
         let (dir, mut app) = on_disk(&numbered(40));
         app.apply(Action::Move(Motion::Page(1)));
-        // Blank lines belong to no source line and the anchor walks back off
-        // them; park on real text so the assertion is about the reload.
         while app.lines[app.cursor].is_blank() {
             app.apply(Action::Move(Motion::Line(1)));
         }
         let (source_line, row, lines) = (app.lines[app.cursor].source_line, app.cursor - app.top, app.lines.len());
 
-        // Appended, not prepended: the anchor is a source line number, so
-        // adding text above the reader legitimately moves them.
         rewrite(&dir, &format!("{}{}", numbered(40), numbered(10)));
         app.apply(Action::Reload);
 
@@ -802,9 +620,6 @@ mod tests {
         assert_eq!(app.cursor - app.top, row, "and the height on the screen it was at");
     }
 
-    /// The reason a reload goes through `apply` rather than being called
-    /// directly: `bound` runs there, and without it a file that shrank leaves
-    /// the cursor and the viewport pointing past the end of the document.
     #[test]
     fn a_reload_that_shortens_the_file_keeps_the_cursor_on_a_line_that_exists() {
         let (dir, mut app) = on_disk(&numbered(40));
@@ -831,9 +646,6 @@ mod tests {
         assert_eq!(app.lines.len(), lines, "the reader lost the document as well as the file");
     }
 
-    /// A reload that works disproves the last one's complaint. Without this the
-    /// statusbar goes on saying the file cannot be read while the reader is
-    /// looking at its new contents, and every later save reloads in silence.
     #[test]
     fn a_reload_that_works_clears_the_failure_that_came_before_it() {
         let (dir, mut app) = on_disk(&numbered(10));
@@ -893,15 +705,12 @@ mod tests {
 
     #[test]
     fn a_narrower_terminal_keeps_the_cursor_on_the_same_source_line() {
-        // Paragraphs long enough that a narrower width rewraps them.
         let source =
             (1..=20).map(|n| format!("paragraph {n} with enough words in it to wrap twice over\n\n")).collect::<String>();
         let document = Document::new(Some(PathBuf::from("x.md")), PathBuf::from("."), source.clone());
         let mut app = App::new(document, Theme::default(), &Options { width: None, ..Options::default() }, Size::new(70, 14));
 
         app.apply(Action::Move(Motion::Page(1)));
-        // Blank lines belong to no source line, and the anchor walks back off
-        // them; park on real text so the assertion is about the rewrap.
         while app.lines[app.cursor].is_blank() {
             app.apply(Action::Move(Motion::Line(1)));
         }
@@ -955,7 +764,6 @@ mod tests {
         assert_eq!(app.file, STDIN);
     }
 
-    /// Type a query and confirm it.
     fn search_for(app: &mut App, query: &str) {
         app.apply(Action::SearchStart);
         for character in query.chars() {
@@ -993,8 +801,6 @@ mod tests {
     fn a_search_wraps_when_there_is_nothing_below_the_cursor() {
         let mut app = paged();
         app.apply(Action::Move(Motion::Bottom));
-        // The only match is well above the cursor, so it can only be found by
-        // wrapping.
         search_for(&mut app, "line 9");
         assert_eq!(app.lines[app.cursor].text().trim(), "line 9");
     }
@@ -1101,8 +907,6 @@ mod tests {
         app.apply(Action::ToggleHelp);
         let (top, cursor) = (app.top, app.cursor);
 
-        // `input` is what refuses the keys, so this is the reducer's half of
-        // the promise: whatever the overlay lets through must not move anyone.
         for key in [KeyCode::Char('j'), KeyCode::Char('G'), KeyCode::Char('/')] {
             let event = Event::Key(KeyEvent::new(key, KeyModifiers::NONE));
             assert_eq!(crate::ui::input::action(&event, app.mode), None, "{key:?}");
@@ -1137,16 +941,11 @@ mod tests {
         assert!(app.quit);
     }
 
-    /// The vault fixture, open at its index: the only document in the tree with
-    /// one of every kind of link in it.
     fn vault() -> App {
         let document = Document::load(std::path::Path::new("tests/fixtures/vault/index.md")).expect("the fixture is there");
         App::new(document, Theme::default(), &Options { width: Some(78), ..Options::default() }, Size::new(80, 24))
     }
 
-    /// A document of vademecum's own inside the vault, for the tests that need
-    /// several links on one line. It never has to exist on disk: resolution
-    /// reads its `base_dir`, which does.
     fn inside_vault(source: &str) -> App {
         let document = Document::new(
             Some(PathBuf::from("tests/fixtures/vault/scratch.md")),
@@ -1156,7 +955,6 @@ mod tests {
         App::new(document, Theme::default(), &Options { width: Some(78), ..Options::default() }, Size::new(80, 24))
     }
 
-    /// Park the cursor on the link written as `destination`, and focus it.
     fn focus_link(app: &mut App, destination: &str) {
         for index in 0..app.lines.len() {
             if let Some(focus) = app.lines[index].links.iter().position(|link| link.kind.destination() == destination) {
@@ -1168,8 +966,6 @@ mod tests {
         panic!("no link to {destination:?} in the fixture");
     }
 
-    /// The document on screen, which is the only way to tell two files of the
-    /// same name apart.
     fn open_path(app: &App) -> PathBuf {
         app.links.document.path.clone().expect("the fixture came from a file")
     }
@@ -1325,13 +1121,10 @@ mod tests {
         assert_eq!(app.file, "index.md");
         assert_eq!(app.lines[app.cursor].anchor.as_deref(), Some("index"));
 
-        // And it is history, so the reader can undo the jump.
         app.apply(Action::History { forward: false });
         assert_eq!(app.cursor, app.lines.len() - 1);
     }
 
-    /// The end-to-end half of the same thing: the link opens the right file and
-    /// has to land on the right heading in it.
     #[test]
     fn a_percent_encoded_fragment_jumps_to_the_heading_it_names() {
         let mut app = vault();
@@ -1368,7 +1161,6 @@ mod tests {
         assert_eq!(app.status, Status::Idle, "Enter does not follow the web; `o` does");
         assert_eq!(app.file, "index.md");
 
-        // And `o` on a wikilink does nothing rather than launching anything.
         focus_link(&mut app, "note");
         app.apply(Action::OpenExternal);
         assert_eq!(app.status, Status::Idle);
@@ -1406,7 +1198,6 @@ mod tests {
         app.apply(Action::Focus { forward: true });
         assert_eq!(app.focus, 1);
 
-        // The cursor is in the middle of the view, so a notch does not touch it.
         app.apply(Action::Move(Motion::HalfPage(1)));
         app.cursor = app.top + app.viewport_height() / 2;
         app.apply(Action::Focus { forward: true });
@@ -1424,7 +1215,6 @@ mod tests {
         app.apply(Action::Focus { forward: true });
         assert_eq!(app.focus, 1);
 
-        // Far enough that the cursor cannot stay on the screen.
         let away = app.viewport_height() as isize * 2;
         app.apply(Action::Scroll(away));
         assert_eq!((app.cursor, app.focus), (line, 1), "the wheel moved the view, not the reader");
@@ -1441,7 +1231,6 @@ mod tests {
         app.apply(Action::History { forward: false });
         assert_eq!(app.file, "index.md");
 
-        // A bare fragment matching nothing: it must not clear the way forward.
         let mut app = inside_vault("[nowhere](#no-such-heading)\n");
         focus_link(&mut app, "#no-such-heading");
         let cursor = app.cursor;
@@ -1463,8 +1252,6 @@ mod tests {
 
     #[test]
     fn a_query_resumes_from_where_the_reader_lands_not_from_the_top() {
-        // Two matches, one above the fragment and one below it. Landing on the
-        // heading has to make the one below it current.
         let source = "# Top\n\nneedle above\n\n## A Heading\n\nneedle below\n";
         let mut app = inside_vault(&format!("{source}\nGo to [[#A Heading]].\n"));
         search_for(&mut app, "needle");
@@ -1477,8 +1264,6 @@ mod tests {
 
     #[test]
     fn a_rewrap_does_not_leave_the_focus_pointing_past_the_line_it_is_on() {
-        // Wide enough that both links share a line, narrow enough afterwards
-        // that they do not.
         let document = Document::new(
             Some(PathBuf::from("tests/fixtures/vault/scratch.md")),
             PathBuf::from("tests/fixtures/vault"),

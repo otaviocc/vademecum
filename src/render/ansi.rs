@@ -1,7 +1,4 @@
 //! `RenderedLine` → the bytes that go to stdout.
-//!
-//! SGR sequences are written by hand rather than through crossterm so the
-//! output is exactly reproducible, which is what the snapshot tests compare.
 
 use std::io::{self, Write};
 
@@ -10,7 +7,6 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::markdown::links::LinkKind;
 use crate::render::line::RenderedLine;
 
-/// Write laid-out lines, with or without color.
 pub fn write_lines(out: &mut impl Write, lines: &[RenderedLine], color: bool) -> io::Result<()> {
     for line in lines {
         if color {
@@ -48,15 +44,12 @@ fn write_colored(out: &mut impl Write, line: &RenderedLine) -> io::Result<()> {
         }
     }
 
-    // A reset on every line keeps `less -R` and a truncated pipe honest.
     if styled {
         out.write_all(b"\x1b[0m")?;
     }
     out.write_all(b"\n")
 }
 
-/// The URL to open a hyperlink with at this span, if one starts here. Only
-/// external links become OSC-8: a local path means nothing to the terminal.
 fn link_opening_at(line: &RenderedLine, index: usize) -> Option<&str> {
     line.links.iter().find_map(|link| match &link.kind {
         LinkKind::External(url) if link.span_range.start == index => Some(url.as_str()),
@@ -68,7 +61,6 @@ fn link_closing_at(line: &RenderedLine, index: usize) -> bool {
     line.links.iter().any(|link| matches!(link.kind, LinkKind::External(_)) && link.span_range.end == index + 1)
 }
 
-/// The SGR parameters for a style, without the leading reset or the `m`.
 fn sgr(style: &Style) -> String {
     let mut codes: Vec<String> = Vec::new();
 
@@ -97,7 +89,6 @@ fn sgr(style: &Style) -> String {
     codes.join(";")
 }
 
-/// One color as SGR parameters, as a foreground or a background.
 fn color_codes(color: Color, background: bool) -> String {
     let offset = if background { 10 } else { 0 };
     let named = |base: u8| (base + offset).to_string();

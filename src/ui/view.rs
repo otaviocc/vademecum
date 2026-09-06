@@ -1,9 +1,4 @@
 //! Painting one frame: header, hairline rules, content, statusbar.
-//!
-//! The content area is drawn a cell at a time from the visible slice of
-//! `App::lines`, never through a widget built over the whole document. That is
-//! what keeps a frame's cost proportional to the terminal rather than to the
-//! file: a hundred-thousand-line note paints exactly as fast as a short one.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -16,20 +11,13 @@ use crate::render::line::RenderedLine;
 use crate::theme::Element;
 use crate::ui::app::{App, Mode, Status};
 
-/// The shortcut hints, right-aligned in the header. They list the bindings
-/// this build has, and grow as milestones land.
 const HINTS: &str = "? help  / search  ⇥ link  ⏎ follow  h/l back/fwd  q quit";
-/// Ahead of the title, so the reader can see what they are running.
 const TITLE_PREFIX: &str = " vademecum · ";
-/// One column between the title and the hints before the hints give way.
 const HINT_GAP: usize = 2;
-/// The overlay's share of the terminal: 60% of the width, and a height clamped
-/// between these shares of the height.
 const HELP_WIDTH: (u32, u32) = (3, 5);
 const HELP_FLOOR: (u32, u32) = (4, 10);
 const HELP_CEILING: (u32, u32) = (9, 10);
 
-/// Every binding, as the overlay lists them — the README's table, in order.
 const HELP: &[(&str, &str)] = &[
     ("j / k, ↓ / ↑", "Move cursor line down / up"),
     ("d / u, Ctrl-D / Ctrl-U", "Half page down / up"),
@@ -46,12 +34,10 @@ const HELP: &[(&str, &str)] = &[
     ("q, Ctrl-C", "Quit"),
 ];
 
-/// Paint the pager. The single entry point the event loop calls.
 pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Screen { app }, frame.area());
 }
 
-/// The whole screen for one frame.
 struct Screen<'a> {
     app: &'a App,
 }
@@ -75,10 +61,6 @@ impl Widget for Screen<'_> {
     }
 }
 
-/// Write one row, clipped to the area, and draw nothing at all when there is
-/// no row to draw on. A terminal too short for the chrome makes `Layout` hand
-/// back zero-height rects, and it places them one row past the buffer; writing
-/// to one of those panics inside ratatui rather than being ignored.
 fn row(area: Rect, buf: &mut Buffer, x: u16, text: &str, style: Style) {
     if area.height == 0 || x >= area.right() {
         return;
@@ -86,9 +68,6 @@ fn row(area: Rect, buf: &mut Buffer, x: u16, text: &str, style: Style) {
     buf.set_stringn(x, area.y, text, (area.right() - x) as usize, style);
 }
 
-/// ` vademecum · <title>` on the left, the hints on the right. When the two
-/// would collide the hints give way: the title is what says which document
-/// this is.
 fn header(area: Rect, buf: &mut Buffer, app: &App) {
     let title = format!("{TITLE_PREFIX}{}", app.title);
     row(area, buf, area.x, &title, app.theme.style(Element::HeaderTitle));
@@ -99,7 +78,6 @@ fn header(area: Rect, buf: &mut Buffer, app: &App) {
     }
 }
 
-/// A hairline across the full width.
 fn rule(area: Rect, buf: &mut Buffer, style: Style) {
     row(area, buf, area.x, &symbols::line::HORIZONTAL.repeat(area.width as usize), style);
 }
@@ -113,41 +91,26 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
         let line = &app.lines[index];
         let on_cursor = index == app.cursor;
 
-        // The cursor line is a bar across the whole terminal, padding
-        // included, so it reads as one band however short the text is.
         if on_cursor {
             buf.set_style(Rect::new(area.x, y, area.width, 1), cursor_line);
         }
 
-        // The focused link is only ever on the cursor line, so the range is
-        // worked out once a frame rather than once a span.
         let focused = on_cursor.then(|| line.links.get(app.focus).map(|link| link.span_range.clone())).flatten();
 
         let mut x = area.x;
         for (index_of_span, span) in line.spans.iter().enumerate() {
-            // Layout leaves empty spans behind wherever a padding worked out
-            // to zero columns — table cells are full of them. They have to be
-            // skipped rather than written: writing one advances nothing, which
-            // is also how a line with no room left reports itself, and taking
-            // that for the end of the line drops every span after the first
-            // empty one. That is a table with borders and no contents.
             if span.text.is_empty() {
                 continue;
             }
             if x >= area.right() {
                 break;
             }
-            // Patching puts the cursor's background over the span's own, so
-            // the bar survives a code block, and leaves the foreground alone.
             let mut style = if on_cursor { span.style.patch(cursor_line) } else { span.style };
-            // The focused link outranks the cursor bar it sits inside: it is
-            // the one thing on the line `Enter` would act on.
             if focused.as_ref().is_some_and(|range| range.contains(&index_of_span)) {
                 style = style.patch(app.theme.style(Element::LinkFocused));
             }
             let (next, _) = buf.set_stringn(x, y, &span.text, (area.right() - x) as usize, style);
             if next == x {
-                // A grapheme too wide for the columns that are left.
                 break;
             }
             x = next;
@@ -157,8 +120,6 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
     }
 }
 
-/// Repaint the matched cells of one line. Byte offsets become columns here,
-/// on the handful of visible lines that have a match, rather than everywhere.
 fn highlight(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize, line: &RenderedLine) {
     let found = app.search.on_line(index);
     if found.is_empty() {
@@ -179,16 +140,12 @@ fn highlight(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize, line
     }
 }
 
-/// The README's priority: the `/` prompt while a query is being typed, else an
-/// error, else a notice, else `file · line X/Y · N%` with the match count when
-/// a query is standing.
 fn statusbar(area: Rect, buf: &mut Buffer, app: &App) {
     let (text, element) = match (app.mode, &app.status) {
         (Mode::Search, _) => (format!("/{}", app.search.input), Element::Status),
         (_, Status::Error(error)) => (error.clone(), Element::StatusError),
         (_, Status::Notice(notice)) => (notice.clone(), Element::StatusNotice),
         (_, Status::Idle) => {
-            // `min` so an empty document reads `line 0/0` rather than `1/0`.
             let total = app.lines.len();
             let mut status = format!("{} · line {}/{} · {}%", app.file, (app.cursor + 1).min(total), total, app.percent());
             if let Some((index, total)) = app.search.progress() {
@@ -200,7 +157,6 @@ fn statusbar(area: Rect, buf: &mut Buffer, app: &App) {
     row(area, buf, area.x, &text, app.theme.style(element));
 }
 
-/// The keybinding table, in a centred popup over the document.
 fn help(area: Rect, buf: &mut Buffer, app: &App) {
     let popup = help_area(area);
     if popup.height == 0 || popup.width == 0 {
@@ -213,7 +169,6 @@ fn help(area: Rect, buf: &mut Buffer, app: &App) {
     let inner = block.inner(popup);
     block.render(popup, buf);
 
-    // The overlay does not scroll: a terminal too short for the table clips it.
     let column = HELP.iter().map(|(key, _)| key.width()).max().unwrap_or(0) + HINT_GAP;
     for (row, (key, action)) in HELP.iter().take(inner.height as usize).enumerate() {
         let y = inner.y + row as u16;
@@ -225,10 +180,6 @@ fn help(area: Rect, buf: &mut Buffer, app: &App) {
     }
 }
 
-/// 60% of the width, and a height clamped to 40-90%, centred. The shares are
-/// worked out in `u32`: `height * 9` overflows a `u16` at 7282 rows. Both can
-/// come out zero, on a terminal with no room for a popup; `help` draws nothing
-/// rather than drawing outside itself.
 fn help_area(area: Rect) -> Rect {
     let share = |whole: u16, (numerator, denominator): (u32, u32)| (u32::from(whole) * numerator / denominator) as u16;
 
@@ -258,16 +209,12 @@ mod tests {
         App::new(document, Theme::default(), &Options { width: None, ..Options::default() }, size)
     }
 
-    /// One frame, as a buffer to assert against.
     fn frame(app: &App, size: Size) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(size.width, size.height)).expect("terminal");
         terminal.draw(|frame| draw(frame, app)).expect("draw");
         terminal.backend().buffer().clone()
     }
 
-    /// One row of a buffer as plain text, trailing blanks trimmed. A
-    /// double-width glyph owns the cell after it, which ratatui blanks and the
-    /// terminal never draws, so the reader has to step over it too.
     fn row(buffer: &Buffer, y: u16) -> String {
         let mut text = String::new();
         let mut x = 0;
@@ -279,7 +226,6 @@ mod tests {
         text.trim_end().to_string()
     }
 
-    /// The first row of the content area: header, then its rule.
     const CONTENT_TOP: u16 = 2;
 
     fn body() -> String {
@@ -295,8 +241,6 @@ mod tests {
 
     #[test]
     fn the_hints_sit_against_the_right_edge() {
-        // Wide enough for the title and the whole hint line: at 60 columns the
-        // two collide, which is what the test below is about.
         let size = Size::new(90, 12);
         let buffer = frame(&app(&body(), size), size);
         assert!(row(&buffer, 0).ends_with(HINTS), "{:?}", row(&buffer, 0));
@@ -427,9 +371,7 @@ mod tests {
         let other = app.theme.style(Element::SearchMatch);
         assert_ne!(current.bg, other.bg, "the two are meant to be told apart");
 
-        // " line 1" — the gutter is column 0, so the match starts at column 1.
         assert_eq!(buffer[(1, 2)].bg, current.bg.expect("a background"));
-        // The second match is two rows down, past the blank line.
         assert_eq!(buffer[(1, 4)].bg, other.bg.expect("a background"));
     }
 
@@ -452,26 +394,21 @@ mod tests {
         let popup = help_area(area);
         assert_eq!(popup.width, 60);
         assert_eq!(popup.x, 20, "centred");
-        // The table wants eleven rows but the floor is 40% of forty.
         assert_eq!(popup.height, 16);
         assert_eq!(popup.y, 12, "centred");
     }
 
     #[test]
     fn the_overlay_is_clamped_rather_than_scrolled_on_a_short_terminal() {
-        // Thirteen bindings plus a border want fifteen rows; 90% of twelve is ten.
         let popup = help_area(Rect::new(0, 0, 60, 12));
         assert_eq!(popup.height, 10);
 
-        // And on a very tall one it is floored at 40%.
         let popup = help_area(Rect::new(0, 0, 60, 100));
         assert_eq!(popup.height, 40);
     }
 
     #[test]
     fn a_terminal_too_short_for_the_chrome_draws_what_it_can_and_does_not_panic() {
-        // ratatui hands a zero-height rect a `y` one row past the buffer, so
-        // every one of these used to abort the pager on the next frame.
         for height in 0..=6 {
             for width in [0, 1, 2, 3, 60] {
                 let size = Size::new(width, height);
@@ -494,7 +431,6 @@ mod tests {
 
     #[test]
     fn a_very_tall_terminal_does_not_overflow_the_share_arithmetic() {
-        // `height * 9` leaves a u16 at 7282 rows.
         let popup = help_area(Rect::new(0, 0, 300, 30000));
         assert!(popup.height <= 30000 && popup.height >= 12000);
     }
@@ -508,16 +444,7 @@ mod tests {
 
     #[test]
     fn the_pager_paints_every_line_the_stdout_writer_would() {
-        // The README's promise is that both outputs are the same
-        // `Vec<RenderedLine>`, so the fixture that covers every construct —
-        // tables, code fences, nested lists, quotes, footnotes — has to come
-        // out of the buffer character for character. Paragraph-only fixtures
-        // missed a table rendering as borders around nothing.
         let source = include_str!("../../tests/fixtures/elements.md");
-        // Tall enough for the whole fixture, measured rather than guessed: the
-        // fixture grows whenever a construct is added, and a literal height
-        // makes that show up here as a failure about the terminal rather than
-        // about the painting this test is for.
         let width = 82;
         let measured = app(source, Size::new(width, u16::MAX)).lines.len();
         let size =
@@ -545,8 +472,6 @@ mod tests {
     #[test]
     fn the_focused_link_is_painted_and_the_others_are_not() {
         let size = Size::new(60, 12);
-        // Two links on the first line, so the second one is a control: only the
-        // focused one may carry the selection.
         let mut app = app("[one](a.md) and [two](b.md)\n", size);
         let selection = app.theme.style(Element::LinkFocused);
 
@@ -556,7 +481,6 @@ mod tests {
             (0..size.width).map(|x| buffer[(x, CONTENT_TOP)].bg).collect()
         };
 
-        // The brackets are not rendered, so the line reads ` one and two`.
         let (first, second) = (1..4, 9..12);
         let before = painted(&app);
         assert!(before[first.clone()].iter().all(|bg| *bg == wanted), "the only link on the line is focused");
@@ -596,8 +520,6 @@ mod tests {
 
     #[test]
     fn the_help_overlay_lists_every_binding_the_readme_names() {
-        // The table is the README's, so a binding added without a row here is
-        // a binding the reader cannot discover.
         for key in ["Tab / Shift-Tab", "Enter", "o", "h / Backspace, l"] {
             assert!(HELP.iter().any(|(row, _)| *row == key), "{key} is not in the help table");
         }
