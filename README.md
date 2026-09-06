@@ -501,8 +501,8 @@ root needs no check, having been found by looking. A target that
 cannot be followed — missing, or ambiguous — renders in `link_broken` style,
 and `Enter` shows the reason instead of navigating.
 
-**Local destinations are percent-decoded**, because that is what an editor
-writes: Obsidian's Markdown-link mode, VS Code and most others spell a filename
+**Local destinations are percent-decoded**, fragment included, because that is
+what an editor writes: Obsidian's Markdown-link mode, VS Code and most others spell a filename
 containing a space as `my%20note.md`, and CommonMark says a destination is
 percent-encoded. The path as written is tried **first** and the decoded form
 only as a fallback, so a file genuinely named `50%25.md` keeps resolving and
@@ -510,6 +510,11 @@ nothing that works today stops working. A destination whose escapes are
 malformed — `bad%zz.md` — is not decodable and is used as written. Only Local
 destinations are decoded: an External URL is kept verbatim on purpose, and a
 wikilink target is a note's name rather than a URL.
+
+The `#fragment` is decoded unconditionally rather than as a fallback. A path can
+be tried against the filesystem twice, once each way; a fragment is matched
+against heading slugs, and there is nothing to test a first spelling against.
+Nothing is lost by it: slugging drops `%` whichever way it is written.
 
 The index behind step 2 is built once, on the first wikilink that needs it, and
 then **doubted once per document**. Opening a document — following a link,

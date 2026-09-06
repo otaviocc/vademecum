@@ -390,6 +390,17 @@ fn local_candidates(path: &Path) -> Vec<PathBuf> {
     candidates
 }
 
+/// A `#fragment` as the heading it names, with any escapes resolved.
+///
+/// The editors that write `my%20note.md` write `#A%20Heading` too, and the
+/// fragment is looked up by slug rather than on disk — so a raw-then-decoded
+/// fallback has nothing to test the first spelling against. Decoding is
+/// therefore unconditional here, and harmless: slugging drops `%` either way,
+/// so a heading really containing one is unreachable by fragment regardless.
+pub fn decode_fragment(fragment: &str) -> String {
+    percent_decode(fragment).unwrap_or_else(|| fragment.to_string())
+}
+
 /// Percent-decoding, as CommonMark says a destination is written.
 ///
 /// `None` when an escape is malformed — `bad%zz.md` names a file called exactly
@@ -403,6 +414,12 @@ fn percent_decode(destination: &str) -> Option<String> {
     while index < bytes.len() {
         if bytes[index] == b'%' {
             let hex = destination.get(index + 1..index + 3)?;
+            // Checked before parsing: `from_str_radix` accepts a leading sign,
+            // so `%+f` would otherwise decode to a byte rather than being the
+            // malformed escape it is.
+            if !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return None;
+            }
             decoded.push(u8::from_str_radix(hex, 16).ok()?);
             index += 3;
         } else {
@@ -814,6 +831,29 @@ mod tests {
         let root = vault(&["index.md", "bad%zz.md"]);
         let path = root.path();
         assert_eq!(local_link(path, "index.md", "bad%zz.md"), Ok(Target::File(path.join("bad%zz.md"))));
+    }
+
+    /// `from_str_radix` accepts a leading sign, so this was decoding to a byte
+    /// rather than refusing. Small, but it let a link to a file that does not
+    /// exist fall back onto a bogus candidate instead of being reported broken.
+    #[test]
+    fn an_escape_that_is_not_two_hex_digits_is_refused() {
+        assert_eq!(percent_decode("a%+41.md"), None);
+        assert_eq!(percent_decode("a%-1.md"), None);
+        assert_eq!(percent_decode("a% 1.md"), None);
+        // And the ones that are stay accepted, in either case.
+        assert_eq!(percent_decode("a%2f%2Fb").as_deref(), Some("a//b"));
+    }
+
+    /// The editors that write `my%20note.md` write `#A%20Heading` beside it.
+    /// Decoding the path and not the fragment opened the right file at the
+    /// wrong place, silently.
+    #[test]
+    fn a_fragment_is_decoded_like_the_path_beside_it() {
+        assert_eq!(decode_fragment("A%20Heading"), "A Heading");
+        assert_eq!(decode_fragment("a-heading"), "a-heading");
+        // Malformed escapes are left alone here too.
+        assert_eq!(decode_fragment("bad%zz"), "bad%zz");
     }
 
     #[test]
