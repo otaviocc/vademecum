@@ -340,7 +340,8 @@ impl App {
         let height = self.viewport_height();
         let last = self.lines.len().saturating_sub(1);
 
-        self.cursor = self.cursor.clamp(self.top, self.top + height - 1).min(last);
+        self.cursor = self.cursor.min(last);
+        self.reveal();
 
         match motion {
             Motion::Line(delta) => self.cursor = offset(self.cursor, delta),
@@ -647,20 +648,64 @@ mod tests {
     }
 
     #[test]
-    fn a_motion_key_starts_from_the_line_the_reader_can_see() {
+    fn a_motion_key_returns_to_a_cursor_above_the_viewport_before_it_moves() {
         let mut app = paged();
         app.apply(Action::Scroll(30));
         assert_eq!((app.top, app.cursor), (30, 0), "the cursor is off the top of the screen");
 
         app.apply(Action::Move(Motion::Line(1)));
-        assert_eq!(app.cursor, 31, "snapped to the first visible line, then moved");
-        assert_eq!(app.top, 30, "and the viewport the reader chose is left alone");
+        assert_eq!((app.top, app.cursor), (0, 1), "the view came back to the cursor, then the cursor moved");
+    }
 
-        app.apply(Action::Scroll(-30));
-        assert_eq!((app.top, app.cursor), (0, 31));
+    #[test]
+    fn a_motion_key_returns_to_a_cursor_below_the_viewport_too() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::Bottom));
+        let (top, cursor) = (app.top, app.cursor);
+
+        for _ in 0..30 {
+            app.apply(Action::Scroll(-3));
+        }
+        assert_eq!((app.top, app.cursor), (0, cursor), "the cursor is off the foot of the screen");
+
         app.apply(Action::Move(Motion::Line(-1)));
-        assert_eq!(app.cursor, 8, "snapped to the last visible line of a ten-row viewport, then moved");
-        assert_eq!(app.top, 0);
+        assert_eq!((app.top, app.cursor), (top, cursor - 1));
+    }
+
+    #[test]
+    fn a_page_from_an_off_screen_cursor_pages_from_the_cursor() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::HalfPage(1)));
+        let cursor = app.cursor;
+        app.apply(Action::Scroll(30));
+
+        app.apply(Action::Move(Motion::Page(1)));
+        assert_eq!(app.cursor, cursor + app.viewport_height() - 1, "the page started from the cursor, not from the view");
+    }
+
+    #[test]
+    fn every_motion_key_leaves_the_cursor_on_screen() {
+        let motions = [
+            Motion::Line(1),
+            Motion::Line(-1),
+            Motion::HalfPage(1),
+            Motion::HalfPage(-1),
+            Motion::Page(1),
+            Motion::Page(-1),
+            Motion::Top,
+            Motion::Bottom,
+        ];
+        for motion in motions {
+            for delta in [30, -30] {
+                let mut app = paged();
+                app.apply(Action::Move(Motion::HalfPage(1)));
+                app.apply(Action::Scroll(delta));
+                app.apply(Action::Move(motion));
+
+                let seen = app.top..app.top + app.viewport_height();
+                assert!(seen.contains(&app.cursor), "{motion:?} after {delta}: cursor {} is outside {seen:?}", app.cursor);
+            }
+        }
     }
 
     fn on_disk(source: &str) -> (tempfile::TempDir, App) {
