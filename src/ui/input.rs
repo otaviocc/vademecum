@@ -1,6 +1,6 @@
 //! Terminal events → actions.
 
-use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Size;
 
 use crate::ui::app::Mode;
@@ -21,6 +21,7 @@ pub enum Action {
     Quit,
     Move(Motion),
     Scroll(isize),
+    Click { column: u16, row: u16 },
     Resize(Size),
     ToggleHelp,
     Dismiss,
@@ -40,7 +41,7 @@ pub enum Action {
 pub fn action(event: &Event, mode: Mode) -> Option<Action> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => key_action(*key, mode),
-        Event::Mouse(mouse) if mode != Mode::Help => mouse_action(*mouse),
+        Event::Mouse(mouse) if mode != Mode::Help => mouse_action(*mouse, mode),
         Event::Resize(columns, rows) => Some(Action::Resize(Size::new(*columns, *rows))),
         _ => None,
     }
@@ -117,10 +118,13 @@ fn overlay(key: KeyEvent) -> Option<Action> {
     }
 }
 
-fn mouse_action(mouse: MouseEvent) -> Option<Action> {
+fn mouse_action(mouse: MouseEvent, mode: Mode) -> Option<Action> {
     match mouse.kind {
         MouseEventKind::ScrollDown => Some(Action::Scroll(WHEEL_LINES)),
         MouseEventKind::ScrollUp => Some(Action::Scroll(-WHEEL_LINES)),
+        MouseEventKind::Down(MouseButton::Left) if mode == Mode::Browse => {
+            Some(Action::Click { column: mouse.column, row: mouse.row })
+        }
         _ => None,
     }
 }
@@ -128,7 +132,6 @@ fn mouse_action(mouse: MouseEvent) -> Option<Action> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::crossterm::event::{MouseButton, MouseEventKind};
 
     fn press(code: KeyCode) -> Event {
         Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -211,10 +214,43 @@ mod tests {
     }
 
     #[test]
-    fn the_wheel_scrolls_and_the_buttons_do_nothing() {
+    fn the_wheel_scrolls_and_the_other_buttons_do_nothing() {
         assert_eq!(browsing(&wheel(MouseEventKind::ScrollDown)), Some(Action::Scroll(WHEEL_LINES)));
         assert_eq!(browsing(&wheel(MouseEventKind::ScrollUp)), Some(Action::Scroll(-WHEEL_LINES)));
-        assert_eq!(browsing(&wheel(MouseEventKind::Down(MouseButton::Left))), None);
+        for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Down(MouseButton::Middle)] {
+            assert_eq!(browsing(&wheel(kind)), None, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn the_left_button_carries_the_cell_it_landed_on() {
+        let click = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 17,
+            row: 6,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(browsing(&click), Some(Action::Click { column: 17, row: 6 }));
+    }
+
+    #[test]
+    fn a_click_is_a_reading_gesture_and_reaches_no_other_mode() {
+        let click = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        for mode in [Mode::Search, Mode::Help] {
+            assert_eq!(action(&click, mode), None, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_release_and_a_drag_are_not_a_click() {
+        for kind in [MouseEventKind::Up(MouseButton::Left), MouseEventKind::Drag(MouseButton::Left)] {
+            assert_eq!(browsing(&wheel(kind)), None, "{kind:?}");
+        }
     }
 
     #[test]

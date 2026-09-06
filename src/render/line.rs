@@ -81,6 +81,17 @@ impl RenderedLine {
         self.spans.extend(other.spans);
     }
 
+    pub fn link_at(&self, column: usize) -> Option<usize> {
+        let mut x = 0;
+        let span = self.spans.iter().position(|span| {
+            let width = span.width();
+            let hit = width > 0 && (x..x + width).contains(&column);
+            x += width;
+            hit
+        })?;
+        self.links.iter().position(|link| link.span_range.contains(&span))
+    }
+
     pub fn prefix(&mut self, span: StyledSpan) {
         self.spans.insert(0, span);
         for link in &mut self.links {
@@ -115,6 +126,71 @@ mod tests {
     fn width_counts_display_columns() {
         assert_eq!(line().width(), 11);
         assert_eq!(StyledSpan::new("日本語", Style::default()).width(), 6);
+    }
+
+    #[test]
+    fn a_column_finds_the_link_it_lands_inside() {
+        let line = line();
+        assert_eq!(line.link_at(6), Some(0));
+        assert_eq!(line.link_at(10), Some(0));
+    }
+
+    #[test]
+    fn a_column_outside_every_link_finds_none() {
+        let line = line();
+        assert_eq!(line.link_at(0), None, "before the link");
+        assert_eq!(line.link_at(5), None, "the space between");
+        assert_eq!(line.link_at(11), None, "past the end of the line");
+        assert_eq!(line.link_at(usize::MAX), None);
+    }
+
+    #[test]
+    fn a_column_picks_the_second_of_two_links_on_one_line() {
+        let mut line = RenderedLine::default();
+        for (text, target) in [("one", Some("a")), (" and ", None), ("two", Some("b"))] {
+            let index = line.spans.len();
+            line.push(StyledSpan::new(text, Style::default()));
+            if let Some(target) = target {
+                line.links.push(LinkRef {
+                    span_range: index..index + 1,
+                    kind: LinkKind::Wiki { target: target.into(), fragment: None },
+                    resolved: None,
+                });
+            }
+        }
+
+        assert_eq!(line.link_at(1), Some(0));
+        assert_eq!(line.link_at(4), None);
+        assert_eq!(line.link_at(9), Some(1));
+    }
+
+    #[test]
+    fn a_column_counts_display_width_rather_than_bytes() {
+        let mut line = RenderedLine::default();
+        line.push(StyledSpan::new("日本語", Style::default()));
+        line.push(StyledSpan::new("link", Style::default()));
+        line.links.push(LinkRef {
+            span_range: 1..2,
+            kind: LinkKind::Wiki { target: "x".into(), fragment: None },
+            resolved: None,
+        });
+
+        assert_eq!(line.link_at(5), None, "still inside the three wide characters");
+        assert_eq!(line.link_at(6), Some(0));
+    }
+
+    #[test]
+    fn an_empty_span_swallows_no_column() {
+        let mut line = RenderedLine::default();
+        line.push(StyledSpan::new("", Style::default()));
+        line.push(StyledSpan::new("link", Style::default()));
+        line.links.push(LinkRef {
+            span_range: 1..2,
+            kind: LinkKind::Wiki { target: "x".into(), fragment: None },
+            resolved: None,
+        });
+
+        assert_eq!(line.link_at(0), Some(0));
     }
 
     #[test]

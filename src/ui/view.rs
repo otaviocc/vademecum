@@ -32,6 +32,7 @@ const HELP: &[(&str, &str)] = &[
     ("?", "Help overlay"),
     ("Esc", "Close overlay, clear search highlight"),
     ("q, Ctrl-C", "Quit"),
+    ("Left click", "Move the cursor to the clicked line"),
 ];
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -202,6 +203,7 @@ mod tests {
     use crate::document::Document;
     use crate::theme::Theme;
     use crate::ui::Options;
+    use crate::ui::app::CONTENT_TOP;
     use crate::ui::input::{Action, Motion};
 
     fn app(source: &str, size: Size) -> App {
@@ -226,7 +228,13 @@ mod tests {
         text.trim_end().to_string()
     }
 
-    const CONTENT_TOP: u16 = 2;
+    #[test]
+    fn the_content_pane_starts_where_the_reducer_thinks_it_does() {
+        let app = app("first line\n", Size::new(40, 12));
+        let buffer = frame(&app, Size::new(40, 12));
+        assert_eq!(row(&buffer, CONTENT_TOP).trim(), "first line");
+        assert_eq!(row(&buffer, CONTENT_TOP - 1), symbols::line::HORIZONTAL.repeat(40));
+    }
 
     fn body() -> String {
         (1..=20).map(|n| format!("line {n}\n\n")).collect()

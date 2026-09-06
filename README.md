@@ -89,7 +89,8 @@ forces that even on a terminal.
 
 `[[wikilinks]]`, `[[target|alias]]`, `[[target#Heading]]` and ordinary relative
 links like `[text](other.md#section)` are all followable. `Tab` cycles the links
-on the cursor line, `Enter` follows one, `h` and `l` walk your history.
+on the cursor line, `Enter` follows one, `h` and `l` walk your history. Clicking
+a link follows it directly, whichever line it is on.
 
 A target is looked for beside the current document first, then anywhere under
 the **vault root** — the nearest ancestor containing `.obsidian/`, or whatever
@@ -220,6 +221,7 @@ TOML. Origins and licences for the added ones are in
 | `?` | Help |
 | `Esc` | Close the overlay, or clear the search |
 | `q`, `Ctrl-C` | Quit |
+| Left click | Follow the link under the pointer |
 
 The wheel scrolls three lines a notch. Capturing the mouse takes your terminal's
 own text selection away, so `--no-mouse` turns it off; most terminals also let
