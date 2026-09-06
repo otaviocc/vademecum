@@ -303,6 +303,51 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   `checks: write`, and declaring it still leaves the job red on a pull request
   from a fork, whose token is read-only whatever the workflow asks for. Prefer
   running the tool directly when there is one.
+- A bundled `.sublime-syntax` has to work under **`fancy-regex`**, not merely
+  under Sublime Text. The pure-Rust engine is what keeps vademecum free of a C
+  dependency on Oniguruma, and it does not implement regex *subroutine calls*
+  (`\g<1>`): a definition using one fails to load outright with
+  `FeatureNotYetSupported`. Named backreferences (`\k<name>`) are fine. And
+  loading is only half the test — one syntax loaded cleanly and turned out to
+  have no `keyword` scopes at all, so a fence came out in a single colour.
+  Check a candidate on a sample with **no string and no number in it**; a
+  sample containing `"hi"` passes on the strength of that one literal.
+- `SyntaxSetBuilder::build` relinks contexts across all ~200 bundled
+  definitions, so adding one syntax costs about as much as adding twenty:
+  ~8ms to load syntect's dump, ~93ms to take it apart and put it back adding
+  nothing. That is why `build.rs` bakes the pack. Loading the baked one is ~1ms;
+  the first paint of a given language then costs a few ms more while its
+  patterns compile, which is the engine's cost and not the packaging's.
+- `entry.file_type()` does **not** follow symlinks and `std::fs::metadata` does.
+  That one substitution is the whole of "follow symlinked directories" — and it
+  needs a `visited` set of *canonical* directory paths, or a vault linking back
+  to its own root recurses forever. A test for that fails without the guard and
+  **hangs** without the test.
+- Following symlinks means one file can be reached by several names. Dedupe the
+  index by canonical path or a note reachable twice is reported as ambiguous
+  with itself, which makes it unfollowable — worse than not following symlinks
+  at all. Sort `read_dir` entries too: without it, which of two names the reader
+  is shown depends on what the filesystem happened to return first.
+- A fix belongs in the **element defaults**, not in `themes/ansi.toml`. A
+  partial theme file merges over the defaults, so an override that lives only in
+  the built-in file leaves every user theme with the old behaviour while the
+  shipped one looks right. The drift test between the two is what keeps this
+  honest; if it needs an exceptions list, the fix is probably on the wrong side.
+- A "warn once" that deduplicates against a list it also drains says the thing
+  again after every collection. Keep a separate set of what has been said and
+  never drain it — otherwise, since `theme_for` runs before the cache lookup,
+  "once" means once per code block per layout.
+- Process-global state (the highlight cache, the warning list) makes tests race
+  under `cargo test`'s default parallelism. The lock has to be held by
+  **readers** too: a test asserting `Arc::ptr_eq` across two calls raced with
+  the test that fills the cache, because only the writer took it.
+- `git rebase` across a stack whose base was rewritten conflicts in the test
+  module almost every time, since both sides add tests at the same place. Both
+  sides are usually wanted; keep the two blocks and close the brace by hand.
+- CI jobs that fail in ~2s with `steps: []` are not a code failure. Read
+  `gh api repos/OWNER/REPO/check-runs/<id>/annotations` — in this repo it was
+  GitHub refusing to start jobs over account billing, which no amount of
+  re-running fixes. Free Actions need the repository to be public.
 - `App::new` takes `&Options`. A pager option that layout or resolution needs
   goes in there rather than into the parameter list, which is already four
   long and was five before.
