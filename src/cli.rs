@@ -31,8 +31,8 @@ pub struct Cli {
     #[arg(long, help = "Re-render when the file changes on disk")]
     pub watch: bool,
 
-    #[arg(long, help = "Enable mouse capture (wheel scroll)")]
-    pub mouse: bool,
+    #[arg(long, help = "Disable mouse capture, keeping the terminal's own text selection")]
+    pub no_mouse: bool,
 
     #[arg(long, help = "Print the available theme names and exit")]
     pub list_themes: bool,
@@ -71,7 +71,7 @@ mod tests {
         assert_eq!(cli.color, ColorChoice::Auto);
         assert!(!cli.plain);
         assert!(!cli.watch);
-        assert!(!cli.mouse);
+        assert!(!cli.no_mouse);
         assert!(cli.width.is_none());
         assert!(cli.theme.is_none());
         assert!(cli.config.is_none());
@@ -97,7 +97,7 @@ mod tests {
             "--root",
             "notes",
             "--watch",
-            "--mouse",
+            "--no-mouse",
             "--list-themes",
             "--list-syntax-themes",
             "--resolve-links",
@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(cli.config, Some(PathBuf::from("theme.toml")));
         assert_eq!(cli.root, Some(PathBuf::from("notes")));
         assert!(cli.watch);
-        assert!(cli.mouse);
+        assert!(cli.no_mouse);
         assert!(cli.list_themes);
         assert!(cli.list_syntax_themes);
         assert!(cli.resolve_links);
