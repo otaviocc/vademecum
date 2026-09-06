@@ -32,7 +32,7 @@ const HELP: &[(&str, &str)] = &[
     ("?", "Help overlay"),
     ("Esc", "Close overlay, clear search highlight"),
     ("q, Ctrl-C", "Quit"),
-    ("Left click", "Move the cursor to the clicked line"),
+    ("Left click", "Follow the link under the pointer"),
 ];
 
 pub fn draw(frame: &mut Frame, app: &App) {

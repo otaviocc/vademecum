@@ -114,12 +114,7 @@ impl App {
 
         let moves_cursor = matches!(
             action,
-            Action::Move(_)
-                | Action::Click { .. }
-                | Action::SearchConfirm
-                | Action::SearchStep { .. }
-                | Action::Follow
-                | Action::History { .. }
+            Action::Move(_) | Action::SearchConfirm | Action::SearchStep { .. } | Action::Follow | Action::History { .. }
         );
 
         match action {
@@ -377,10 +372,9 @@ impl App {
 
     fn click(&mut self, column: u16, row: u16) {
         let Some(line) = self.clicked_line(row) else { return };
-        self.cursor = line;
-        self.focus = 0;
-
         let Some(index) = self.lines[line].link_at(usize::from(column)) else { return };
+
+        self.cursor = line;
         self.focus = index;
         match self.focused().map(|link| &link.kind) {
             Some(LinkKind::External(_)) => self.open_external(),
@@ -566,46 +560,13 @@ mod tests {
     }
 
     #[test]
-    fn a_click_puts_the_cursor_on_the_line_under_the_pointer() {
+    fn a_click_on_plain_text_changes_nothing() {
         let mut app = paged();
         app.apply(Action::Scroll(12));
-        assert_eq!(app.top, 12);
+        let (cursor, top) = (app.cursor, app.top);
 
         app.apply(Action::Click { column: 0, row: CONTENT_TOP + 3 });
-        assert_eq!(app.cursor, 15);
-        assert_eq!(app.top, 12, "a click never moves the view: the line was already visible");
-    }
-
-    #[test]
-    fn a_click_on_the_chrome_is_not_a_click_on_a_line() {
-        let height = paged().viewport_height() as u16;
-        for row in [0, 1, CONTENT_TOP + height, CONTENT_TOP + height + 1] {
-            let mut app = paged();
-            app.apply(Action::Move(Motion::Line(1)));
-            app.apply(Action::Click { column: 0, row });
-            assert_eq!((app.cursor, app.top), (1, 0), "row {row} is chrome, not content");
-        }
-    }
-
-    #[test]
-    fn a_click_past_the_end_of_a_short_document_lands_nowhere() {
-        let mut app = app("one line\n", 14);
-        let last = app.lines.len() - 1;
-        app.apply(Action::Click { column: 0, row: CONTENT_TOP + 5 });
-        assert_eq!(app.cursor, 0);
-
-        app.apply(Action::Click { column: 0, row: CONTENT_TOP + last as u16 });
-        assert_eq!(app.cursor, last);
-    }
-
-    #[test]
-    fn a_click_forgets_which_link_was_focused_the_way_every_other_move_does() {
-        let mut app = app("[one](a.md) and [two](b.md)\n\n[three](c.md)\n", 14);
-        app.apply(Action::Focus { forward: true });
-        assert_eq!(app.focus, 1);
-
-        app.apply(Action::Click { column: 0, row: CONTENT_TOP + 2 });
-        assert_eq!((app.cursor, app.focus), (2, 0));
+        assert_eq!((app.cursor, app.top), (cursor, top), "a click is for links, not for the reading position");
     }
 
     #[test]
@@ -1140,14 +1101,25 @@ mod tests {
     }
 
     #[test]
-    fn a_click_beside_a_link_moves_the_cursor_and_follows_nothing() {
+    fn a_click_beside_a_link_changes_nothing() {
         let mut app = inside_vault("plain\n\nsome text and [[note]] here\n");
         let line = app.lines.iter().position(|line| !line.links.is_empty()).expect("a line with a link");
 
         app.apply(Action::Click { column: 0, row: CONTENT_TOP + line as u16 });
-        assert_eq!(app.cursor, line);
+        assert_eq!(app.cursor, 0, "landing beside a link is not landing on it");
         assert_eq!(app.file, "scratch.md");
         assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn a_click_outside_the_content_pane_follows_nothing() {
+        let mut app = inside_vault("[[note]] on the first line\n");
+        let height = app.viewport_height() as u16;
+
+        for row in [0, 1, CONTENT_TOP + height, CONTENT_TOP + height + 1] {
+            app.apply(Action::Click { column: 1, row });
+            assert_eq!(app.file, "scratch.md", "row {row} is chrome, not content");
+        }
     }
 
     #[test]
