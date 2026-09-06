@@ -4,6 +4,7 @@ mod document;
 mod markdown;
 mod render;
 mod theme;
+mod ui;
 
 use std::io::{BufWriter, IsTerminal, Write};
 use std::path::Path;
@@ -29,7 +30,14 @@ fn main() -> Result<()> {
     }
 
     let document = load(&cli)?;
+    // Loading and theming happen before the alternate screen, so their errors
+    // reach stderr and a non-zero exit rather than a statusbar nobody sees.
     let theme = theme::loader::load(cli.config.as_deref(), cli.theme.as_deref())?;
+
+    if is_terminal && !cli.plain {
+        return ui::run(document, theme, ui::Options { mouse: cli.mouse, width: cli.width });
+    }
+
     let blocks = markdown::ast::parse(&document.source);
     let lines = render::layout::render(&blocks, &theme, width(&cli, is_terminal));
 

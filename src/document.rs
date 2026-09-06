@@ -39,7 +39,8 @@ impl Document {
         Ok(Self::new(None, base_dir, source))
     }
 
-    fn new(path: Option<PathBuf>, base_dir: PathBuf, source: String) -> Self {
+    /// A document from parts, for the loaders above and for tests.
+    pub fn new(path: Option<PathBuf>, base_dir: PathBuf, source: String) -> Self {
         let (source, title) = match split_frontmatter(&source) {
             Some(frontmatter) => (blank_out(&source, frontmatter.end), title_of(&frontmatter.block)),
             None => (source, None),
