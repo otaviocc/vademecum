@@ -2,5 +2,6 @@
 //! written out.
 
 pub mod ansi;
+pub mod code;
 pub mod layout;
 pub mod line;

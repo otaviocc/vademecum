@@ -11,7 +11,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::markdown::ast::{Alignment, Block, Inline, ListItem, SourceBlock, plain_text};
 use crate::markdown::links::LinkKind;
-use crate::render::line::{LinkRef, RenderedLine, StyledSpan};
+use crate::render::code;
+use crate::render::line::{self, LinkRef, RenderedLine, StyledSpan};
 use crate::theme::{Element, Theme};
 
 /// The one-column gutter the content is laid out inside.
@@ -202,13 +203,47 @@ fn code_to_lines(lang: Option<&str>, text: &str, theme: &Theme, width: usize, so
     let block = theme.style(Element::CodeBlock);
     let mut lines = vec![fence_line(lang, theme, width, source_line)];
 
-    for (offset, code) in text.trim_end_matches('\n').lines().enumerate() {
-        let text = pad_to(truncate(code, width), width);
-        lines.push(styled_line(text, block, source_line + offset + 1));
+    for (offset, code) in code::highlight(lang, text, theme.syntax_theme.as_deref()).iter().enumerate() {
+        lines.push(code_line(code, block, width, source_line + offset + 1));
     }
 
     lines.push(styled_line(" ".repeat(width), block, source_line));
     lines
+}
+
+/// One highlighted code line, cut to `width` and padded back out to it. The
+/// syntect styles are patched *over* the block style, so the block keeps its
+/// background and the `.tmTheme` contributes only foregrounds and font styles.
+fn code_line(code: &[StyledSpan], block: Style, width: usize, source_line: usize) -> RenderedLine {
+    let total: usize = code.iter().map(StyledSpan::width).sum();
+    let cut = total > width;
+    // The `…` needs a column of its own, exactly as `truncate` gives it one.
+    let budget = if cut { width.saturating_sub(1) } else { width };
+
+    let mut spans: Vec<StyledSpan> = Vec::with_capacity(code.len() + 1);
+    let mut used = 0;
+    for span in code {
+        if used >= budget {
+            break;
+        }
+        let (head, _) = split_at_width(&span.text, budget - used);
+        if head.is_empty() {
+            continue;
+        }
+        used += head.width();
+        spans.push(StyledSpan::new(head, block.patch(span.style)));
+    }
+
+    if cut {
+        let style = spans.last().map_or(block, |span| span.style);
+        spans.push(StyledSpan::new("…", style));
+        used += 1;
+    }
+    // Padding to the full width is what makes the background a rectangle; a
+    // blank code line is nothing but padding.
+    spans.push(StyledSpan::new(" ".repeat(width.saturating_sub(used)), block));
+
+    RenderedLine { spans: line::merge(spans), source_line, ..RenderedLine::default() }
 }
 
 fn fence_line(lang: Option<&str>, theme: &Theme, width: usize, source_line: usize) -> RenderedLine {
@@ -631,11 +666,6 @@ fn truncate(text: &str, width: usize) -> String {
     }
     let (head, _) = split_at_width(text, width.saturating_sub(1));
     format!("{head}…")
-}
-
-fn pad_to(text: String, width: usize) -> String {
-    let padding = width.saturating_sub(text.width());
-    text + &" ".repeat(padding)
 }
 
 fn styled_line(text: impl Into<String>, style: Style, source_line: usize) -> RenderedLine {

@@ -27,9 +27,10 @@ fn main() -> Result<()> {
     // Listing themes is a question about the installation, not about a
     // document, so it answers before anything asks for a path.
     if cli.list_themes {
-        let mut out = BufWriter::new(stdout.lock());
-        let written = theme::loader::available().iter().try_for_each(|name| writeln!(out, "{name}")).and_then(|()| out.flush());
-        return finished(written);
+        return finished(list(&stdout, &theme::loader::available()));
+    }
+    if cli.list_syntax_themes {
+        return finished(list(&stdout, &render::code::available()));
     }
 
     let document = load(&cli)?;
@@ -39,6 +40,12 @@ fn main() -> Result<()> {
 
     let mut out = BufWriter::new(stdout.lock());
     finished(render::ansi::write_lines(&mut out, &lines, color(&cli, is_terminal)).and_then(|()| out.flush()))
+}
+
+/// One name per line, which is what both listing flags print.
+fn list(stdout: &std::io::Stdout, names: &[String]) -> std::io::Result<()> {
+    let mut out = BufWriter::new(stdout.lock());
+    names.iter().try_for_each(|name| writeln!(out, "{name}")).and_then(|()| out.flush())
 }
 
 /// The outcome of writing to stdout. `vademecum README.md | less -R` is
