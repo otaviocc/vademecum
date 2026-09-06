@@ -277,7 +277,8 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   the pty is 0x0 and the pager correctly draws nothing, which looks like a bug
   and is not one. Keys reach it because crossterm reads `/dev/tty`, which is
   also why `cat x.md | vademecum -` works.
-- That smoke test drives the **mouse** too: with `--mouse`, SGR wheel events fed
+- That smoke test drives the **mouse** too: capture is on unless `--no-mouse`,
+  and SGR wheel events fed
   on stdin work like keys — `\033[<65;10;10M` is a notch down and `\033[<64;10;10M`
   a notch up. What it cannot easily prove is the statusbar, because the backend
   redraws changed cells only: moving one line in a long document repaints the
@@ -379,6 +380,29 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   and `CUF` into a fixed grid reproduces the frame exactly — and, because it
   replays cursor moves, it also reconstructs a frame built from several partial
   repaints, which is what defeats the grep-for-a-fragment trick above.
+- The same smoke test drives a **drag**: press, drag and release are
+  `\033[<0;C;RM`, `\033[<32;C;RM` and `\033[<0;C;Rm`, and those coordinates are
+  1-based while everything in the reducer is 0-based — a report at row 5 is the
+  third content line, not the fourth. It proves the clipboard too, since OSC 52
+  goes out through the same stream: `\x1b]52;c;<base64>` is in the capture and
+  decodes to exactly what was copied. Note ratatui emits the SGR **once** for a
+  run of cells that share a style, so a selection spanning two lines shows as
+  one colour sequence followed by two cursor moves; counting colour sequences
+  undercounts what was painted.
+- OSC 52 is how anything gets to the clipboard: `crossterm`'s `osc52` feature
+  costs no package in the lock file (`base64` is already there), works over
+  `ssh`, and needs `set -g set-clipboard on` under tmux. `arboard` would have
+  been a dozen crates and X11/Wayland linkage.
+- The reducer must not write to the terminal, or nothing about copying is
+  testable. `App` fills an outbox that the event loop drains after every action,
+  which keeps "what would be copied" a value a test can assert on.
+- A press that might start a drag cannot also be a click: the click has to move
+  to the **release**, and the release decides which it was by whether anything
+  moved. Existing tests that applied a click action directly need a helper that
+  presses and releases, not a rename.
+- Adding a row to the help table moves the popup's height, and
+  `the_overlay_takes_three_fifths_of_the_width_and_sits_in_the_middle` pins it.
+  Expect to update that test with every new binding.
 - Sending a single `q` gives exactly one full frame: the loop draws, reads the
   key, and quits without drawing again, so there is no partial repaint to
   reassemble.
