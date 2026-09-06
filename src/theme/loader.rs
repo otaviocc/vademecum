@@ -214,7 +214,12 @@ fn patch(default: Style, overrides: &ElementFile, palette: &Palette, path: &str,
         style = style.fg(color(spec, "fg")?);
     }
     if let Some(spec) = &overrides.bg {
-        style = style.bg(color(spec, "bg")?);
+        // The one value that is not a color. `Style::bg` cannot express it, so
+        // the field is cleared rather than set.
+        style = match spec.removes_color() {
+            true => Style { bg: None, ..style },
+            false => style.bg(color(spec, "bg")?),
+        };
     }
     if let Some(names) = &overrides.modifiers {
         let mut modifiers = Modifier::empty();
@@ -271,15 +276,86 @@ mod tests {
     #[test]
     fn the_embedded_ansi_theme_is_the_built_in_default() {
         // The Rust defaults are the ground truth every partial file merges
-        // over; `themes/ansi.toml` is the readable copy of them. This is what
-        // keeps the two from drifting. Only the colors are compared: the file
-        // also names a syntax theme, which the defaults have no opinion on.
+        // over; `themes/ansi.toml` is the readable copy of them, and this is
+        // what keeps the two from drifting. Only the colors are compared: the
+        // file also names a syntax theme, which the defaults have no opinion on.
         let embedded = theme(BUILT_IN[0].1);
         let default = Theme::default();
         assert_eq!(embedded.palette, default.palette);
         for element in Element::ALL {
             assert_eq!(embedded.style(element), default.style(element), "{element:?} differs from the default");
         }
+    }
+
+    /// Why the readability fix is in the defaults rather than in
+    /// `themes/ansi.toml`: a partial file merges over the defaults, so a theme
+    /// naming nothing but an accent must not inherit a slab behind its code or
+    /// a search highlight that fails to invert.
+    #[test]
+    fn a_partial_theme_inherits_the_readable_defaults() {
+        let theme = theme("name = \"mine\"\n[palette]\naccent = \"green\"\n");
+        for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
+            assert_eq!(theme.style(element).bg, None, "{element:?} inherited a background");
+        }
+        for element in [Element::SearchMatch, Element::SearchCurrent] {
+            assert_eq!(theme.style(element).fg, Some(Color::Black), "{element:?}");
+        }
+    }
+
+    /// And a theme whose `subtle` is a real tint asks for the band back, which
+    /// is what the three themed built-ins do.
+    #[test]
+    fn a_theme_with_a_real_subtle_can_have_its_code_background() {
+        for name in ["catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
+            let source = BUILT_IN.iter().find(|(built_in, _)| *built_in == name).expect("a built-in").1;
+            let built_in = theme(source);
+            for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
+                assert_eq!(built_in.style(element).bg, Some(built_in.palette.subtle), "{name} {element:?}");
+            }
+        }
+    }
+
+    /// Bright black is what `dark_gray` means, and as the background of code it
+    /// reads as a washed-out slab.
+    #[test]
+    fn the_ansi_theme_gives_code_no_background() {
+        let ansi = theme(BUILT_IN[0].1);
+        for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
+            assert_eq!(ansi.style(element).bg, None, "{element:?} still paints a background");
+            assert!(ansi.style(element).fg.is_some(), "{element:?} has to say something, having no background");
+        }
+
+        // And the slot is the cursor line's alone, which is why the bar is now
+        // visible over a code block rather than being the same color as it.
+        assert_eq!(ansi.style(Element::CursorLine).bg, Some(ansi.palette.subtle));
+        assert_ne!(ansi.style(Element::CursorLine).bg, ansi.style(Element::CodeBlock).bg);
+    }
+
+    /// `reset` as a *foreground* is the terminal's foreground, so
+    /// `fg = palette.background` under `ansi` painted default-on-yellow and the
+    /// inversion these want never happened.
+    #[test]
+    fn the_ansi_search_highlights_name_a_foreground_that_reads() {
+        let ansi = theme(BUILT_IN[0].1);
+        for element in [Element::SearchMatch, Element::SearchCurrent] {
+            assert_eq!(ansi.style(element).fg, Some(Color::Black), "{element:?}");
+            assert_ne!(ansi.style(element).fg, Some(ansi.palette.background), "{element:?} inverts against nothing");
+            assert!(ansi.style(element).bg.is_some(), "{element:?} still needs something to invert against");
+        }
+        // The current match stays distinguishable from the rest.
+        assert_ne!(ansi.style(Element::SearchMatch).bg, ansi.style(Element::SearchCurrent).bg);
+        // And the bold the defaults give the current one survives the override.
+        assert!(ansi.style(Element::SearchCurrent).add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn a_background_can_be_removed_but_a_foreground_cannot() {
+        let palette = Palette::default();
+        assert!(ColorSpec::Name(String::from("none")).removes_color());
+        assert!(!ColorSpec::Name(String::from("reset")).removes_color(), "reset is a color: the terminal's own");
+        // Anywhere a color is actually required, `none` is an error that says so.
+        let error = ColorSpec::Name(String::from("none")).resolve_against(&palette).expect_err("none is not a color");
+        assert!(error.to_string().contains("bg"), "{error}");
     }
 
     #[test]

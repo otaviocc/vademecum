@@ -63,7 +63,11 @@ mod tests {
         let theme = Theme::default();
         assert_eq!(theme.style(Element::Heading1).fg, Some(theme.palette.accent));
         assert!(theme.style(Element::Heading1).add_modifier.contains(Modifier::BOLD));
-        assert_eq!(theme.style(Element::InlineCode).bg, Some(theme.palette.subtle));
+        // Code carries no background by default; a theme whose `subtle` is a
+        // real tint rather than ANSI bright black asks for one back. The cursor
+        // line is the slot's one default user.
+        assert_eq!(theme.style(Element::InlineCode).bg, None);
+        assert_eq!(theme.style(Element::CursorLine).bg, Some(theme.palette.subtle));
     }
 
     #[test]

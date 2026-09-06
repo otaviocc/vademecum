@@ -23,3 +23,14 @@ accent               = "#c4b28a"   # dragonYellow
 chrome               = "#c4b28a"   # dragonYellow
 highlight            = "#8ba4b0"   # dragonBlue2
 notice               = "#8992a7"   # dragonViolet, upstream's color for refs
+
+# This palette's `subtle` is a real near-background tint rather than ANSI bright
+# black, so code gets its band back; the default leaves it off for `ansi`'s sake.
+[elements.inline_code]
+bg = "subtle"
+
+[elements.code_block]
+bg = "subtle"
+
+[elements.code_block_lang]
+bg = "subtle"
