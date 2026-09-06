@@ -46,11 +46,12 @@ pub enum Element {
     CursorLine,
     SearchMatch,
     SearchCurrent,
+    Selection,
     HelpWindow,
 }
 
 impl Element {
-    pub const ALL: [Element; 38] = [
+    pub const ALL: [Element; 39] = [
         Element::Paragraph,
         Element::Heading1,
         Element::Heading2,
@@ -88,6 +89,7 @@ impl Element {
         Element::CursorLine,
         Element::SearchMatch,
         Element::SearchCurrent,
+        Element::Selection,
         Element::HelpWindow,
     ];
 
@@ -130,6 +132,7 @@ impl Element {
             Element::CursorLine => "cursor_line",
             Element::SearchMatch => "search_match",
             Element::SearchCurrent => "search_current",
+            Element::Selection => "selection",
             Element::HelpWindow => "help_window",
         }
     }
@@ -187,6 +190,7 @@ pub fn default_style(element: Element, palette: &Palette) -> Style {
         Element::CursorLine => style.bg(palette.subtle),
         Element::SearchMatch => style.fg(Color::Black).bg(palette.warning),
         Element::SearchCurrent => style.fg(Color::Black).bg(palette.notice).add_modifier(Modifier::BOLD),
+        Element::Selection => style.fg(palette.selection_foreground).bg(palette.selection_background),
         Element::HelpWindow => style.fg(palette.foreground).bg(palette.background),
     }
 }
