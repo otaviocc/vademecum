@@ -61,6 +61,13 @@ fn main() -> Result<()> {
     let links = Links::new(document, cli.root.as_deref());
     let lines = render::layout::render(&blocks, &Ctx::new(&theme, &links), width(&cli, is_terminal));
 
+    // Layout does not print its own warnings — in the pager it would paint over
+    // the alternate screen — so stdout mode collects them and puts them where
+    // they have always gone.
+    for warning in render::code::take_warnings() {
+        eprintln!("vademecum: {warning}");
+    }
+
     let mut out = BufWriter::new(stdout.lock());
     finished(render::ansi::write_lines(&mut out, &lines, color(&cli, is_terminal)).and_then(|()| out.flush()))
 }
