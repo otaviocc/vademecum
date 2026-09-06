@@ -29,8 +29,45 @@ pub fn render(blocks: &[SourceBlock], theme: &Theme, width: usize) -> Vec<Render
         if !line.is_blank() {
             line.prefix(gutter.clone());
         }
+        // Wrapping keeps almost everything inside the width on its own, but a
+        // table's borders and padding have a floor that a narrow width cannot
+        // pay for. Enforcing the invariant in one place means no caller has to
+        // be trusted with it.
+        clamp_to_width(line, width);
     }
     lines
+}
+
+/// Cut a line to `width` columns, marking the cut with `…` as code blocks do.
+fn clamp_to_width(line: &mut RenderedLine, width: usize) {
+    if line.width() <= width {
+        return;
+    }
+
+    let budget = width.saturating_sub(1);
+    let mut used = 0;
+    let mut spans: Vec<StyledSpan> = Vec::new();
+    let mut cut_style = Style::default();
+    for span in std::mem::take(&mut line.spans) {
+        let span_width = span.width();
+        if used + span_width <= budget {
+            used += span_width;
+            spans.push(span);
+            continue;
+        }
+        cut_style = span.style;
+        let (head, _) = split_at_width(&span.text, budget.saturating_sub(used));
+        if !head.is_empty() {
+            spans.push(StyledSpan::new(head, cut_style));
+        }
+        break;
+    }
+
+    // A link is only followable if all of its text survived the cut.
+    let kept = spans.len();
+    line.links.retain(|link| link.span_range.end <= kept);
+    spans.push(StyledSpan::new("…", cut_style));
+    line.spans = spans;
 }
 
 /// A run of blocks, separated by one blank line, with no blank line trailing.
@@ -271,13 +308,27 @@ fn column_widths(header: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>], columns: usi
         return widths;
     }
 
-    let mut shrunk: Vec<usize> = widths.iter().map(|w| (w * available / natural.max(1)).max(MIN)).collect();
+    // Three columns of text per column is the goal, not a promise: at a narrow
+    // enough width holding it would push the table past the wrap width.
+    let floor = MIN.min(available / columns).max(1);
+    let mut shrunk: Vec<usize> = widths.iter().map(|w| (w * available / natural.max(1)).max(floor)).collect();
+
     // Proportional shrinking rounds down; hand the remainder back left to right.
     let mut slack = available.saturating_sub(shrunk.iter().sum::<usize>());
     for (column, target) in shrunk.iter_mut().enumerate() {
         let room = widths[column].saturating_sub(*target).min(slack);
         *target += room;
         slack -= room;
+    }
+
+    // Rounding up to the floor can push the total back over. Take those columns
+    // back off the widest first, so the widest column pays for the narrow ones.
+    let mut total: usize = shrunk.iter().sum();
+    while total > available {
+        let widest = shrunk.iter().enumerate().filter(|(_, width)| **width > floor).max_by_key(|(_, width)| **width);
+        let Some((column, _)) = widest.map(|(column, width)| (column, *width)) else { break };
+        shrunk[column] -= 1;
+        total -= 1;
     }
     shrunk
 }
@@ -460,11 +511,25 @@ impl<'a> Wrapper<'a> {
         }
 
         let mut rest = word;
-        while rest.width() > self.width.saturating_sub(self.used) {
-            let (head, tail) = split_at_width(rest, self.width - self.used);
+        loop {
+            let room = self.width.saturating_sub(self.used);
+            if rest.width() <= room {
+                break;
+            }
+            let (head, tail) = split_at_width(rest, room);
             if head.is_empty() {
-                // No room left on this line for even one character.
+                if !self.current.spans.is_empty() {
+                    // No room left on this line, but a fresh one will have some.
+                    self.newline();
+                    continue;
+                }
+                // The character is wider than the whole line. Emitting it and
+                // overflowing by a column is the only way forward: looping for
+                // room that can never appear would hang.
+                let (head, tail) = split_first_char(rest);
+                self.emit(head, style, link);
                 self.newline();
+                rest = tail;
                 continue;
             }
             self.emit(head, style, link);
@@ -478,7 +543,8 @@ impl<'a> Wrapper<'a> {
 
     fn emit(&mut self, text: &str, style: Style, link: Option<usize>) {
         self.pending_space = None;
-        if self.open.map(|(id, _)| id) != link {
+        let same_link = self.open.map(|(id, _)| id) == link;
+        if !same_link {
             self.close_link();
             if let Some(id) = link {
                 self.open = Some((id, self.current.spans.len()));
@@ -486,7 +552,9 @@ impl<'a> Wrapper<'a> {
         }
 
         match self.current.spans.last_mut() {
-            Some(last) if last.style == style => last.text.push_str(text),
+            // Two adjacent links share a style, so merging on style alone would
+            // fuse them into one span — and one of the two links would be lost.
+            Some(last) if last.style == style && same_link => last.text.push_str(text),
             _ => self.current.push(StyledSpan::new(text, style)),
         }
         self.used += text.width();
@@ -536,6 +604,11 @@ fn tokenize(text: &str) -> Vec<Token<'_>> {
         rest = tail;
     }
     tokens
+}
+
+/// Split off the first character, which is always progress.
+fn split_first_char(text: &str) -> (&str, &str) {
+    text.split_at(text.chars().next().map_or(0, char::len_utf8))
 }
 
 /// Split at the last char boundary that still fits in `width` columns.
@@ -775,6 +848,59 @@ mod tests {
         let rendered = render(&parse("# One\n\npara\n"), &theme, 40);
         assert_eq!(rendered[0].source_line, 1);
         assert_eq!(rendered[2].source_line, 3);
+    }
+
+    #[test]
+    fn a_character_wider_than_the_line_still_terminates() {
+        // Every nesting level narrows what is left, so a width that looks
+        // absurd at document level is reachable inside a quote or a list.
+        for source in ["日本\n", "> 日\n", "- - - 日\n", "| 日 | 本 |\n| - | - |\n| 一 | 二 |\n"] {
+            for width in 1..8 {
+                let rendered = lines(source, width);
+                assert!(rendered.len() < 100, "{source:?} at width {width} produced {} lines", rendered.len());
+            }
+        }
+    }
+
+    #[test]
+    fn no_line_exceeds_the_width_at_any_width() {
+        let source = concat!(
+            "| a | b | c | d | e |\n| - | - | - | - | - |\n| 1 | 2 | 3 | 4 | 5 |\n\n",
+            "> a quote with 日本語 in it\n\n- - - deeply nested\n\n```\nsome code\n```\n"
+        );
+        for width in 1..40 {
+            for line in lines(source, width) {
+                assert!(line.width() <= width, "at width {width}, {line:?} is {} columns", line.width());
+            }
+        }
+    }
+
+    #[test]
+    fn adjacent_links_stay_two_links() {
+        let theme = Theme::default();
+        let rendered = render(&parse("[one](https://e.com)[two](https://f.com)\n"), &theme, 40);
+        assert_eq!(rendered[0].links.len(), 2, "{:?}", rendered[0]);
+
+        let text_of =
+            |link: &LinkRef| rendered[0].spans[link.span_range.clone()].iter().map(|span| span.text.as_str()).collect::<String>();
+        assert_eq!(text_of(&rendered[0].links[0]), "one");
+        assert_eq!(text_of(&rendered[0].links[1]), "two");
+    }
+
+    #[test]
+    fn a_clamped_line_drops_the_links_it_cut() {
+        let mut line = RenderedLine {
+            spans: vec![StyledSpan::new("wide", Style::default()), StyledSpan::new("link", Style::default())],
+            links: vec![LinkRef {
+                span_range: 1..2,
+                kind: LinkKind::Wiki { target: "x".into(), fragment: None },
+                resolved: None,
+            }],
+            ..RenderedLine::default()
+        };
+        clamp_to_width(&mut line, 5);
+        assert_eq!(line.text(), "wide…");
+        assert!(line.links.is_empty(), "a link that was cut off cannot be followed");
     }
 
     #[test]
