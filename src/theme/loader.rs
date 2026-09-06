@@ -28,19 +28,19 @@ const BUILT_IN: [(&str, &str); 4] = [
 /// they are warnings, and the theme still loads.
 #[derive(Debug, thiserror::Error)]
 pub enum ThemeError {
-    #[error("{path}: cannot be read: {source}")]
+    #[error("{path}: cannot be read")]
     Unreadable {
         path: String,
         #[source]
         source: std::io::Error,
     },
-    #[error("{path}: not a theme file: {source}")]
+    #[error("{path}: not a theme file")]
     Malformed {
         path: String,
         #[source]
         source: toml::de::Error,
     },
-    #[error("{path}: {key}: {source}")]
+    #[error("{path}: {key}")]
     BadColor {
         path: String,
         key: String,
@@ -92,11 +92,12 @@ fn available_in(config_dir: Option<&Path>) -> Vec<String> {
         .into_iter()
         .flatten()
         .flatten()
+        .filter(|entry| entry.path().is_file())
         .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "toml"))
         .filter_map(|entry| entry.path().file_stem().map(|stem| stem.to_string_lossy().into_owned()))
         .filter(|stem| !names.contains(stem))
         .collect();
-    user.sort();
+    user.sort_by_key(|name| name.to_lowercase());
 
     names.append(&mut user);
     names
@@ -120,8 +121,10 @@ fn resolve(config: Option<&Path>, name: Option<&str>, config_dir: Option<&Path>)
 /// A user theme of that stem shadows a built-in of the same name, so a shipped
 /// theme can be retuned without being renamed.
 fn by_name(name: &str, config_dir: Option<&Path>) -> Result<(Theme, Vec<String>), ThemeError> {
-    let user: Option<PathBuf> =
-        config_dir.map(|dir| dir.join("themes").join(format!("{name}.toml"))).filter(|path| path.is_file());
+    let user: Option<PathBuf> = config_dir
+        .filter(|_| addresses_a_theme(name))
+        .map(|dir| dir.join("themes").join(format!("{name}.toml")))
+        .filter(|path| path.is_file());
     if let Some(path) = user {
         return from_file(&path);
     }
@@ -129,6 +132,14 @@ fn by_name(name: &str, config_dir: Option<&Path>) -> Result<(Theme, Vec<String>)
         Some((built_in, source)) => from_source(built_in, source),
         None => Err(ThemeError::Unknown { name: name.to_owned(), available: available_in(config_dir).join(", ") }),
     }
+}
+
+/// A `--theme` names a file *in* the themes directory. Anything that could
+/// step outside it is not a theme name at all, and falls through to the
+/// built-ins and then to "no theme named that": `--config` is the flag for
+/// naming a path.
+fn addresses_a_theme(name: &str) -> bool {
+    !name.is_empty() && !name.contains(['/', '\\']) && name != "." && name != ".."
 }
 
 fn from_file(path: &Path) -> Result<(Theme, Vec<String>), ThemeError> {
@@ -368,6 +379,31 @@ colour = "red""#,
     }
 
     #[test]
+    fn an_error_states_its_cause_once() {
+        // The cause is a source, and the binary boundary prints the chain.
+        // Saying it in the message too gets it printed twice.
+        let error = from_source("mine.toml", "[elements.link]\nfg = \"blurple\"").expect_err("blurple is not a color");
+        let source = std::error::Error::source(&error).expect("the color error is the cause").to_string();
+        assert!(!error.to_string().contains(&source), "{error} already contains {source}");
+    }
+
+    #[test]
+    fn a_theme_name_cannot_step_outside_the_themes_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), "outside.toml", "[palette]\naccent = \"#000005\"");
+        write(dir.path(), "themes/inside.toml", "[palette]\naccent = \"#000006\"");
+
+        for name in ["../outside", "..\\outside", "..", ".", "", "/etc/passwd"] {
+            let error = resolve(None, Some(name), Some(dir.path()));
+            assert!(error.is_err(), "{name:?} reached a file a theme name should not address");
+        }
+
+        // The flag for naming a path is the one that says so.
+        let (theme, _) = resolve(Some(&dir.path().join("outside.toml")), None, Some(dir.path())).expect("the theme loads");
+        assert_eq!(theme.palette.accent, Color::Rgb(0, 0, 5));
+    }
+
+    #[test]
     fn config_wins_over_theme_which_wins_over_the_config_directory() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
@@ -424,12 +460,17 @@ colour = "red""#,
     fn listing_puts_the_built_ins_first_and_user_themes_in_order() {
         let dir = tempfile::tempdir().expect("tempdir");
         write(dir.path(), "themes/zebra.toml", "");
-        write(dir.path(), "themes/apple.toml", "");
+        write(dir.path(), "themes/Apple.toml", "");
         write(dir.path(), "themes/ansi.toml", "");
         write(dir.path(), "themes/notes.md", "");
+        // A directory named like a theme is not one, and listing it would
+        // advertise a name `--theme` then refuses.
+        std::fs::create_dir_all(dir.path().join("themes/folder.toml")).expect("mkdir");
 
+        // Alphabetically, which is not the byte order `sort` would give
+        // `Apple` and `zebra`.
         let names = available_in(Some(dir.path()));
-        assert_eq!(names, ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte", "apple", "zebra"]);
+        assert_eq!(names, ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte", "Apple", "zebra"]);
         assert_eq!(available_in(None), ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);
     }
 }

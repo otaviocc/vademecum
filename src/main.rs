@@ -28,10 +28,8 @@ fn main() -> Result<()> {
     // document, so it answers before anything asks for a path.
     if cli.list_themes {
         let mut out = BufWriter::new(stdout.lock());
-        for name in theme::loader::available() {
-            writeln!(out, "{name}")?;
-        }
-        return out.flush().context("cannot write to stdout");
+        let written = theme::loader::available().iter().try_for_each(|name| writeln!(out, "{name}")).and_then(|()| out.flush());
+        return finished(written);
     }
 
     let document = load(&cli)?;
@@ -40,10 +38,14 @@ fn main() -> Result<()> {
     let lines = render::layout::render(&blocks, &theme, width(&cli, is_terminal));
 
     let mut out = BufWriter::new(stdout.lock());
-    let written = render::ansi::write_lines(&mut out, &lines, color(&cli, is_terminal)).and_then(|()| out.flush());
+    finished(render::ansi::write_lines(&mut out, &lines, color(&cli, is_terminal)).and_then(|()| out.flush()))
+}
+
+/// The outcome of writing to stdout. `vademecum README.md | less -R` is
+/// documented usage, and quitting the pager early closes the pipe; so does
+/// `--list-themes | head`. That is the reader leaving, not a fault.
+fn finished(written: std::io::Result<()>) -> Result<()> {
     match written {
-        // `vademecum README.md | less -R` is documented usage, and quitting the
-        // pager early closes the pipe. That is the reader leaving, not a fault.
         Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         other => other.context("cannot write to stdout"),
     }
