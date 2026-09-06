@@ -329,6 +329,7 @@ deliberately.
 | `unicode-width` | 0.2 | CJK/emoji-aware wrapping |
 | `open` | 5 | `o` opens URLs in the browser |
 | `anyhow`, `thiserror` | 1 / 2 | Error handling (binary / library-style modules) |
+| build: `syntect` | 5.3 (same features) | `build.rs` links the syntax set once per build |
 | dev: `assert_cmd`, `predicates`, `insta`, `tempfile` | — | Integration + snapshot tests |
 
 Not used: `dirs` (its macOS config dir contradicts the documented
@@ -346,6 +347,8 @@ vademecum/
 ├── LICENSE                  # MIT
 ├── rustfmt.toml
 ├── Makefile                 # build/run/test/clean/fmt/lint
+├── build.rs                 # bakes syntaxes/ + syntect's own into a dump
+├── syntaxes/                # vendored .sublime-syntax + LICENSES.md
 ├── themes/                  # built-in themes, embedded with include_str!
 │   ├── ansi.toml
 │   ├── kanagawa-dragon.toml
@@ -623,16 +626,32 @@ each document as it opens, so `n` keeps working without being retyped.
 
 ### Syntax highlighting (`render/code.rs`)
 
-- `SyntaxSet::load_defaults_newlines()` and `ThemeSet::load_defaults()`, both
-  created lazily once (`OnceLock`), plus user `.tmTheme` files from
-  `<config>/syntax-themes/` via `ThemeSet::add_from_folder`.
+- The syntax set is **baked at build time** by `build.rs`: syntect's own
+  definitions plus every `.sublime-syntax` in `syntaxes/`, linked once and
+  written to a dump the binary loads. Adding a syntax means rebuilding the set,
+  and `SyntaxSetBuilder::build` relinks contexts across all ~200 bundled
+  definitions — measured here at ~8ms to load syntect's dump, ~93ms to take it
+  apart and put it back adding nothing, ~126ms adding ours. Almost all of that
+  is the relink rather than the files, and none of it is worth making a reader
+  wait for on the first code block they meet, so it is paid per build instead.
+  Loading the baked pack costs ~5ms.
+- `ThemeSet::load_defaults()` is created lazily once (`OnceLock`), plus user
+  `.tmTheme` files from `<config>/syntax-themes/`.
 - Language lookup by fence tag (`find_syntax_by_token`), then by first-line
   shebang, else plain text. The bundled set is syntect's own: Rust, C, C++,
   Objective-C, Java, Scala, Go, Python, Ruby, Perl, PHP, JavaScript, HTML, CSS,
   shell, Makefile, SQL, XML, YAML, JSON, LaTeX and the rest of the Sublime
-  Text defaults. Swift, TypeScript, Kotlin and TOML are *not* in it; a fence
-  tagged with one of those renders as plain code until their syntaxes are
-  bundled.
+  Text defaults — plus **Swift, TypeScript, Kotlin and TOML**, which that set
+  leaves out and which `syntaxes/` supplies. Every vendored file's origin,
+  upstream commit and licence is recorded in `syntaxes/LICENSES.md`, and all
+  four are redistributable in an MIT binary.
+- A syntax has to work under **`fancy-regex`**, not merely under Sublime Text.
+  The pure-Rust engine is a deliberate choice — it is what keeps vademecum free
+  of a C dependency on Oniguruma — and it does not implement every construct a
+  `.sublime-syntax` may use. Regex *subroutine calls* (`\g<1>`) are the one that
+  has actually bitten: a definition using them fails to load at all. Named
+  backreferences (`\k<name>`) are fine. Check a candidate against the engine
+  before adding it, and record why an obvious upstream was passed over.
 - Each block is highlighted once with `HighlightLines` and cached by
   `(syntax, syntax theme, text hash)` — the three things its colors depend on;
   the `fancy-regex` engine is slower than Oniguruma, so highlighting is never
