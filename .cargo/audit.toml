@@ -1,0 +1,14 @@
+# cargo-audit policy. Read by CI and by a local `cargo audit` alike. Only the
+# accepted advisories live here: `[output] deny` would work too, but that table
+# has no defaults in cargo-audit 0.22 — every field of it has to be spelled out
+# or the file fails to parse — so CI passes `--deny warnings` on the command
+# line instead.
+
+[advisories]
+# Advisories the project has looked at and accepted. Both are `unmaintained`
+# notices, not vulnerabilities, and both are transitive through syntect:
+# nothing in vademecum can drop them without dropping syntax highlighting.
+ignore = [
+    "RUSTSEC-2025-0141", # bincode 1.3.3 unmaintained; syntect -> bincode
+    "RUSTSEC-2024-0320", # yaml-rust 0.4.5 unmaintained; syntect -> yaml-rust
+]
