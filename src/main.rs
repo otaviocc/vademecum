@@ -1,5 +1,4 @@
 mod cli;
-#[allow(dead_code, reason = "read once theme files land in milestone 2")]
 mod config;
 mod document;
 mod markdown;
@@ -14,7 +13,6 @@ use clap::Parser;
 
 use crate::cli::{Cli, ColorChoice};
 use crate::document::Document;
-use crate::theme::Theme;
 
 /// Wrap width when there is no terminal to measure.
 const DEFAULT_WIDTH: usize = 100;
@@ -26,8 +24,18 @@ fn main() -> Result<()> {
     let stdout = std::io::stdout();
     let is_terminal = stdout.is_terminal();
 
+    // Listing themes is a question about the installation, not about a
+    // document, so it answers before anything asks for a path.
+    if cli.list_themes {
+        let mut out = BufWriter::new(stdout.lock());
+        for name in theme::loader::available() {
+            writeln!(out, "{name}")?;
+        }
+        return out.flush().context("cannot write to stdout");
+    }
+
     let document = load(&cli)?;
-    let theme = Theme::default();
+    let theme = theme::loader::load(cli.config.as_deref(), cli.theme.as_deref())?;
     let blocks = markdown::ast::parse(&document.source);
     let lines = render::layout::render(&blocks, &theme, width(&cli, is_terminal));
 

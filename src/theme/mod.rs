@@ -1,11 +1,13 @@
 //! Themes: a palette of semantic colors, and the element styles derived from
 //! it.
 //!
-//! Reading theme files is a later milestone. What exists here is the built-in
-//! `default-plus` and the defaults table every partial theme file will fall
-//! back to.
+//! The built-in `ansi` is the ground truth: it is what a reader gets without
+//! asking, and the defaults every partial theme file merges over. `loader`
+//! reads the files; everything else here is the table they merge into.
 
+pub mod color;
 pub mod elements;
+pub mod loader;
 pub mod palette;
 
 use ratatui::style::Style;
@@ -19,12 +21,19 @@ pub struct Theme {
     pub palette: Palette,
     /// Indexed by `Element as usize`; resolved once, read on every line.
     styles: Vec<Style>,
+    /// The theme's own `name`, for the record; the file it came from when it
+    /// does not name itself.
+    #[allow(dead_code, reason = "shown by the UI in milestone 4")]
+    pub name: String,
+    /// The syntect `.tmTheme` code blocks are highlighted with.
+    #[allow(dead_code, reason = "read by render/code.rs in milestone 3")]
+    pub syntax_theme: Option<String>,
 }
 
 impl Theme {
     pub fn new(palette: Palette) -> Self {
         let styles = Element::ALL.iter().map(|element| elements::default_style(*element, &palette)).collect();
-        Self { palette, styles }
+        Self { palette, styles, name: String::from("ansi"), syntax_theme: None }
     }
 
     pub fn style(&self, element: Element) -> Style {

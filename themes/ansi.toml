@@ -1,0 +1,25 @@
+# The default theme, and the base every partial theme file merges over.
+#
+# Nothing here asserts a color the terminal has not already chosen: the 16 ANSI
+# names are whatever the reader's scheme says they are, and `reset` is the
+# terminal's own foreground and background. The one exception is `subtle`,
+# the background of the cursor line and of code blocks, which `reset` would
+# make invisible.
+name = "ansi"
+syntax_theme = "base16-ocean.dark"
+
+[palette]
+background           = "reset"
+foreground           = "reset"
+muted                = "dark_gray"
+muted_text           = "gray"
+subtle               = "dark_gray"
+selection_background = "blue"
+selection_foreground = "white"
+error                = "red"
+success              = "green"
+warning              = "yellow"
+accent               = "cyan"
+chrome               = "cyan"
+highlight            = "blue"
+notice               = "magenta"

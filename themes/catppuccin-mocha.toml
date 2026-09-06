@@ -1,0 +1,19 @@
+# Catppuccin Mocha — the canonical palette, upstream names in the comments.
+name = "catppuccin-mocha"
+syntax_theme = "base16-mocha.dark"
+
+[palette]
+background           = "#1e1e2e"   # base
+foreground           = "#cdd6f4"   # text
+muted                = "#45475a"   # surface1
+muted_text           = "#7f849c"   # overlay1
+subtle               = "#313244"   # surface0
+selection_background = "#585b70"   # surface2
+selection_foreground = "#cdd6f4"   # text
+error                = "#f38ba8"   # red
+success              = "#a6e3a1"   # green
+warning              = "#f9e2af"   # yellow
+accent               = "#cba6f7"   # mauve
+chrome               = "#cba6f7"   # mauve
+highlight            = "#89b4fa"   # blue
+notice               = "#f5c2e7"   # pink

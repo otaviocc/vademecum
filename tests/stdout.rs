@@ -14,6 +14,10 @@ fn vademecum() -> Command {
     let mut command = Command::cargo_bin("vademecum").expect("the binary is built by the test harness");
     // Colors would otherwise depend on the environment the tests run in.
     command.env_remove("NO_COLOR");
+    // So would the theme: a `theme.toml` in the developer's own config
+    // directory would otherwise repaint every snapshot below.
+    command.env("XDG_CONFIG_HOME", "/nonexistent-vademecum-test-config");
+    command.env("APPDATA", r"C:\nonexistent-vademecum-test-config");
     command
 }
 
@@ -26,7 +30,7 @@ fn run(args: &[&str]) -> String {
 #[test]
 fn every_construct_renders_in_color() {
     let output = run(&["--plain", "--color", "always", "--width", "80", "tests/fixtures/elements.md"]);
-    insta::assert_snapshot!("elements-color", output);
+    insta::assert_snapshot!("elements-ansi", output);
 }
 
 #[test]
