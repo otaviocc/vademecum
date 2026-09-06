@@ -629,7 +629,10 @@ area, and a statusbar, separated by hairline `─` rules.
   re-parses it and lays it out again, putting the reader back exactly as a
   resize does: on the same source line, at the same height on the screen, with
   a standing search matched against the new text. It says `Reloaded <file>` as
-  a notice. What is watched is the file's **directory**, not the file: editors
+  a notice — unless the statusbar is already carrying an error, which is the
+  answer to something the reader asked for and did not get: someone else saving
+  the file is no reason to take that off the screen before they have acted on
+  it. What is watched is the file's **directory**, not the file: editors
   save by renaming a new file into place, so a watch on the file itself goes
   deaf after the first save, and a document that is deleted and restored comes
   back on its own. Writes are debounced, so one save is one reload. A file that
