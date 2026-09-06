@@ -7,7 +7,8 @@
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use pulldown_cmark::LinkType;
 
@@ -176,8 +177,13 @@ impl Links {
 
     /// Move to another document without rediscovering the vault: following a
     /// link stays inside the collection the reader started in.
+    ///
+    /// The vault's *index*, though, is owed a second look: between one document
+    /// and the next — a save, above all — a note may have been created that the
+    /// walk never saw.
     pub fn open(&mut self, document: Document) {
         self.document = document;
+        self.vault.invalidate();
     }
 
     pub fn resolve(&self, kind: &LinkKind) -> Result<Target, ResolveError> {
@@ -206,15 +212,24 @@ pub enum ResolveError {
     Ambiguous { target: String, candidates: String },
 }
 
+/// Every `.md` under the vault root, by lowercase file stem.
+type Index = HashMap<String, Vec<PathBuf>>;
+
 /// The collection a document's wikilinks are looked up in.
 ///
-/// The index is every `.md` under the root by lowercase file stem. It is built
-/// on the first wikilink that actually needs a vault search — a document whose
-/// links all resolve relatively never walks the tree at all.
+/// The index is built on the first wikilink that actually needs a vault search —
+/// a document whose links all resolve relatively never walks the tree at all —
+/// and thereafter it is doubted once per document. See `resolve_wiki`.
 #[derive(Debug)]
 pub struct Vault {
     root: PathBuf,
-    index: OnceLock<HashMap<String, Vec<PathBuf>>>,
+    /// `None` until something needs it. Behind an `Arc` so a lookup can read it
+    /// without holding the lock, and behind a lock because `resolve` takes
+    /// `&self`: layout resolves links through a shared `Ctx`.
+    index: RwLock<Option<Arc<Index>>>,
+    /// Whether the index is owed a second look. Set when a document opens; spent
+    /// by the next wikilink that fails to resolve.
+    stale: AtomicBool,
 }
 
 impl Vault {
@@ -222,7 +237,15 @@ impl Vault {
     /// holding `.obsidian/`, else `base_dir` itself.
     pub fn discover(explicit: Option<&Path>, base_dir: &Path) -> Self {
         let root = explicit.map(Path::to_path_buf).unwrap_or_else(|| marked_root(base_dir));
-        Self { root, index: OnceLock::new() }
+        // Not stale: nothing has been built, so there is nothing to doubt.
+        Self { root, index: RwLock::new(None), stale: AtomicBool::new(false) }
+    }
+
+    /// Another document is on screen, so the tree it came from may have moved
+    /// too. Costs nothing on its own: the walk happens only if a wikilink then
+    /// misses, and a document whose links all resolve never pays for it.
+    pub fn invalidate(&self) {
+        self.stale.store(true, Ordering::Relaxed);
     }
 
     /// The file a link points at, resolved against the document it was written
@@ -257,7 +280,19 @@ impl Vault {
             }
         }
 
-        match self.index().get(&target.to_lowercase()).map(Vec::as_slice) {
+        // A hit is always right, so only a miss can be stale — and a miss is
+        // exactly the note created in another window since the walk. It is
+        // worth one more walk, once, and then the answer stands.
+        match self.look_up(target, &self.index()) {
+            Err(ResolveError::NotFound(_)) if self.stale.swap(false, Ordering::Relaxed) => self.look_up(target, &self.rebuild()),
+            answer => answer,
+        }
+    }
+
+    /// One lookup against one index. Ambiguity is a hit: two candidates are an
+    /// answer, and they do not send vademecum looking for a third.
+    fn look_up(&self, target: &str, index: &Index) -> Result<Target, ResolveError> {
+        match index.get(&target.to_lowercase()).map(Vec::as_slice) {
             Some([only]) => Ok(Target::File(only.clone())),
             Some(candidates) if candidates.len() > 1 => Err(ResolveError::Ambiguous {
                 target: target.to_string(),
@@ -267,18 +302,28 @@ impl Vault {
         }
     }
 
-    fn index(&self) -> &HashMap<String, Vec<PathBuf>> {
-        self.index.get_or_init(|| {
-            let mut index: HashMap<String, Vec<PathBuf>> = HashMap::new();
-            walk(&self.root, &mut index);
-            // The candidate list a reader is shown, and which of two files a
-            // unique match is, must not depend on the order the filesystem
-            // handed the directory back.
-            for paths in index.values_mut() {
-                paths.sort();
-            }
-            index
-        })
+    /// The index as it stands, walking the tree if this is the first ask.
+    fn index(&self) -> Arc<Index> {
+        if let Some(index) = self.index.read().unwrap_or_else(PoisonError::into_inner).as_ref() {
+            return Arc::clone(index);
+        }
+        self.rebuild()
+    }
+
+    /// Walk the tree and take the result as the index from now on.
+    fn rebuild(&self) -> Arc<Index> {
+        let mut index = Index::new();
+        walk(&self.root, &mut index);
+        // The candidate list a reader is shown, and which of two files a
+        // unique match is, must not depend on the order the filesystem
+        // handed the directory back.
+        for paths in index.values_mut() {
+            paths.sort();
+        }
+
+        let index = Arc::new(index);
+        *self.index.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&index));
+        index
     }
 }
 
@@ -607,9 +652,107 @@ mod tests {
 
         assert!(vault.resolve(&classify("a", WIKI), &from).is_ok());
         // Adding a file after the index is built is not seen: the walk happened
-        // once, which is the point of the cache and worth pinning down.
+        // once, which is the point of the cache and worth pinning down. Only
+        // opening a document buys another one.
         std::fs::write(path.join("deep/c.md"), "# c\n").expect("a file");
         assert_eq!(vault.resolve(&classify("c", WIKI), &from), Err(ResolveError::NotFound("c".into())));
+    }
+
+    /// The case `--watch` exists to serve: a note written in another window
+    /// while this one is being read.
+    #[test]
+    fn opening_a_document_lets_the_next_miss_walk_again() {
+        let root = vault(&["index.md", "deep/a.md"]);
+        let path = root.path();
+        let from = document(path, "index.md");
+        let vault = Vault::discover(None, &from.base_dir);
+
+        assert!(vault.resolve(&classify("a", WIKI), &from).is_ok(), "the index is built");
+        std::fs::write(path.join("deep/new.md"), "# new\n").expect("a file");
+        assert_eq!(vault.resolve(&classify("new", WIKI), &from), Err(ResolveError::NotFound("new".into())));
+
+        vault.invalidate();
+        assert_eq!(
+            vault.resolve(&classify("new", WIKI), &from),
+            Ok(Target::File(path.join("deep/new.md"))),
+            "a note created since the walk is found once the document has been reopened"
+        );
+    }
+
+    /// The doubt is spent by one miss, not by every lookup after it — otherwise
+    /// a document with a permanently broken wikilink would walk the tree on
+    /// every link it renders.
+    #[test]
+    fn one_walk_is_owed_per_document_however_many_names_miss() {
+        let root = vault(&["index.md", "deep/a.md"]);
+        let path = root.path();
+        let from = document(path, "index.md");
+        let vault = Vault::discover(None, &from.base_dir);
+
+        vault.invalidate();
+        assert_eq!(vault.resolve(&classify("gone", WIKI), &from), Err(ResolveError::NotFound("gone".into())));
+
+        // The walk that miss bought has already happened, so this one is not
+        // seen until another document opens.
+        std::fs::write(path.join("deep/later.md"), "# later\n").expect("a file");
+        assert_eq!(vault.resolve(&classify("later", WIKI), &from), Err(ResolveError::NotFound("later".into())));
+    }
+
+    /// A name that resolves is not in doubt, so it must not spend the one walk
+    /// the document is owed. If it did, the reader would lose the rebuild to
+    /// whichever link happened to render first.
+    #[test]
+    fn a_name_that_resolves_does_not_spend_the_doubt() {
+        let root = vault(&["index.md", "deep/a.md"]);
+        let path = root.path();
+        let from = document(path, "index.md");
+        let vault = Vault::discover(None, &from.base_dir);
+
+        vault.invalidate();
+        std::fs::write(path.join("deep/new.md"), "# new\n").expect("a file");
+        assert!(vault.resolve(&classify("a", WIKI), &from).is_ok(), "a hit, which asks no questions");
+
+        assert_eq!(
+            vault.resolve(&classify("new", WIKI), &from),
+            Ok(Target::File(path.join("deep/new.md"))),
+            "the walk was still owed after the hit"
+        );
+    }
+
+    /// Ambiguity is an answer. Two candidates are not a reason to go looking
+    /// for a third, and they must not spend the walk either.
+    #[test]
+    fn ambiguity_is_an_answer_rather_than_a_reason_to_walk() {
+        let root = vault(&["index.md", "a/dup.md", "b/dup.md"]);
+        let path = root.path();
+        let from = document(path, "index.md");
+        let vault = Vault::discover(None, &from.base_dir);
+
+        vault.invalidate();
+        std::fs::write(path.join("a/new.md"), "# new\n").expect("a file");
+        assert!(matches!(vault.resolve(&classify("dup", WIKI), &from), Err(ResolveError::Ambiguous { .. })));
+
+        assert_eq!(
+            vault.resolve(&classify("new", WIKI), &from),
+            Ok(Target::File(path.join("a/new.md"))),
+            "the ambiguous answer left the walk unspent"
+        );
+    }
+
+    /// The seam the pager actually goes through: `App::show` and `App::reload`
+    /// both call `Links::open`, and a save is a reload.
+    #[test]
+    fn opening_a_document_through_links_is_what_marks_the_index_stale() {
+        let root = vault(&["index.md", "deep/a.md"]);
+        let path = root.path();
+        let mut links = Links::new(document(path, "index.md"), None);
+
+        assert!(links.resolve(&classify("a", WIKI)).is_ok(), "the index is built");
+        std::fs::write(path.join("deep/new.md"), "# new\n").expect("a file");
+        assert_eq!(links.resolve(&classify("new", WIKI)), Err(ResolveError::NotFound("new".into())));
+
+        links.open(document(path, "index.md"));
+        assert_eq!(links.resolve(&classify("new", WIKI)), Ok(Target::File(path.join("deep/new.md"))));
     }
 
     #[test]
