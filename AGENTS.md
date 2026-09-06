@@ -167,3 +167,17 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - This machine has a Homebrew `rustc`/`cargo` and **no `rustup`**, so a real
   MSRV build cannot be run locally — the `msrv` CI job is the only proof. Say
   so in the PR body rather than claiming it was verified locally.
+- `clippy -D warnings` turns `dead_code` into a build failure, and in a binary
+  crate every `pub` item unreachable from `main` is dead. When a milestone is
+  split so that code lands before its caller, put
+  `#[allow(dead_code, reason = "…")]` on the `mod` declaration and remove it in
+  the PR that wires the code up. `#[expect(dead_code)]` does **not** work here:
+  the test build uses those items, so the expectation goes unfulfilled and
+  fails the other half of `--all-targets`.
+- `cargo-insta` is not installed. A new snapshot is written as
+  `tests/snapshots/*.snap.new`; read it in full, then `mv` it over the `.snap`
+  and delete the `assertion_line:` header, which otherwise churns the file
+  whenever the test moves in `stdout.rs`.
+- Stage commits explicitly. `git add -A` after editing both the README and the
+  source sweeps them into one commit, and a README amendment has to stand
+  alone (§4).
