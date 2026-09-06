@@ -323,6 +323,11 @@ impl App {
         usize::from(self.area.height.saturating_sub(CHROME_ROWS)).max(1)
     }
 
+    pub fn link_progress(&self) -> Option<(usize, usize)> {
+        let count = self.lines.get(self.cursor).map_or(0, |line| line.links.len());
+        (count > 0).then_some((self.focus + 1, count))
+    }
+
     pub fn percent(&self) -> usize {
         match self.lines.len() {
             0 | 1 => 100,

@@ -23,7 +23,7 @@ const HELP: &[(&str, &str)] = &[
     ("d / u, Ctrl-D / Ctrl-U", "Half page down / up"),
     ("Space / b, PgDn / PgUp", "Page down / up"),
     ("g / G, Home / End", "Top / bottom"),
-    ("Tab / Shift-Tab", "Cycle link focus on the cursor line"),
+    ("Tab / Shift-Tab", "Cycle the links on the cursor line, counted on the statusbar"),
     ("Enter", "Follow focused local/wiki link"),
     ("o", "Open focused external link in the browser"),
     ("h / Backspace, l", "History back, forward"),
@@ -109,6 +109,8 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
             let mut style = if on_cursor { span.style.patch(cursor_line) } else { span.style };
             if focused.as_ref().is_some_and(|range| range.contains(&index_of_span)) {
                 style = style.patch(app.theme.style(Element::LinkFocused));
+            } else if on_cursor && line.links.iter().any(|link| link.span_range.contains(&index_of_span)) {
+                style = style.patch(app.theme.style(Element::LinkUnfocused));
             }
             let (next, _) = buf.set_stringn(x, y, &span.text, (area.right() - x) as usize, style);
             if next == x {
@@ -149,6 +151,9 @@ fn statusbar(area: Rect, buf: &mut Buffer, app: &App) {
         (_, Status::Idle) => {
             let total = app.lines.len();
             let mut status = format!("{} · line {}/{} · {}%", app.file, (app.cursor + 1).min(total), total, app.percent());
+            if let Some((index, total)) = app.link_progress() {
+                status.push_str(&format!(" · link {index}/{total}"));
+            }
             if let Some((index, total)) = app.search.progress() {
                 status.push_str(&format!(" · match {index}/{total}"));
             }
@@ -199,6 +204,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Size;
+    use ratatui::style::Modifier;
 
     use crate::document::Document;
     use crate::theme::Theme;
@@ -498,6 +504,53 @@ mod tests {
         let after = painted(&app);
         assert!(after[second].iter().all(|bg| *bg == wanted), "Tab moved it along");
         assert!(!after[first].contains(&wanted), "and off the first");
+    }
+
+    #[test]
+    fn the_statusbar_counts_the_links_on_the_cursor_line() {
+        let size = Size::new(60, 12);
+        let mut three = app("[one](a.md) and [two](b.md) and [three](c.md)\n", size);
+        assert!(row(&frame(&three, size), 11).contains(" · link 1/3"), "{}", row(&frame(&three, size), 11));
+
+        three.apply(Action::Focus { forward: true });
+        assert!(row(&frame(&three, size), 11).contains(" · link 2/3"));
+
+        let one = app("[only](a.md) here\n", size);
+        assert!(row(&frame(&one, size), 11).contains(" · link 1/1"));
+    }
+
+    #[test]
+    fn a_line_with_no_links_is_counted_as_nothing_rather_than_zero() {
+        let size = Size::new(60, 12);
+        let app = app("plain text\n", size);
+        assert!(!row(&frame(&app, size), 11).contains("link"), "{}", row(&frame(&app, size), 11));
+    }
+
+    #[test]
+    fn the_other_links_on_the_cursor_line_are_marked_so_tab_has_a_visible_next_stop() {
+        let size = Size::new(40, 12);
+        let mut app = app("[one](a.md) and [two](b.md)\n", size);
+        let underlined = |buffer: &Buffer, x: u16| buffer[(x, CONTENT_TOP)].modifier.contains(Modifier::UNDERLINED);
+
+        let buffer = frame(&app, size);
+        assert!((9..12).all(|x| underlined(&buffer, x)), "the link Tab would reach next is marked");
+        assert!(!(1..4).any(|x| underlined(&buffer, x)), "the focused link is not");
+
+        app.apply(Action::Focus { forward: true });
+        let buffer = frame(&app, size);
+        assert!((1..4).all(|x| underlined(&buffer, x)), "and the mark follows the focus");
+        assert!(!(9..12).any(|x| underlined(&buffer, x)));
+    }
+
+    #[test]
+    fn a_link_off_the_cursor_line_is_not_marked_either() {
+        let size = Size::new(40, 12);
+        let mut app = app("[one](a.md)\n\n[two](b.md)\n", size);
+        app.apply(Action::Move(Motion::Top));
+
+        let buffer = frame(&app, size);
+        let marked = (0..size.width).any(|x| buffer[(x, CONTENT_TOP + 2)].modifier.contains(Modifier::UNDERLINED));
+        assert!(!marked, "only the cursor line says where Tab goes");
     }
 
     #[test]

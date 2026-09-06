@@ -30,6 +30,7 @@ pub enum Element {
     Link,
     Wikilink,
     LinkFocused,
+    LinkUnfocused,
     LinkBroken,
     Image,
     Footnote,
@@ -49,7 +50,7 @@ pub enum Element {
 }
 
 impl Element {
-    pub const ALL: [Element; 37] = [
+    pub const ALL: [Element; 38] = [
         Element::Paragraph,
         Element::Heading1,
         Element::Heading2,
@@ -71,6 +72,7 @@ impl Element {
         Element::Link,
         Element::Wikilink,
         Element::LinkFocused,
+        Element::LinkUnfocused,
         Element::LinkBroken,
         Element::Image,
         Element::Footnote,
@@ -112,6 +114,7 @@ impl Element {
             Element::Link => "link",
             Element::Wikilink => "wikilink",
             Element::LinkFocused => "link_focused",
+            Element::LinkUnfocused => "link_unfocused",
             Element::LinkBroken => "link_broken",
             Element::Image => "image",
             Element::Footnote => "footnote",
@@ -169,6 +172,7 @@ pub fn default_style(element: Element, palette: &Palette) -> Style {
         Element::LinkFocused => {
             style.fg(palette.selection_foreground).bg(palette.selection_background).add_modifier(Modifier::BOLD)
         }
+        Element::LinkUnfocused => style.add_modifier(Modifier::UNDERLINED),
         Element::LinkBroken => style.fg(palette.error).add_modifier(Modifier::CROSSED_OUT),
         Element::Image => style.fg(palette.muted_text).add_modifier(Modifier::ITALIC),
         Element::Footnote => style.fg(palette.muted_text),
