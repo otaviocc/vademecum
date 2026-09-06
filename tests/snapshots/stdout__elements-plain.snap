@@ -90,6 +90,9 @@ expression: output
  this page, a wikilink note, an aliased one with an alias, and one with a
  fragment note#A Heading.
 
+ Targets that are not there: a local link to nothing and a missing-note both
+ render broken.
+
  https://example.com/autolink and otavio@example.com.
 
  Images

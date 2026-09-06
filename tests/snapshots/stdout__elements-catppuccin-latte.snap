@@ -90,6 +90,9 @@ expression: "themed(\"catppuccin-latte\")"
  [0;38;2;234;118;203;1mthis page[0;38;2;76;79;105m, a wikilink [0;38;2;234;118;203;1mnote[0;38;2;76;79;105m, an aliased one [0;38;2;234;118;203;1mwith an alias[0;38;2;76;79;105m, and one with a[0m
  [0;38;2;76;79;105mfragment [0;38;2;234;118;203;1mnote#A Heading[0;38;2;76;79;105m.[0m
 
+ [0;38;2;76;79;105mTargets that are not there: a [0;38;2;210;15;57;9mlocal link to nothing[0;38;2;76;79;105m and a [0;38;2;210;15;57;9mmissing-note[0;38;2;76;79;105m both[0m
+ [0;38;2;76;79;105mrender broken.[0m
+
  ]8;;https://example.com/autolink\[0;38;2;30;102;245;4mhttps://example.com/autolink]8;;\[0;38;2;76;79;105m and ]8;;otavio@example.com\[0;38;2;30;102;245;4motavio@example.com]8;;\[0;38;2;76;79;105m.[0m
 
  [0;38;2;136;57;239;1mImages[0m

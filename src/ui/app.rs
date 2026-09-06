@@ -8,9 +8,11 @@ use ratatui::layout::Size;
 
 use crate::document::Document;
 use crate::markdown::ast::{self, SourceBlock};
-use crate::render::layout;
+use crate::markdown::links::Links;
+use crate::render::layout::{self, Ctx};
 use crate::render::line::RenderedLine;
 use crate::theme::Theme;
+use crate::ui::Options;
 use crate::ui::input::{Action, Motion};
 use crate::ui::search::{self, Search};
 
@@ -40,6 +42,9 @@ pub enum Status {
 /// Everything the pager knows.
 pub struct App {
     pub theme: Theme,
+    /// The open document and the vault its links resolve against. Layout needs
+    /// both, because whether a link resolves is what decides how it is styled.
+    pub links: Links,
     /// Parsed once; a resize re-lays it out but never re-parses it.
     blocks: Vec<SourceBlock>,
     /// The document laid out at `width`. The view borrows this; it is never
@@ -70,7 +75,8 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(document: Document, theme: Theme, width_override: Option<u16>, area: Size) -> Self {
+    pub fn new(document: Document, theme: Theme, options: &Options, area: Size) -> Self {
+        let width_override = options.width;
         let file = document
             .path
             .as_deref()
@@ -79,11 +85,13 @@ impl App {
         let title = document.title.clone().unwrap_or_else(|| file.clone());
 
         let blocks = ast::parse(&document.source);
+        let links = Links::new(document, options.root.as_deref());
         let width = layout::wrap_width(width_override, Some(area.width));
-        let lines = layout::render(&blocks, &theme, width);
+        let lines = layout::render(&blocks, &Ctx::new(&theme, &links), width);
 
         Self {
             theme,
+            links,
             blocks,
             lines,
             width_override,
@@ -248,7 +256,7 @@ impl App {
         let anchor = self.anchor();
         let row = self.cursor - self.top;
 
-        self.lines = layout::render(&self.blocks, &self.theme, self.width);
+        self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
 
         self.cursor = self
             .lines
@@ -313,7 +321,7 @@ mod tests {
 
     fn app(source: &str, height: u16) -> App {
         let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), source.to_string());
-        App::new(document, Theme::default(), Some(40), Size::new(60, height))
+        App::new(document, Theme::default(), &Options { width: Some(40), ..Options::default() }, Size::new(60, height))
     }
 
     /// Ten rows of chrome-free viewport.
@@ -392,7 +400,7 @@ mod tests {
         let source =
             (1..=20).map(|n| format!("paragraph {n} with enough words in it to wrap twice over\n\n")).collect::<String>();
         let document = Document::new(Some(PathBuf::from("x.md")), PathBuf::from("."), source.clone());
-        let mut app = App::new(document, Theme::default(), None, Size::new(70, 14));
+        let mut app = App::new(document, Theme::default(), &Options { width: None, ..Options::default() }, Size::new(70, 14));
 
         app.apply(Action::Move(Motion::Page(1)));
         // Blank lines belong to no source line, and the anchor walks back off
@@ -445,7 +453,7 @@ mod tests {
         assert_eq!(app("---\ntitle: Notes\n---\nhi\n", 14).title, "Notes");
 
         let piped = Document::new(None, PathBuf::from("."), "hi\n".to_string());
-        let app = App::new(piped, Theme::default(), None, Size::new(60, 14));
+        let app = App::new(piped, Theme::default(), &Options { width: None, ..Options::default() }, Size::new(60, 14));
         assert_eq!(app.title, STDIN);
         assert_eq!(app.file, STDIN);
     }
@@ -560,7 +568,7 @@ mod tests {
     fn a_rewrap_matches_the_query_against_the_new_layout() {
         let source = (1..=20).map(|n| format!("paragraph {n} with a needle in it somewhere\n\n")).collect::<String>();
         let document = Document::new(Some(PathBuf::from("x.md")), PathBuf::from("."), source);
-        let mut app = App::new(document, Theme::default(), None, Size::new(70, 14));
+        let mut app = App::new(document, Theme::default(), &Options { width: None, ..Options::default() }, Size::new(70, 14));
         search_for(&mut app, "needle");
         let before = app.search.matches.len();
 

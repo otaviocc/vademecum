@@ -54,6 +54,10 @@ pub struct Cli {
     /// Print the available syntect theme names and exit.
     #[arg(long)]
     pub list_syntax_themes: bool,
+
+    /// Print each link and its resolved path, then exit.
+    #[arg(long)]
+    pub resolve_links: bool,
 }
 
 /// When to emit ANSI colors in stdout mode.
@@ -91,6 +95,7 @@ mod tests {
         assert!(cli.root.is_none());
         assert!(!cli.list_themes);
         assert!(!cli.list_syntax_themes);
+        assert!(!cli.resolve_links);
     }
 
     #[test]
@@ -112,6 +117,7 @@ mod tests {
             "--mouse",
             "--list-themes",
             "--list-syntax-themes",
+            "--resolve-links",
             "notes/index.md",
         ]);
         assert_eq!(cli.path, Some(PathBuf::from("notes/index.md")));
@@ -125,6 +131,7 @@ mod tests {
         assert!(cli.mouse);
         assert!(cli.list_themes);
         assert!(cli.list_syntax_themes);
+        assert!(cli.resolve_links);
     }
 
     #[test]

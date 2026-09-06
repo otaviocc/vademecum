@@ -14,6 +14,8 @@ use clap::Parser;
 
 use crate::cli::{Cli, ColorChoice};
 use crate::document::Document;
+use crate::markdown::links::{LinkKind, Links, ResolveError, Target};
+use crate::render::layout::Ctx;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -30,16 +32,26 @@ fn main() -> Result<()> {
     }
 
     let document = load(&cli)?;
+
+    // Where the links go is a question about the vault, not about the theme,
+    // so it answers before a theme is loaded and before anything is rendered.
+    if cli.resolve_links {
+        let blocks = markdown::ast::parse(&document.source);
+        let links = Links::new(document, cli.root.as_deref());
+        return finished(report_links(&stdout, &markdown::links::collect(&blocks), &links));
+    }
+
     // Loading and theming happen before the alternate screen, so their errors
     // reach stderr and a non-zero exit rather than a statusbar nobody sees.
     let theme = theme::loader::load(cli.config.as_deref(), cli.theme.as_deref())?;
 
     if is_terminal && !cli.plain {
-        return ui::run(document, theme, ui::Options { mouse: cli.mouse, width: cli.width });
+        return ui::run(document, theme, ui::Options { mouse: cli.mouse, width: cli.width, root: cli.root });
     }
 
     let blocks = markdown::ast::parse(&document.source);
-    let lines = render::layout::render(&blocks, &theme, width(&cli, is_terminal));
+    let links = Links::new(document, cli.root.as_deref());
+    let lines = render::layout::render(&blocks, &Ctx::new(&theme, &links), width(&cli, is_terminal));
 
     let mut out = BufWriter::new(stdout.lock());
     finished(render::ansi::write_lines(&mut out, &lines, color(&cli, is_terminal)).and_then(|()| out.flush()))
@@ -49,6 +61,37 @@ fn main() -> Result<()> {
 fn list(stdout: &std::io::Stdout, names: &[String]) -> std::io::Result<()> {
     let mut out = BufWriter::new(stdout.lock());
     names.iter().try_for_each(|name| writeln!(out, "{name}")).and_then(|()| out.flush())
+}
+
+/// `--resolve-links`: one line per link, in source order — kind, destination,
+/// and what resolution made of it. The columns are padded to the widest entry
+/// so a document's links read as a table rather than as a ragged list.
+fn report_links(stdout: &std::io::Stdout, links: &[LinkKind], context: &Links) -> std::io::Result<()> {
+    let destinations: Vec<String> = links.iter().map(LinkKind::destination).collect();
+    let kind_width = links.iter().map(|link| link.name().len()).max().unwrap_or(0);
+    let destination_width = destinations.iter().map(String::len).max().unwrap_or(0);
+
+    let mut out = BufWriter::new(stdout.lock());
+    for (link, destination) in links.iter().zip(&destinations) {
+        let target = target_of(context.resolve(link), context);
+        writeln!(out, "{:kind_width$}  {destination:destination_width$}  -> {target}", link.name())?;
+    }
+    out.flush()
+}
+
+/// The third column: a path, `-` for a link that names no file, or the reason
+/// a Local or Wiki link could not be followed.
+fn target_of(resolved: Result<Target, ResolveError>, context: &Links) -> String {
+    match resolved {
+        Ok(Target::File(path)) => path.display().to_string(),
+        // The document it was written in is the document it points at.
+        Ok(Target::SameDocument) => {
+            context.document.path.as_deref().map_or_else(|| "-".to_string(), |path| path.display().to_string())
+        }
+        Ok(Target::External) => "-".to_string(),
+        Err(ResolveError::NotFound(_)) => "(broken)".to_string(),
+        Err(ResolveError::Ambiguous { candidates, .. }) => format!("(ambiguous: {candidates})"),
+    }
 }
 
 /// The outcome of writing to stdout. `vademecum README.md | less -R` is

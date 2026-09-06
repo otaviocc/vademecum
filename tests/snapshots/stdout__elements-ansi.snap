@@ -90,6 +90,9 @@ expression: output
  [0;35;1mthis page[0;39m, a wikilink [0;35;1mnote[0;39m, an aliased one [0;35;1mwith an alias[0;39m, and one with a[0m
  [0;39mfragment [0;35;1mnote#A Heading[0;39m.[0m
 
+ [0;39mTargets that are not there: a [0;31;9mlocal link to nothing[0;39m and a [0;31;9mmissing-note[0;39m both[0m
+ [0;39mrender broken.[0m
+
  ]8;;https://example.com/autolink\[0;34;4mhttps://example.com/autolink]8;;\[0;39m and ]8;;otavio@example.com\[0;34;4motavio@example.com]8;;\[0;39m.[0m
 
  [0;36;1mImages[0m

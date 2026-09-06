@@ -82,6 +82,9 @@ An [external link](https://example.com/docs), a [local link](other.md), a
 page](#lists), a wikilink [[note]], an aliased one [[note|with an alias]], and
 one with a fragment [[note#A Heading]].
 
+Targets that are not there: a [local link to nothing](missing.md) and a
+[[missing-note]] both render broken.
+
 <https://example.com/autolink> and <otavio@example.com>.
 
 ## Images
