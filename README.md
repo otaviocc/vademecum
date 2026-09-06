@@ -220,6 +220,7 @@ TOML. Origins and licences for the added ones are in
 | `?` | Help |
 | `Esc` | Close the overlay, or clear the search |
 | `q`, `Ctrl-C` | Quit |
+| Left click | Move the cursor to the clicked line |
 
 The wheel scrolls three lines a notch. Capturing the mouse takes your terminal's
 own text selection away, so `--no-mouse` turns it off; most terminals also let
