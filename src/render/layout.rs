@@ -11,7 +11,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::markdown::ast::{Alignment, Block, Inline, ListItem, SourceBlock, plain_text};
 use crate::markdown::links::LinkKind;
-use crate::render::line::{LinkRef, RenderedLine, StyledSpan};
+use crate::render::code;
+use crate::render::line::{self, LinkRef, RenderedLine, StyledSpan};
 use crate::theme::{Element, Theme};
 
 /// The one-column gutter the content is laid out inside.
@@ -202,13 +203,52 @@ fn code_to_lines(lang: Option<&str>, text: &str, theme: &Theme, width: usize, so
     let block = theme.style(Element::CodeBlock);
     let mut lines = vec![fence_line(lang, theme, width, source_line)];
 
-    for (offset, code) in text.trim_end_matches('\n').lines().enumerate() {
-        let text = pad_to(truncate(code, width), width);
-        lines.push(styled_line(text, block, source_line + offset + 1));
+    for (offset, code) in code::highlight(lang, text, theme.syntax_theme.as_deref()).iter().enumerate() {
+        lines.push(code_line(code, block, width, source_line + offset + 1));
     }
 
     lines.push(styled_line(" ".repeat(width), block, source_line));
     lines
+}
+
+/// One highlighted code line, cut to `width` and padded back out to it. The
+/// syntect styles are patched *over* the block style, so the block keeps its
+/// background and the `.tmTheme` contributes only foregrounds and font styles.
+fn code_line(code: &[StyledSpan], block: Style, width: usize, source_line: usize) -> RenderedLine {
+    let total: usize = code.iter().map(StyledSpan::width).sum();
+    let cut = total > width;
+    // The `…` needs a column of its own, exactly as `truncate` gives it one.
+    let budget = if cut { width.saturating_sub(1) } else { width };
+
+    let mut spans: Vec<StyledSpan> = Vec::with_capacity(code.len() + 1);
+    let mut used = 0;
+    for span in code {
+        if used >= budget {
+            break;
+        }
+        let (head, tail) = split_at_width(&span.text, budget - used);
+        if !head.is_empty() {
+            used += head.width();
+            spans.push(StyledSpan::new(head, block.patch(span.style)));
+        }
+        // The first span that does not fit whole ends the line, even when a
+        // later one would still fit in the columns a wide character could not
+        // use. What is shown is always a prefix of the source.
+        if !tail.is_empty() {
+            break;
+        }
+    }
+
+    if cut {
+        let style = spans.last().map_or(block, |span| span.style);
+        spans.push(StyledSpan::new("…", style));
+        used += 1;
+    }
+    // Padding to the full width is what makes the background a rectangle; a
+    // blank code line is nothing but padding.
+    spans.push(StyledSpan::new(" ".repeat(width.saturating_sub(used)), block));
+
+    RenderedLine { spans: line::merge(spans), source_line, ..RenderedLine::default() }
 }
 
 fn fence_line(lang: Option<&str>, theme: &Theme, width: usize, source_line: usize) -> RenderedLine {
@@ -633,11 +673,6 @@ fn truncate(text: &str, width: usize) -> String {
     format!("{head}…")
 }
 
-fn pad_to(text: String, width: usize) -> String {
-    let padding = width.saturating_sub(text.width());
-    text + &" ".repeat(padding)
-}
-
 fn styled_line(text: impl Into<String>, style: Style, source_line: usize) -> RenderedLine {
     RenderedLine { spans: vec![StyledSpan::new(text, style)], source_line, ..RenderedLine::default() }
 }
@@ -764,6 +799,52 @@ mod tests {
     fn code_blocks_truncate_rather_than_wrap() {
         let rendered = bare("```\nthis line is far too long\n```\n", 10);
         assert_eq!(rendered[1], "this line…");
+    }
+
+    #[test]
+    fn a_highlighted_line_truncates_and_stays_a_rectangle() {
+        // Highlighting splits the line into several spans, so the cut has to
+        // fall inside one of them and the rest of the line has to go.
+        let theme = Theme::default();
+        let rendered = blocks_to_lines(
+            &parse("```rust\nfn main() { println!(\"far too long\"); }\n```\n"),
+            &theme,
+            theme.style(Element::Paragraph),
+            12,
+            0,
+        );
+        assert_eq!(rendered[1].text(), "fn main() {…");
+        assert!(rendered.iter().all(|line| line.width() == 12), "{rendered:?}");
+        assert!(rendered[1].spans.len() > 1, "the line was not highlighted: {:?}", rendered[1]);
+    }
+
+    #[test]
+    fn a_cut_that_lands_inside_a_wide_character_stops_there() {
+        // The line is several spans, and the one being cut is wider than the
+        // budget left. What follows it must not be pulled forward to fill the
+        // gap: the truncated line is always a prefix of the source.
+        let theme = Theme::default();
+        for width in 4..14 {
+            let rendered =
+                blocks_to_lines(&parse("```rust\nx = \"日本語\";\n```\n"), &theme, theme.style(Element::Paragraph), width, 0);
+            let line = rendered[1].text();
+            let source = "x = \"日本語\";";
+            let kept = line.trim_end().trim_end_matches('…');
+            assert!(source.starts_with(kept), "{line:?} is not a prefix of {source:?} at width {width}");
+        }
+    }
+
+    #[test]
+    fn a_highlighted_line_keeps_the_block_background() {
+        let theme = Theme::default();
+        let rendered = blocks_to_lines(&parse("```rust\nfn main() {}\n```\n"), &theme, theme.style(Element::Paragraph), 20, 0);
+        let block = theme.style(Element::CodeBlock);
+        assert!(
+            rendered[1].spans.iter().all(|span| span.style.bg == block.bg),
+            "a .tmTheme repainted the block: {:?}",
+            rendered[1]
+        );
+        assert!(rendered[1].spans.iter().any(|span| span.style.fg != block.fg), "nothing was highlighted: {:?}", rendered[1]);
     }
 
     #[test]

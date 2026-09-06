@@ -195,6 +195,23 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - A raw string in a test that contains a hex color needs `r##"…"##`: `"#` is
   what closes `r#"…"#`, so `accent = "#ff0000"` inside one ends the literal
   early and the error points at the Rust, not at the string.
+- syntect's `load_defaults_newlines()` is the Sublime Text default package
+  set. It has no Swift, TypeScript, Kotlin or TOML (#16). Check what is
+  actually bundled before promising a language: a quick throwaway binary
+  printing `SyntaxSet::syntaxes()` settles it in a minute.
+- syntect emits one region per token, and neighbouring tokens routinely share
+  a style. `render::line::merge` joins them; without it every code line costs a
+  dozen SGR sequences and the snapshots become unreadable. Reach for it
+  whenever spans are built mechanically rather than by hand.
+- A `.snap.new` is written per failing assertion, and a test holding three
+  snapshots therefore needs three accept-and-rerun rounds. `cargo test --test
+  stdout <name>` narrows it to the one under review.
+- `insta` renders escapes as `␛`, which `diff` cannot line up. Comparing the
+  snapshot bodies with `difflib` in a throwaway `python3` heredoc (repr-ing
+  only the changed lines) shows what actually moved.
+- Integration assertions cannot look for a phrase that spans several styles:
+  once a line is highlighted, `fn main()` has escapes inside it. Anchor on a
+  substring that lives inside one span, such as a string literal.
 - Stage commits explicitly. `git add -A` after editing both the README and the
   source sweeps them into one commit, and a README amendment has to stand
   alone (§4).

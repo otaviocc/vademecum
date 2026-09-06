@@ -26,7 +26,6 @@ pub struct Theme {
     #[allow(dead_code, reason = "shown by the UI in milestone 4")]
     pub name: String,
     /// The syntect `.tmTheme` code blocks are highlighted with.
-    #[allow(dead_code, reason = "read by render/code.rs in milestone 3")]
     pub syntax_theme: Option<String>,
 }
 

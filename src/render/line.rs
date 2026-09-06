@@ -30,6 +30,19 @@ impl StyledSpan {
     }
 }
 
+/// Join neighbouring spans that share a style and drop the empty ones. Every
+/// span becomes an SGR sequence of its own on the way to stdout, so a run of
+/// identically styled spans is noise in the output and in the snapshots.
+pub fn merge(spans: impl IntoIterator<Item = StyledSpan>) -> Vec<StyledSpan> {
+    spans.into_iter().filter(|span| !span.text.is_empty()).fold(Vec::new(), |mut merged: Vec<StyledSpan>, span| {
+        match merged.last_mut() {
+            Some(last) if last.style == span.style => last.text.push_str(&span.text),
+            _ => merged.push(span),
+        }
+        merged
+    })
+}
+
 /// A link occupying a range of spans on one line. A link broken across a wrap
 /// becomes one `LinkRef` per line.
 #[derive(Debug, Clone, PartialEq)]
@@ -141,6 +154,23 @@ mod tests {
         target.append(line());
         assert_eq!(target.text(), "| hello world");
         assert_eq!(target.links[0].span_range, 2..3);
+    }
+
+    #[test]
+    fn merging_joins_only_neighbours_of_one_style() {
+        let bold = Style::default().add_modifier(ratatui::style::Modifier::BOLD);
+        let spans = vec![
+            StyledSpan::new("a", Style::default()),
+            StyledSpan::new("", Style::default()),
+            StyledSpan::new("b", Style::default()),
+            StyledSpan::new("c", bold),
+            StyledSpan::new("d", Style::default()),
+        ];
+        let merged = merge(spans);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].text, "ab");
+        assert_eq!(merged[1].text, "c");
+        assert_eq!(merged[2].text, "d");
     }
 
     #[test]

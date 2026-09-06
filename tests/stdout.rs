@@ -86,6 +86,57 @@ fn themes_are_listed_without_a_document() {
 }
 
 #[test]
+fn syntax_themes_are_listed_without_a_document() {
+    let output = run(&["--list-syntax-themes"]);
+    let names: Vec<&str> = output.lines().collect();
+    assert_eq!(
+        names,
+        [
+            "InspiredGitHub",
+            "Solarized (dark)",
+            "Solarized (light)",
+            "base16-eighties.dark",
+            "base16-mocha.dark",
+            "base16-ocean.dark",
+            "base16-ocean.light",
+        ]
+    );
+}
+
+#[test]
+fn a_rust_fence_is_highlighted_and_an_unknown_one_is_not() {
+    let output = run(&["--plain", "--color", "always", "--width", "80", "tests/fixtures/elements.md"]);
+
+    // The `.tmTheme` speaks in truecolor, so its foregrounds are the
+    // `38;2;r;g;b` sequences on the line the Rust fence renders to.
+    let rust = line_containing(&output, "syntect highlighting arrives");
+    let colors = foregrounds(rust);
+    assert!(colors.len() > 1, "the Rust fence is one color: {rust:?}");
+
+    // A tag nothing recognises leaves the block to the vademecum theme, which
+    // is what lets `ansi` render code without asserting a color of its own.
+    let unknown = line_containing(&output, "A fence tagged with a language");
+    assert!(foregrounds(unknown).is_empty(), "an unhighlighted fence took truecolor from the .tmTheme: {unknown:?}");
+
+    // With no tag at all, the shebang names the language.
+    let shebang = line_containing(&output, "usr/bin/env python3");
+    assert!(!foregrounds(shebang).is_empty(), "the shebang did not name a language: {shebang:?}");
+}
+
+/// The first output line whose text contains `needle`.
+fn line_containing<'a>(output: &'a str, needle: &str) -> &'a str {
+    output.lines().find(|line| line.contains(needle)).unwrap_or_else(|| panic!("no line contains {needle:?}"))
+}
+
+/// The distinct truecolor foreground sequences on one rendered line.
+fn foregrounds(line: &str) -> Vec<&str> {
+    let mut found: Vec<&str> = line.split("38;2;").skip(1).filter_map(|rest| rest.split(['m', ';']).next()).collect();
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+#[test]
 fn an_unknown_theme_is_an_error_that_names_the_alternatives() {
     let output = vademecum().args(["--theme", "nonesuch", "tests/fixtures/elements.md"]).output().expect("runs");
     assert!(!output.status.success(), "an unknown theme should exit non-zero");

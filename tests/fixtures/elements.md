@@ -34,6 +34,15 @@ An unlabelled fence.
 A line long enough that it has to be truncated rather than wrapped, because code blocks never wrap.
 ```
 
+```notalanguage
+A fence tagged with a language nothing knows.
+```
+
+```
+#!/usr/bin/env python3
+print("a shebang names the language when the fence tag does not")
+```
+
 ## Quotes
 
 > A block quote, long enough to wrap inside its own gutter so the continuation
