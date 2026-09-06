@@ -498,12 +498,24 @@ The index behind step 2 is built once, on the first wikilink that needs it, and
 then **doubted once per document**. Opening a document — following a link,
 stepping through history, or reloading a file that changed on disk — marks it
 stale; the next wikilink that *fails* to resolve walks the vault again and
-retries, and the one after that does not. A name that resolves is never in
-doubt, so a document whose links all work never pays for a walk, however often
-it is saved. A document carrying a genuinely broken wikilink pays one walk per
-save, which is the price of a note created in another window appearing here
-without a restart. Ambiguity is a hit, not a miss: two candidates are an answer,
-and they do not send vademecum looking for a third.
+retries, and the one after that does not. A walk settles the doubt whether it
+was bought by a miss or done to build the index in the first place, so the same
+unchanged tree is never walked twice in a row.
+
+Failing covers both ways a wikilink can fail: **missing** and **ambiguous**.
+Each is what an edit in another window fixes — by writing the note, or by
+removing one of the two files that clashed — so each is worth the walk. A name
+that *resolves* is not in doubt and never triggers one, which is why a document
+whose links all work never pays for a walk however often it is saved. A document
+carrying a broken wikilink pays one walk per save, which is the price of a note
+written elsewhere showing up here without a restart.
+
+What this does not do is re-check a link that already resolved. A target deleted
+or renamed since the walk still renders as a working wikilink, and `Enter`
+reports the failure when the file cannot be read. Resolution is a question about
+names, asked once per layout for every link on screen; confirming each answer
+against the filesystem is a different and much dearer promise than vademecum
+makes.
 
 Resolution runs during layout, alongside the styling it decides, so a link's
 element depends on whether its target exists: `link` for External, `wikilink`

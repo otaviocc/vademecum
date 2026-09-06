@@ -280,17 +280,17 @@ impl Vault {
             }
         }
 
-        // A hit is always right, so only a miss can be stale — and a miss is
-        // exactly the note created in another window since the walk. It is
-        // worth one more walk, once, and then the answer stands.
+        // A name that resolves is not in doubt. A name that does not — missing,
+        // or ambiguous — is exactly what an edit in another window fixes, by
+        // writing the note or by removing one of the two that clashed. Either
+        // is worth one more walk, once, and then the answer stands.
         match self.look_up(target, &self.index()) {
-            Err(ResolveError::NotFound(_)) if self.stale.swap(false, Ordering::Relaxed) => self.look_up(target, &self.rebuild()),
+            Err(_) if self.stale.swap(false, Ordering::Relaxed) => self.look_up(target, &self.rebuild()),
             answer => answer,
         }
     }
 
-    /// One lookup against one index. Ambiguity is a hit: two candidates are an
-    /// answer, and they do not send vademecum looking for a third.
+    /// One lookup against one index.
     fn look_up(&self, target: &str, index: &Index) -> Result<Target, ResolveError> {
         match index.get(&target.to_lowercase()).map(Vec::as_slice) {
             Some([only]) => Ok(Target::File(only.clone())),
@@ -311,6 +311,11 @@ impl Vault {
     }
 
     /// Walk the tree and take the result as the index from now on.
+    ///
+    /// A fresh walk owes nothing, so it settles the doubt too. Without that, a
+    /// document opened before anything had needed the index would leave the
+    /// doubt standing over an index built from scratch a moment later, and the
+    /// first name to miss would walk the same unchanged tree twice over.
     fn rebuild(&self) -> Arc<Index> {
         let mut index = Index::new();
         walk(&self.root, &mut index);
@@ -323,6 +328,7 @@ impl Vault {
 
         let index = Arc::new(index);
         *self.index.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&index));
+        self.stale.store(false, Ordering::Relaxed);
         index
     }
 }
@@ -719,24 +725,62 @@ mod tests {
         );
     }
 
-    /// Ambiguity is an answer. Two candidates are not a reason to go looking
-    /// for a third, and they must not spend the walk either.
+    /// An ambiguity is a broken link, and removing one of the two files is
+    /// exactly how a reader fixes it. If only a missing name could spend the
+    /// doubt, the clash would go on being reported — naming a file that is no
+    /// longer there — until vademecum was restarted.
     #[test]
-    fn ambiguity_is_an_answer_rather_than_a_reason_to_walk() {
+    fn resolving_an_ambiguity_elsewhere_is_seen_like_any_other_edit() {
+        let root = vault(&["index.md", "a/dup.md", "b/dup.md"]);
+        let path = root.path();
+        let from = document(path, "index.md");
+        let vault = Vault::discover(None, &from.base_dir);
+
+        assert!(matches!(vault.resolve(&classify("dup", WIKI), &from), Err(ResolveError::Ambiguous { .. })));
+
+        std::fs::remove_file(path.join("b/dup.md")).expect("one of the two");
+        vault.invalidate();
+        assert_eq!(vault.resolve(&classify("dup", WIKI), &from), Ok(Target::File(path.join("a/dup.md"))));
+    }
+
+    /// The doubt is one walk, however it is spent. An ambiguity that buys the
+    /// walk must not leave a second one owed.
+    #[test]
+    fn an_ambiguity_spends_the_walk_it_bought() {
         let root = vault(&["index.md", "a/dup.md", "b/dup.md"]);
         let path = root.path();
         let from = document(path, "index.md");
         let vault = Vault::discover(None, &from.base_dir);
 
         vault.invalidate();
-        std::fs::write(path.join("a/new.md"), "# new\n").expect("a file");
         assert!(matches!(vault.resolve(&classify("dup", WIKI), &from), Err(ResolveError::Ambiguous { .. })));
 
+        std::fs::write(path.join("a/new.md"), "# new\n").expect("a file");
         assert_eq!(
             vault.resolve(&classify("new", WIKI), &from),
-            Ok(Target::File(path.join("a/new.md"))),
-            "the ambiguous answer left the walk unspent"
+            Err(ResolveError::NotFound("new".into())),
+            "the walk was already spent on the ambiguity"
         );
+    }
+
+    /// A walk that has just happened owes nothing. Without that, a document
+    /// opened before anything needed the index left the doubt standing over an
+    /// index built from scratch, and the first miss walked the tree twice.
+    #[test]
+    fn a_walk_that_builds_the_index_settles_the_doubt_with_it() {
+        let root = vault(&["index.md", "deep/a.md"]);
+        let path = root.path();
+        let from = document(path, "index.md");
+        let vault = Vault::discover(None, &from.base_dir);
+
+        // Nothing has needed the index yet, and the reader opens a document.
+        vault.invalidate();
+        assert_eq!(vault.resolve(&classify("gone", WIKI), &from), Err(ResolveError::NotFound("gone".into())));
+
+        // That miss built the index, which is a walk of its own; the doubt went
+        // with it rather than buying a second walk of the same tree.
+        std::fs::write(path.join("deep/later.md"), "# later\n").expect("a file");
+        assert_eq!(vault.resolve(&classify("later", WIKI), &from), Err(ResolveError::NotFound("later".into())));
     }
 
     /// The seam the pager actually goes through: `App::show` and `App::reload`
