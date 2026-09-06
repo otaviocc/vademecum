@@ -118,6 +118,15 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
 
         let mut x = area.x;
         for span in &line.spans {
+            // Layout leaves empty spans behind wherever a padding worked out
+            // to zero columns — table cells are full of them. They have to be
+            // skipped rather than written: writing one advances nothing, which
+            // is also how a line with no room left reports itself, and taking
+            // that for the end of the line drops every span after the first
+            // empty one. That is a table with borders and no contents.
+            if span.text.is_empty() {
+                continue;
+            }
             if x >= area.right() {
                 break;
             }
@@ -126,6 +135,7 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
             let style = if on_cursor { span.style.patch(cursor_line) } else { span.style };
             let (next, _) = buf.set_stringn(x, y, &span.text, (area.right() - x) as usize, style);
             if next == x {
+                // A grapheme too wide for the columns that are left.
                 break;
             }
             x = next;
@@ -240,11 +250,22 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
-    /// One row of a buffer as plain text, trailing blanks trimmed.
+    /// One row of a buffer as plain text, trailing blanks trimmed. A
+    /// double-width glyph owns the cell after it, which ratatui blanks and the
+    /// terminal never draws, so the reader has to step over it too.
     fn row(buffer: &Buffer, y: u16) -> String {
-        let text: String = (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect();
+        let mut text = String::new();
+        let mut x = 0;
+        while x < buffer.area.width {
+            let symbol = buffer[(x, y)].symbol();
+            text.push_str(symbol);
+            x += (symbol.width() as u16).max(1);
+        }
         text.trim_end().to_string()
     }
+
+    /// The first row of the content area: header, then its rule.
+    const CONTENT_TOP: u16 = 2;
 
     fn body() -> String {
         (1..=20).map(|n| format!("line {n}\n\n")).collect()
@@ -466,6 +487,25 @@ mod tests {
         let size = Size::new(40, 12);
         let buffer = frame(&app("", size), size);
         assert!(row(&buffer, 11).starts_with("x.md · line 0/0"), "{:?}", row(&buffer, 11));
+    }
+
+    #[test]
+    fn the_pager_paints_every_line_the_stdout_writer_would() {
+        // The README's promise is that both outputs are the same
+        // `Vec<RenderedLine>`, so the fixture that covers every construct —
+        // tables, code fences, nested lists, quotes, footnotes — has to come
+        // out of the buffer character for character. Paragraph-only fixtures
+        // missed a table rendering as borders around nothing.
+        let source = include_str!("../../tests/fixtures/elements.md");
+        let size = Size::new(82, 130);
+        let app = app(source, size);
+        assert!(app.lines.len() <= app.viewport_height(), "the whole fixture has to be on screen");
+
+        let buffer = frame(&app, size);
+        for (offset, line) in app.lines.iter().enumerate() {
+            let painted = row(&buffer, CONTENT_TOP + offset as u16);
+            assert_eq!(painted, line.text().trim_end(), "line {offset}");
+        }
     }
 
     #[test]
