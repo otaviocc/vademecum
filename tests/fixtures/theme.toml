@@ -1,0 +1,11 @@
+# A partial theme, as a reader would write one: two changes, and everything
+# else — every other slot, and every modifier on the elements named here —
+# inherited from the built-in defaults.
+name = "test-fixture"
+
+[palette]
+accent = "#ff0000"
+
+[elements.link]
+fg = 208
+modifiers = []
