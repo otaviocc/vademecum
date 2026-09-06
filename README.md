@@ -89,8 +89,10 @@ forces that even on a terminal.
 
 `[[wikilinks]]`, `[[target|alias]]`, `[[target#Heading]]` and ordinary relative
 links like `[text](other.md#section)` are all followable. `Tab` cycles the links
-on the cursor line, `Enter` follows one, `h` and `l` walk your history. Clicking
-a link follows it directly, whichever line it is on.
+on the cursor line — the statusbar counts them as `link 2/3`, and the ones you
+have not landed on are underlined — `Enter` follows the focused one, and `h` and
+`l` walk your history. Clicking a link follows it directly, whichever line it is
+on.
 
 A target is looked for beside the current document first, then anywhere under
 the **vault root** — the nearest ancestor containing `.obsidian/`, or whatever
@@ -184,7 +186,7 @@ bg = "subtle"     # `none` removes a background; `reset` paints the terminal's
 The element names are `paragraph`, `heading1`–`heading6`, `emphasis`, `strong`,
 `strikethrough`, `inline_code`, `code_block`, `code_block_lang`, `quote`,
 `list_bullet`, `list_number`, `task_done`, `task_todo`, `link`, `wikilink`,
-`link_focused`, `link_broken`, `image`, `footnote`, `html`, `table_header`,
+`link_focused`, `link_unfocused`, `link_broken`, `image`, `footnote`, `html`, `table_header`,
 `table_border`, `hr`, `header_title`, `hint`, `status`, `status_notice`,
 `status_error`, `cursor_line`, `search_match`, `search_current` and
 `help_window`. Each takes `fg`, `bg` and `modifiers` (`bold`, `italic`,
@@ -213,7 +215,7 @@ TOML. Origins and licences for the added ones are in
 | `d` / `u`, `Ctrl-D` / `Ctrl-U` | Half page |
 | `Space` / `b`, `PgDn` / `PgUp` | Page |
 | `g` / `G`, `Home` / `End` | Top / bottom |
-| `Tab` / `Shift-Tab` | Cycle links on the cursor line |
+| `Tab` / `Shift-Tab` | Cycle the links on the cursor line, counted on the statusbar |
 | `Enter` | Follow the focused link |
 | `o` | Open an external link in the browser |
 | `h` / `Backspace`, `l` | History back / forward |
