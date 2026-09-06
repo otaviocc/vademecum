@@ -486,8 +486,10 @@ element depends on whether its target exists: `link` for External, `wikilink`
 for a Local or Wiki target that resolves, `link_broken` for one that does not.
 
 **Fragments** (`#heading`) jump to the first heading whose slug matches after
-the target loads; a fragment alone stays in the current document, and going
-back returns the reader to where they jumped from.
+the target loads, and put it at the top of the view; a fragment alone stays in
+the current document, and going back returns the reader to where they jumped
+from. One that matches no heading leaves the document at its top rather than
+reporting anything.
 
 `--resolve-links` prints what resolution made of every link in the document
 and exits, which is how the vault fixture is tested. One line per link in
@@ -508,11 +510,23 @@ as resolved, relative to wherever vademecum was run from.
 
 **Focus and follow** in the TUI: the cursor line is the reader position. If
 it contains one link, that link is focused; if several, `Tab`/`Shift-Tab`
-cycle focus among them. `Enter` follows a Local or Wiki link (push history,
-open, render, statusbar notice "Opened x.md"). `o` opens an External link with
-the `open` crate and does nothing on a Local/Wiki link (opening files in
-`$EDITOR` is out of scope). `h`/`Backspace` go back, `l` goes forward; history
-restores scroll and cursor.
+cycle focus among them. Moving the cursor drops the focus back to the first
+link: one on a line the reader has left is not the link they meant.
+
+`Enter` follows a Local or Wiki link (push history, open, render, statusbar
+notice "Opened x.md"), and leaves an External one to `o`, which opens it with
+the `open` crate and in turn leaves a Local or Wiki link alone (opening files
+in `$EDITOR` is out of scope). Neither says anything about the link it is not
+for. A document opens at its top, unless the link carried a fragment.
+
+`h`/`Backspace` go back, `l` goes forward. A history entry is the document,
+the scroll, the cursor **and** the focus, so coming back puts the reader on
+the link they left from. Going somewhere new drops the way forward. The vault
+root is discovered once, from the document vademecum was started on: following
+a link stays inside the collection the reader started in.
+
+A standing search query follows the reader across: it is matched again against
+each document as it opens, so `n` keeps working without being retyped.
 
 ### Syntax highlighting (`render/code.rs`)
 
