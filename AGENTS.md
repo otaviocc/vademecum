@@ -411,6 +411,24 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   out of the stream as `Reloaed note.md` — the `d` was already there and was
   not repainted. Grep for a fragment (`Reload`), never a phrase, and read the
   raw tail before believing a notice is missing.
+- `gh pr edit --base` is **refused** while a PR belongs to a `gh stack`:
+  "Cannot change the base branch because the pull request is part of a stack."
+  Reshaping a stack — dropping a middle PR, retargeting — therefore goes
+  `gh stack unstack <n>`, then `gh pr edit --base`, then `gh stack link` again.
+  Unstacking removes only the grouping on GitHub; the PRs and their branches are
+  untouched.
+- When a stacked PR is dropped and the one above it needs its plumbing, do not
+  reach for `git rebase --onto`. It works only for commits that never touch what
+  the dropped PR created; a commit that *edits* a function the dropped PR added
+  conflicts in every hunk. Branch fresh off the new base, `git checkout
+  <old-branch> -- <paths>` to take the final file state, remove what belonged to
+  the dropped PR, and commit it as the intended history. Commits that are
+  genuinely independent (the layer above) still rebase cleanly with `--onto`.
+- Adding an action to `moves_cursor` in `src/ui/app.rs` opts it into `reveal()`,
+  which pulls the viewport onto the cursor. That is wrong for any action that
+  can be a **no-op**: a click that lands on nothing would drag the view back to
+  the cursor and destroy the place the wheel exists to preserve. Only actions
+  that always move the cursor belong in that set.
 - A smoke test whose fixture is edited by a background `( sleep N; ... ) &`
   proves nothing unless N is past the keystrokes: an edit that lands *before*
   the navigation is already in the file when it opens, and the run looks like a
