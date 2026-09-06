@@ -82,6 +82,74 @@ you from shell to shell.
 13. **Mouse (opt-in)** — `--mouse` enables wheel scrolling. Off by default
     because mouse capture disables the terminal's native text selection.
 
+## What it looks like
+
+The pager on this README, part-way through a search — header with the bindings
+this build has, a hairline rule, the document, and the statusbar carrying the
+file, the line, the position and the match count. Colour is the one thing a
+fenced block cannot show:
+
+```
+ vademecum · README.md              ? help  / search  ⇥ link  ⏎ follow  h/l back/fwd  q quit
+────────────────────────────────────────────────────────────────────────────────────────────
+     file, because editors save by rename.
+ 13. Mouse (opt-in) — --mouse enables wheel scrolling. Off by default because mouse
+     capture disables the terminal's native text selection.
+
+ Usage
+
+
+ vademecum README.md                   # interactive TUI
+ vademecum --plain README.md           # force stdout mode even on a TTY
+ vademecum README.md | less -R         # stdout mode is automatic when piped
+ vademecum --color always README.md > out.ansi
+ vademecum --width 80 README.md        # wrap width (default: min(terminal - 2, 100))
+ vademecum --theme catppuccin-mocha README.md
+ vademecum --config ~/my-theme.toml README.md
+ vademecum --root ~/notes README.md    # vault root for wikilink lookup
+ vademecum --watch README.md
+────────────────────────────────────────────────────────────────────────────────────────────
+README.md · line 87/964 · 8% · match 1/1
+```
+
+## Install
+
+### From crates.io
+
+```sh
+cargo install vademecum --locked
+```
+
+`--locked` builds against the versions the release was tested with, which is
+what the committed `Cargo.lock` is for.
+
+### A prebuilt binary
+
+Every release attaches one archive per platform. Each holds the `vademecum`
+binary, this README and the licence; put the binary somewhere on your `PATH`.
+
+| Platform | Archive |
+| --- | --- |
+| Linux, x86-64 | `vademecum-<tag>-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux, ARM64 | `vademecum-<tag>-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS, Intel and Apple silicon | `vademecum-<tag>-macos-universal.tar.gz` |
+| Windows, x86-64 | `vademecum-<tag>-x86_64-pc-windows-msvc.zip` |
+
+The macOS archive is one universal binary rather than two downloads, so there
+is nothing to choose between.
+
+### From source
+
+```sh
+git clone https://github.com/otaviocc/vademecum
+cd vademecum
+cargo install --path . --locked
+```
+
+Building needs **Rust 1.88 or newer** — the MSRV, which CI checks on every
+change. There is nothing else to install: the themes and the syntax
+definitions are compiled into the binary.
+
 ## Usage
 
 ```
@@ -892,6 +960,18 @@ GitHub Actions on `otaviocc/vademecum`, modelled on Holodeck's workflows:
      Publishing runs **after** the binaries build so a build failure never
      leaves a published crate without a release
   5. create the GitHub Release with install notes and all archives attached
+
+  Archives are named `vademecum-<tag>-<target>` — `.zip` on Windows, `.tar.gz`
+  everywhere else — and each holds the binary, `README.md` and `LICENSE`.
+  The ARM64 Linux archive is built on a **native ARM runner** rather than
+  cross-compiled: `build.rs` has to run on the host, and making host and target
+  the same machine removes the question rather than answering it.
+
+  The workflow also answers to **`workflow_dispatch`**, which runs the tag check
+  and the four builds and stops there — no publish, no release. That is how a
+  release is rehearsed: the archive names, the `lipo` step and the ARM runner
+  are all exercised before anything one-way happens. Publishing to crates.io
+  cannot be undone, only yanked.
 
 ## Project conventions
 

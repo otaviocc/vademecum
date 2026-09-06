@@ -9,6 +9,10 @@ license = "MIT"
 readme = "README.md"
 keywords = ["markdown", "terminal", "tui", "pager", "viewer"]
 categories = ["command-line-utilities", "text-processing"]
+# Files about developing vademecum rather than using it. `syntaxes/` and
+# `themes/` stay: the build script and `include_str!` need them to build the
+# crate at all. `tests/` stays too, so a vendored copy can be verified.
+exclude = ["CLAUDE.md", "AGENTS.md", "Makefile", "rustfmt.toml", ".github/", ".cargo/"]
 
 [dependencies]
 anyhow = "1"
