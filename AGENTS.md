@@ -348,6 +348,29 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   `gh api repos/OWNER/REPO/check-runs/<id>/annotations` — in this repo it was
   GitHub refusing to start jobs over account billing, which no amount of
   re-running fixes. Free Actions need the repository to be public.
+- A `workflow_dispatch` workflow is only dispatchable once the file is on the
+  **default branch**. A release workflow therefore cannot be rehearsed from its
+  own PR: merge it first — which is safe, since it answers only to tags and
+  manual runs — then dispatch from `main`.
+- GitHub skips any job whose `needs` were skipped. Gating a job on
+  `github.event_name == 'push'` to make it tag-only will silently skip the whole
+  chain behind it and report the run as successful. Put the condition on the
+  *step* and let the job always run, so its `outputs` still reach everything
+  downstream.
+- Cross-compiling is worth avoiding when a build script is involved: `build.rs`
+  runs on the host, so the target build needs a linker installed and the
+  host/target split has to be right. `runs-on: ubuntu-24.04-arm` makes host and
+  target the same machine and the question disappears. Free on public repos.
+- To capture a TUI frame for documentation, **replay the stream, do not strip
+  it**. ratatui positions the cursor and paints runs, and never emits the spaces
+  between them, so `perl -pe 's/\e\[[0-9;?]*[a-zA-Z]//g'` yields a wall of
+  run-together words. A ~30-line Python emulator that honours `CUP`, `EL`, `ED`
+  and `CUF` into a fixed grid reproduces the frame exactly — and, because it
+  replays cursor moves, it also reconstructs a frame built from several partial
+  repaints, which is what defeats the grep-for-a-fragment trick above.
+- Sending a single `q` gives exactly one full frame: the loop draws, reads the
+  key, and quits without drawing again, so there is no partial repaint to
+  reassemble.
 - `App::new` takes `&Options`. A pager option that layout or resolution needs
   goes in there rather than into the parameter list, which is already four
   long and was five before.
