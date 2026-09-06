@@ -1,9 +1,4 @@
 //! `pulldown-cmark` events → a `Block`/`Inline` tree.
-//!
-//! The renderer wants a tree, not a stream: it has to know a list's nesting
-//! depth before it can indent it and a table's cell widths before it can size
-//! its columns. This module does that one conversion and nothing else — no
-//! styling, no wrapping, no link resolution.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -12,16 +7,12 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Tag};
 
 use crate::markdown::links::{LinkKind, classify};
 
-/// A block paired with the 1-based source line it starts on. Every
-/// `RenderedLine` the block produces carries that number, which is what lets a
-/// resize re-layout and still put the cursor back where the reader left it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceBlock {
     pub line: usize,
     pub block: Block,
 }
 
-/// A block-level construct.
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::enum_variant_names, reason = "CodeBlock is the name the README's data model gives it")]
 pub enum Block {
@@ -36,15 +27,12 @@ pub enum Block {
     FootnoteDef { label: String, blocks: Vec<SourceBlock> },
 }
 
-/// One item of a list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListItem {
     pub blocks: Vec<SourceBlock>,
 }
 
 impl ListItem {
-    /// `Some(checked)` when the item opens with a task marker, which the
-    /// renderer shows in place of the bullet.
     pub fn task(&self) -> Option<bool> {
         let first = self.blocks.first()?;
         match &first.block {
@@ -57,8 +45,6 @@ impl ListItem {
     }
 }
 
-/// Column alignment of a table, mirrored from `pulldown_cmark::Alignment` so
-/// the parser type does not leak into the renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alignment {
     None,
@@ -67,7 +53,6 @@ pub enum Alignment {
     Right,
 }
 
-/// An inline construct.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inline {
     Text(String),
@@ -84,7 +69,6 @@ pub enum Inline {
     TaskMarker(bool),
 }
 
-/// Parse Markdown into a block tree.
 pub fn parse(source: &str) -> Vec<SourceBlock> {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
@@ -96,7 +80,6 @@ pub fn parse(source: &str) -> Vec<SourceBlock> {
     Ast { events: events.peekable(), lines: LineIndex::new(source), anchors: HashMap::new() }.blocks()
 }
 
-/// The flat text of a run of inlines, as it will read on screen.
 pub fn plain_text(inlines: &[Inline]) -> String {
     let mut text = String::new();
     push_plain_text(inlines, &mut text);
@@ -119,17 +102,12 @@ fn push_plain_text(inlines: &[Inline], text: &mut String) {
 struct Ast<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> {
     events: std::iter::Peekable<I>,
     lines: LineIndex,
-    /// Slugs already handed out, so a repeated heading gets `-1`, `-2`, ….
     anchors: HashMap<String, usize>,
 }
 
 impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> Ast<'a, I> {
-    /// Blocks up to — but not including — the `End` that closes the enclosing
-    /// tag. The caller consumes that `End`.
     fn blocks(&mut self) -> Vec<SourceBlock> {
         let mut blocks = Vec::new();
-        // A tight list item has no `Paragraph` tag: its inlines sit directly
-        // inside the item, so block context has to be able to gather them.
         let mut loose = Vec::new();
         let mut loose_line = 0;
 
@@ -251,7 +229,6 @@ impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> Ast<'a, I> {
         })
     }
 
-    /// The cells of one table row, consuming the row's `End`.
     fn cells(&mut self) -> Vec<Vec<Inline>> {
         let mut cells = Vec::new();
         while let Some((event, _)) = self.events.next() {
@@ -264,7 +241,6 @@ impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> Ast<'a, I> {
         cells
     }
 
-    /// Inlines up to and including the `End` that closes the enclosing tag.
     fn inlines(&mut self) -> Vec<Inline> {
         let mut inlines = Vec::new();
         while let Some((event, _)) = self.events.next() {
@@ -306,14 +282,12 @@ impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> Ast<'a, I> {
         })
     }
 
-    /// Consume one `End`, which the caller knows is next.
     fn skip_end(&mut self) {
         if matches!(self.events.peek(), Some((Event::End(_), _))) {
             self.events.next();
         }
     }
 
-    /// Consume everything up to and including the `End` of the tag just taken.
     fn skip_to_end(&mut self) {
         let mut depth = 1usize;
         for (event, _) in self.events.by_ref() {
@@ -330,7 +304,6 @@ impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> Ast<'a, I> {
         }
     }
 
-    /// A GitHub-style slug, made unique within the document.
     fn anchor(&mut self, text: &str) -> String {
         let slug = slug(text);
         let seen = self.anchors.entry(slug.clone()).or_insert(0);
@@ -339,7 +312,6 @@ impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> Ast<'a, I> {
     }
 }
 
-/// Whether an event opens a block, as opposed to an inline.
 fn opens_block(event: &Event<'_>) -> bool {
     match event {
         Event::Rule => true,
@@ -378,7 +350,6 @@ fn alignment(alignment: pulldown_cmark::Alignment) -> Alignment {
     }
 }
 
-/// GitHub's heading slug: lowercase, punctuation dropped, spaces to hyphens.
 pub fn slug(text: &str) -> String {
     let mut slug = String::with_capacity(text.len());
     for c in text.chars() {
@@ -393,7 +364,6 @@ pub fn slug(text: &str) -> String {
     slug
 }
 
-/// Byte offset → line number, over the offsets of every line start.
 struct LineIndex {
     starts: Vec<usize>,
 }
@@ -405,7 +375,6 @@ impl LineIndex {
         Self { starts }
     }
 
-    /// The 1-based line containing `offset`.
     fn line_of(&self, offset: usize) -> usize {
         self.starts.partition_point(|start| *start <= offset).max(1)
     }

@@ -1,23 +1,14 @@
 //! Terminal events → actions.
-//!
-//! Pure and stateless, in the reducer style Holodeck uses: this module knows
-//! the keybinding table and nothing else. Every state change in the pager goes
-//! through an `Action`, which is what makes the bindings testable without a
-//! terminal.
 
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::layout::Size;
 
 use crate::ui::app::Mode;
 
-/// Lines a wheel notch scrolls.
 const WHEEL_LINES: isize = 3;
 
-/// How far a movement key travels. The amounts that depend on the viewport are
-/// resolved by the app, which is the only thing that knows how tall it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Motion {
-    /// Signed, so `j` and `k` are one variant.
     Line(isize),
     HalfPage(isize),
     Page(isize),
@@ -25,54 +16,30 @@ pub enum Motion {
     Bottom,
 }
 
-/// What an event asks the pager to do. `None` from `action` means the pager
-/// does not care about the event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Quit,
     Move(Motion),
-    /// The wheel: move the viewport, the cursor following it into view.
     Scroll(isize),
     Resize(Size),
-    /// `?`: open the help overlay, or close it.
     ToggleHelp,
-    /// `Esc` in Browse: drop the search highlight.
     Dismiss,
     SearchStart,
     SearchType(char),
     SearchErase,
     SearchConfirm,
     SearchCancel,
-    /// `n` / `N`.
-    SearchStep {
-        forward: bool,
-    },
-    /// `Tab` / `Shift-Tab`: move the focus along the cursor line's links.
-    Focus {
-        forward: bool,
-    },
-    /// `Enter`: open the focused local or wiki link.
+    SearchStep { forward: bool },
+    Focus { forward: bool },
     Follow,
-    /// `o`: hand the focused external link to the system browser.
     OpenExternal,
-    /// `h` / `Backspace` and `l`.
-    History {
-        forward: bool,
-    },
-    /// The watcher saw the open document change on disk. No key produces it —
-    /// the event loop raises it — so it is not in the table below.
+    History { forward: bool },
     Reload,
 }
 
-/// The one mapping from a terminal event to an action, given what keys mean
-/// right now.
 pub fn action(event: &Event, mode: Mode) -> Option<Action> {
     match event {
-        // Windows reports a Release for every Press; without the filter every
-        // key would fire twice.
         Event::Key(key) if key.kind == KeyEventKind::Press => key_action(*key, mode),
-        // The overlay is modal: the document behind it must not move, or
-        // closing it would put the reader somewhere they never navigated to.
         Event::Mouse(mouse) if mode != Mode::Help => mouse_action(*mouse),
         Event::Resize(columns, rows) => Some(Action::Resize(Size::new(*columns, *rows))),
         _ => None,
@@ -80,8 +47,6 @@ pub fn action(event: &Event, mode: Mode) -> Option<Action> {
 }
 
 fn key_action(key: KeyEvent, mode: Mode) -> Option<Action> {
-    // The one binding that means the same thing everywhere, including with a
-    // half-typed query on screen.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Some(Action::Quit);
     }
@@ -100,8 +65,6 @@ fn browse(key: KeyEvent) -> Option<Action> {
             _ => None,
         };
     }
-    // Shift is how `G` and `N` arrive on some terminals, so it is not
-    // disqualifying; Alt and the platform key are.
     if key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER) {
         return None;
     }
@@ -131,8 +94,6 @@ fn browse(key: KeyEvent) -> Option<Action> {
     }
 }
 
-/// While a query is being typed every printable key is text, so `q` does not
-/// quit and `?` does not open the help.
 fn typing(key: KeyEvent) -> Option<Action> {
     if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
         return None;
@@ -146,7 +107,6 @@ fn typing(key: KeyEvent) -> Option<Action> {
     }
 }
 
-/// The overlay swallows everything but the keys that close it.
 fn overlay(key: KeyEvent) -> Option<Action> {
     if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
         return None;
@@ -182,7 +142,6 @@ mod tests {
         Event::Mouse(MouseEvent { kind, column: 0, row: 0, modifiers: KeyModifiers::NONE })
     }
 
-    /// What the key does while reading, which is most of the table.
     fn browsing(event: &Event) -> Option<Action> {
         action(event, Mode::Browse)
     }
@@ -241,7 +200,6 @@ mod tests {
 
     #[test]
     fn a_control_binding_does_not_answer_to_its_bare_letter_twice_over() {
-        // Ctrl-b is not Page up: only the letters the table names are bound.
         assert_eq!(browsing(&control('b')), None);
         assert_eq!(browsing(&control('q')), None);
     }

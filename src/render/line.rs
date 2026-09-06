@@ -1,8 +1,4 @@
 //! The contract shared by the TUI and the stdout writer.
-//!
-//! Everything after layout works on `RenderedLine`s: the TUI paints their
-//! spans into the ratatui buffer, the stdout writer serializes them to ANSI,
-//! search scans their text, and link navigation reads their `links`.
 
 use std::ops::Range;
 use std::path::PathBuf;
@@ -12,7 +8,6 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::markdown::links::LinkKind;
 
-/// A run of text sharing one style.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StyledSpan {
     pub text: String,
@@ -24,15 +19,11 @@ impl StyledSpan {
         Self { text: text.into(), style }
     }
 
-    /// Display columns, not bytes or chars.
     pub fn width(&self) -> usize {
         self.text.width()
     }
 }
 
-/// Join neighbouring spans that share a style and drop the empty ones. Every
-/// span becomes an SGR sequence of its own on the way to stdout, so a run of
-/// identically styled spans is noise in the output and in the snapshots.
 pub fn merge(spans: impl IntoIterator<Item = StyledSpan>) -> Vec<StyledSpan> {
     spans.into_iter().filter(|span| !span.text.is_empty()).fold(Vec::new(), |mut merged: Vec<StyledSpan>, span| {
         match merged.last_mut() {
@@ -43,29 +34,22 @@ pub fn merge(spans: impl IntoIterator<Item = StyledSpan>) -> Vec<StyledSpan> {
     })
 }
 
-/// A link occupying a range of spans on one line. A link broken across a wrap
-/// becomes one `LinkRef` per line.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinkRef {
     pub span_range: Range<usize>,
     pub kind: LinkKind,
-    /// The file a Local or Wiki link points at, once resolution has run.
     pub resolved: Option<PathBuf>,
 }
 
-/// One line of laid-out output.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RenderedLine {
     pub spans: Vec<StyledSpan>,
     pub links: Vec<LinkRef>,
-    /// Set on the line a heading renders to, so fragments can jump to it.
     pub anchor: Option<String>,
-    /// The 1-based line of the source this came from.
     pub source_line: usize,
 }
 
 impl RenderedLine {
-    /// A blank line, belonging to no source line in particular.
     pub fn blank() -> Self {
         Self::default()
     }
@@ -74,23 +58,18 @@ impl RenderedLine {
         self.spans.iter().all(|span| span.text.is_empty())
     }
 
-    /// The line as plain text — what search scans and what `--color never`
-    /// writes.
     pub fn text(&self) -> String {
         self.spans.iter().map(|span| span.text.as_str()).collect()
     }
 
-    /// Display columns.
     pub fn width(&self) -> usize {
         self.spans.iter().map(StyledSpan::width).sum()
     }
 
-    /// Add a span to the end of the line.
     pub fn push(&mut self, span: StyledSpan) {
         self.spans.push(span);
     }
 
-    /// Append another line's spans and links, rebasing its link ranges.
     pub fn append(&mut self, other: RenderedLine) {
         let offset = self.spans.len();
         self.links.extend(
@@ -102,7 +81,6 @@ impl RenderedLine {
         self.spans.extend(other.spans);
     }
 
-    /// Put a span in front of the line, shifting the link ranges that follow.
     pub fn prefix(&mut self, span: StyledSpan) {
         self.spans.insert(0, span);
         for link in &mut self.links {

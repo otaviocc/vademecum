@@ -1,27 +1,19 @@
-//! The loaded Markdown document: bytes, where they came from, and the
-//! frontmatter split off the front.
+//! The loaded Markdown document, and the frontmatter split off its front.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-/// A Markdown document ready to parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
-    /// The file it was read from, or `None` when it came from stdin.
     pub path: Option<PathBuf>,
-    /// Directory that relative links resolve against: the file's directory, or
-    /// the working directory for stdin.
     pub base_dir: PathBuf,
-    /// The Markdown, with any frontmatter blanked out.
     pub source: String,
-    /// The frontmatter `title`, when there was one.
     pub title: Option<String>,
 }
 
 impl Document {
-    /// Read a document from disk.
     pub fn load(path: &Path) -> Result<Self> {
         let source = std::fs::read_to_string(path).with_context(|| format!("{}: cannot read", path.display()))?;
         let base_dir = match path.parent() {
@@ -31,7 +23,6 @@ impl Document {
         Ok(Self::new(Some(path.to_path_buf()), base_dir, source))
     }
 
-    /// Read a document from stdin, to EOF.
     pub fn from_stdin() -> Result<Self> {
         let mut source = String::new();
         std::io::stdin().read_to_string(&mut source).context("stdin: cannot read")?;
@@ -39,7 +30,6 @@ impl Document {
         Ok(Self::new(None, base_dir, source))
     }
 
-    /// A document from parts, for the loaders above and for tests.
     pub fn new(path: Option<PathBuf>, base_dir: PathBuf, source: String) -> Self {
         let (source, title) = match split_frontmatter(&source) {
             Some(frontmatter) => (blank_out(&source, frontmatter.end), title_of(&frontmatter.block)),
@@ -49,17 +39,11 @@ impl Document {
     }
 }
 
-/// A frontmatter block located in the source.
 struct Frontmatter {
-    /// The lines between the delimiters.
     block: String,
-    /// Byte offset just past the closing delimiter line.
     end: usize,
 }
 
-/// Find leading YAML (`---`, closed by `---` or `...`) or TOML (`+++`)
-/// frontmatter. An unclosed block is not frontmatter — it is a document that
-/// happens to start with a rule.
 fn split_frontmatter(source: &str) -> Option<Frontmatter> {
     let mut lines = source.split_inclusive('\n');
     let open = lines.next()?;
@@ -81,18 +65,12 @@ fn split_frontmatter(source: &str) -> Option<Frontmatter> {
     None
 }
 
-/// Replace everything before `end` with the newlines it contained, so that the
-/// frontmatter renders as nothing while every later line keeps the number it
-/// has in the file. `RenderedLine::source_line` depends on that.
 fn blank_out(source: &str, end: usize) -> String {
     let mut blanked = "\n".repeat(source[..end].matches('\n').count());
     blanked.push_str(&source[end..]);
     blanked
 }
 
-/// The `title` key of a frontmatter block, YAML (`title: x`) or TOML
-/// (`title = "x"`). A line scan serves both; vademecum has no YAML parser and
-/// nothing else in the block is read.
 fn title_of(block: &str) -> Option<String> {
     block.lines().find_map(|line| {
         let value = line.trim().strip_prefix("title")?.trim_start();

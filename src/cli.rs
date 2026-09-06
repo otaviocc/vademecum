@@ -1,73 +1,56 @@
 //! Command-line surface.
-//!
-//! This is the flag table from README.md, verbatim. Parsing only: no
-//! validation, no environment handling, no terminal detection — those live in
-//! the modules that consume these values.
 
 use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
 
-/// A modern `man` for reading Markdown.
 #[derive(Debug, Parser)]
 #[command(name = "vademecum", version, about, long_about = None)]
 pub struct Cli {
-    /// Markdown file to open, or `-` to read from stdin.
+    #[arg(help = "Markdown file to open, or `-` to read from stdin")]
     pub path: Option<PathBuf>,
 
-    /// Write styled output to stdout even when stdout is a TTY.
-    #[arg(long)]
+    #[arg(long, help = "Write styled output to stdout even when stdout is a TTY")]
     pub plain: bool,
 
-    /// ANSI colors in stdout mode.
-    #[arg(long, value_name = "WHEN", value_enum, default_value_t = ColorChoice::Auto)]
+    #[arg(long, value_name = "WHEN", value_enum, default_value_t = ColorChoice::Auto, help = "ANSI colors in stdout mode")]
     pub color: ColorChoice,
 
-    /// Wrap width. Defaults to min(terminal width, 100).
-    #[arg(long, value_name = "N")]
+    #[arg(long, value_name = "N", help = "Wrap width. Defaults to min(terminal width, 100)")]
     pub width: Option<u16>,
 
-    /// Built-in or user theme by name.
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", help = "Built-in or user theme by name")]
     pub theme: Option<String>,
 
-    /// Explicit theme file, overriding `--theme`.
-    #[arg(long, value_name = "FILE")]
+    #[arg(long, value_name = "FILE", help = "Explicit theme file, overriding `--theme`")]
     pub config: Option<PathBuf>,
 
-    /// Vault root for wikilink resolution.
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", help = "Vault root for wikilink resolution")]
     pub root: Option<PathBuf>,
 
-    /// Re-render when the file changes on disk.
-    #[arg(long)]
+    #[arg(long, help = "Re-render when the file changes on disk")]
     pub watch: bool,
 
-    /// Enable mouse capture (wheel scroll).
-    #[arg(long)]
+    #[arg(long, help = "Enable mouse capture (wheel scroll)")]
     pub mouse: bool,
 
-    /// Print the available theme names and exit.
-    #[arg(long)]
+    #[arg(long, help = "Print the available theme names and exit")]
     pub list_themes: bool,
 
-    /// Print the available syntect theme names and exit.
-    #[arg(long)]
+    #[arg(long, help = "Print the available syntect theme names and exit")]
     pub list_syntax_themes: bool,
 
-    /// Print each link and its resolved path, then exit.
-    #[arg(long)]
+    #[arg(long, help = "Print each link and its resolved path, then exit")]
     pub resolve_links: bool,
 }
 
-/// When to emit ANSI colors in stdout mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ColorChoice {
-    /// Color only when stdout is a TTY.
+    #[value(help = "Color only when stdout is a TTY")]
     Auto,
-    /// Always color.
+    #[value(help = "Always color")]
     Always,
-    /// Never color.
+    #[value(help = "Never color")]
     Never,
 }
 

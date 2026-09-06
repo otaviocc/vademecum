@@ -1,12 +1,5 @@
 //! Finding a query in the rendered text.
-//!
-//! Matching runs once, when the reader confirms with `Enter`, over the plain
-//! text of every line. The result is kept in document order, which is what
-//! lets the painter ask for one line's matches with a binary search instead of
-//! a scan: a query with thousands of hits costs the same per frame as one with
-//! none.
 
-/// One match, as byte offsets into the plain text of one rendered line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Match {
     pub line: usize,
@@ -14,14 +7,10 @@ pub struct Match {
     pub end: usize,
 }
 
-/// Smart case: the query is matched case-sensitively exactly when the reader
-/// typed a capital, so `todo` finds `TODO` but `TODO` does not find `todo`.
 fn is_case_sensitive(query: &str) -> bool {
     query.chars().any(char::is_uppercase)
 }
 
-/// Every match in the document, in order. An empty query matches nothing —
-/// otherwise it would match everywhere, which highlights the whole file.
 pub fn find(haystack: &[String], query: &str) -> Vec<Match> {
     if query.is_empty() {
         return Vec::new();
@@ -35,16 +24,12 @@ pub fn find(haystack: &[String], query: &str) -> Vec<Match> {
         let mut from = 0;
         while let Some((start, end)) = locate(&text[from..], &needle, sensitive) {
             matches.push(Match { line, start: from + start, end: from + end });
-            // The needle is never empty, so `end` always advances past `start`
-            // and the tail shrinks; an exhausted tail matches nothing and ends
-            // the loop on its own.
             from += end;
         }
     }
     matches
 }
 
-/// The first occurrence of `needle` in `text`, as a byte range into `text`.
 fn locate(text: &str, needle: &str, sensitive: bool) -> Option<(usize, usize)> {
     if sensitive {
         return text.find(needle).map(|start| (start, start + needle.len()));
@@ -52,12 +37,6 @@ fn locate(text: &str, needle: &str, sensitive: bool) -> Option<(usize, usize)> {
     text.char_indices().find_map(|(start, _)| starts_with(&text[start..], needle).map(|len| (start, start + len)))
 }
 
-/// How many bytes of `text` a case-insensitive `needle` consumes, if `text`
-/// begins with it. Folding one character at a time rather than lowercasing the
-/// whole line keeps the offsets indexing the text the painter has: `İ` folds
-/// to two characters, so a folded copy's offsets would land elsewhere.
-///
-/// `needle` is already lowercased.
 fn starts_with(text: &str, needle: &str) -> Option<usize> {
     let mut wanted = needle.chars();
     let mut consumed = 0;
@@ -75,29 +54,21 @@ fn starts_with(text: &str, needle: &str) -> Option<usize> {
     wanted.next().is_none().then_some(consumed)
 }
 
-/// The query, what is being typed, and where the reader is in the results.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Search {
-    /// The confirmed query. Empty means nothing is highlighted.
     pub query: String,
-    /// What is being typed, before `Enter` confirms it.
     pub input: String,
-    /// Every match, in document order.
     pub matches: Vec<Match>,
-    /// Index into `matches`: the one `search_current` paints.
     pub current: Option<usize>,
 }
 
 impl Search {
-    /// The matches on one line. Two binary searches over a vector already in
-    /// line order, so the painter can call this for every visible row.
     pub fn on_line(&self, line: usize) -> &[Match] {
         let start = self.matches.partition_point(|found| found.line < line);
         let end = self.matches.partition_point(|found| found.line <= line);
         &self.matches[start..end]
     }
 
-    /// `n` / `N`: the next or previous match, wrapping at both ends.
     pub fn step(&mut self, forward: bool) -> Option<Match> {
         if self.matches.is_empty() {
             return None;
@@ -114,8 +85,6 @@ impl Search {
         self.current.map(|index| self.matches[index])
     }
 
-    /// After a confirm or a re-layout: the first match at or after `line`,
-    /// wrapping to the top when there is none below.
     pub fn seek_from(&mut self, line: usize) -> Option<Match> {
         let index =
             self.matches.iter().position(|found| found.line >= line).or_else(|| (!self.matches.is_empty()).then_some(0))?;
@@ -123,7 +92,6 @@ impl Search {
         Some(self.matches[index])
     }
 
-    /// Forget the query and the highlight.
     pub fn clear(&mut self) {
         self.query.clear();
         self.input.clear();
@@ -131,7 +99,6 @@ impl Search {
         self.current = None;
     }
 
-    /// `match i/n` for the statusbar, when there is a query to report on.
     pub fn progress(&self) -> Option<(usize, usize)> {
         let current = self.current?;
         (!self.query.is_empty()).then_some((current + 1, self.matches.len()))
@@ -173,7 +140,6 @@ mod tests {
 
     #[test]
     fn matches_do_not_overlap_themselves() {
-        // "aa" in "aaaa" is two matches, not three.
         assert_eq!(find(&haystack(&["aaaa"]), "aa").len(), 2);
     }
 

@@ -1,8 +1,4 @@
 //! Finding a theme, reading it, and merging it over the defaults.
-//!
-//! Precedence, highest first: `--config <file>`, `--theme <name>`,
-//! `<config>/theme.toml`, the built-in `ansi`. A file is partial — whatever it
-//! leaves out keeps its default — so the merge is the whole job.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -15,8 +11,6 @@ use crate::theme::color::{ColorError, ColorSpec};
 use crate::theme::elements::{self, Element, ElementFile};
 use crate::theme::palette::{Palette, PaletteFile};
 
-/// The built-ins, embedded so a binary on its own is a complete install. The
-/// order is the one `--list-themes` prints, and the first is the default.
 const BUILT_IN: [(&str, &str); 4] = [
     ("ansi", include_str!("../../themes/ansi.toml")),
     ("kanagawa-dragon", include_str!("../../themes/kanagawa-dragon.toml")),
@@ -24,8 +18,6 @@ const BUILT_IN: [(&str, &str); 4] = [
     ("catppuccin-latte", include_str!("../../themes/catppuccin-latte.toml")),
 ];
 
-/// Anything that stops a theme from being usable. Unknown keys are not here:
-/// they are warnings, and the theme still loads.
 #[derive(Debug, thiserror::Error)]
 pub enum ThemeError {
     #[error("{path}: cannot be read")]
@@ -53,22 +45,18 @@ pub enum ThemeError {
     Unknown { name: String, available: String },
 }
 
-/// A theme file, every part of it optional.
 #[derive(Debug, Default, Deserialize)]
 struct ThemeFile {
     name: Option<String>,
     syntax_theme: Option<String>,
     #[serde(default)]
     palette: PaletteFile,
-    /// Keyed by element name. An unknown name is warned about at resolve time,
-    /// rather than failing the parse, so one typo does not cost a whole theme.
     #[serde(default)]
     elements: BTreeMap<String, ElementFile>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
 
-/// The theme the CLI asked for, with any warnings printed to stderr.
 pub fn load(config: Option<&Path>, name: Option<&str>) -> Result<Theme, ThemeError> {
     let (theme, warnings) = resolve(config, name, crate::config::config_dir().as_deref())?;
     for warning in warnings {
@@ -77,8 +65,6 @@ pub fn load(config: Option<&Path>, name: Option<&str>) -> Result<Theme, ThemeErr
     Ok(theme)
 }
 
-/// The names `--list-themes` prints: the built-ins in table order, then user
-/// themes alphabetically, each name once.
 pub fn available() -> Vec<String> {
     available_in(crate::config::config_dir().as_deref())
 }
@@ -103,8 +89,6 @@ fn available_in(config_dir: Option<&Path>) -> Vec<String> {
     names
 }
 
-/// The whole precedence chain, with the config directory passed in so the
-/// chain can be tested without an environment to set up.
 fn resolve(config: Option<&Path>, name: Option<&str>, config_dir: Option<&Path>) -> Result<(Theme, Vec<String>), ThemeError> {
     if let Some(path) = config {
         return from_file(path);
@@ -118,8 +102,6 @@ fn resolve(config: Option<&Path>, name: Option<&str>, config_dir: Option<&Path>)
     from_source(BUILT_IN[0].0, BUILT_IN[0].1)
 }
 
-/// A user theme of that stem shadows a built-in of the same name, so a shipped
-/// theme can be retuned without being renamed.
 fn by_name(name: &str, config_dir: Option<&Path>) -> Result<(Theme, Vec<String>), ThemeError> {
     let user: Option<PathBuf> = config_dir
         .filter(|_| addresses_a_theme(name))
@@ -134,10 +116,6 @@ fn by_name(name: &str, config_dir: Option<&Path>) -> Result<(Theme, Vec<String>)
     }
 }
 
-/// A `--theme` names a file *in* the themes directory. Anything that could
-/// step outside it is not a theme name at all, and falls through to the
-/// built-ins and then to "no theme named that": `--config` is the flag for
-/// naming a path.
 fn addresses_a_theme(name: &str) -> bool {
     !name.is_empty() && !name.contains(['/', '\\']) && name != "." && name != ".."
 }
@@ -154,9 +132,6 @@ fn from_source(label: &str, source: &str) -> Result<(Theme, Vec<String>), ThemeE
 }
 
 impl ThemeFile {
-    /// Merge over the defaults: the palette first, then the element defaults
-    /// derived from *that* palette, then the file's own element overrides. A
-    /// file that moves `accent` therefore moves every heading with it.
     fn into_theme(self, path: &str) -> Result<(Theme, Vec<String>), ThemeError> {
         let mut warnings = Vec::new();
         for key in self.unknown.keys() {
@@ -199,7 +174,6 @@ impl ThemeFile {
     }
 }
 
-/// One element's overrides, laid over its default style key by key.
 fn patch(default: Style, overrides: &ElementFile, palette: &Palette, path: &str, key: &str) -> Result<Style, ThemeError> {
     let color = |spec: &ColorSpec, field: &str| -> Result<_, ThemeError> {
         spec.resolve_against(palette).map_err(|source| ThemeError::BadColor {
@@ -214,8 +188,6 @@ fn patch(default: Style, overrides: &ElementFile, palette: &Palette, path: &str,
         style = style.fg(color(spec, "fg")?);
     }
     if let Some(spec) = &overrides.bg {
-        // The one value that is not a color. `Style::bg` cannot express it, so
-        // the field is cleared rather than set.
         style = match spec.removes_color() {
             true => Style { bg: None, ..style },
             false => style.bg(color(spec, "bg")?),
@@ -267,7 +239,6 @@ mod tests {
             assert!(theme.syntax_theme.is_some(), "{name} names no syntax theme");
             assert!(warnings.is_empty(), "{name} warned: {warnings:?}");
             for element in Element::ALL {
-                // Resolved means present: `style()` indexes the table directly.
                 let _ = theme.style(element);
             }
         }
@@ -275,10 +246,6 @@ mod tests {
 
     #[test]
     fn the_embedded_ansi_theme_is_the_built_in_default() {
-        // The Rust defaults are the ground truth every partial file merges
-        // over; `themes/ansi.toml` is the readable copy of them, and this is
-        // what keeps the two from drifting. Only the colors are compared: the
-        // file also names a syntax theme, which the defaults have no opinion on.
         let embedded = theme(BUILT_IN[0].1);
         let default = Theme::default();
         assert_eq!(embedded.palette, default.palette);
@@ -287,10 +254,6 @@ mod tests {
         }
     }
 
-    /// Why the readability fix is in the defaults rather than in
-    /// `themes/ansi.toml`: a partial file merges over the defaults, so a theme
-    /// naming nothing but an accent must not inherit a slab behind its code or
-    /// a search highlight that fails to invert.
     #[test]
     fn a_partial_theme_inherits_the_readable_defaults() {
         let theme = theme("name = \"mine\"\n[palette]\naccent = \"green\"\n");
@@ -302,8 +265,6 @@ mod tests {
         }
     }
 
-    /// And a theme whose `subtle` is a real tint asks for the band back, which
-    /// is what the three themed built-ins do.
     #[test]
     fn a_theme_with_a_real_subtle_can_have_its_code_background() {
         for name in ["catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
@@ -315,8 +276,6 @@ mod tests {
         }
     }
 
-    /// Bright black is what `dark_gray` means, and as the background of code it
-    /// reads as a washed-out slab.
     #[test]
     fn the_ansi_theme_gives_code_no_background() {
         let ansi = theme(BUILT_IN[0].1);
@@ -325,15 +284,10 @@ mod tests {
             assert!(ansi.style(element).fg.is_some(), "{element:?} has to say something, having no background");
         }
 
-        // And the slot is the cursor line's alone, which is why the bar is now
-        // visible over a code block rather than being the same color as it.
         assert_eq!(ansi.style(Element::CursorLine).bg, Some(ansi.palette.subtle));
         assert_ne!(ansi.style(Element::CursorLine).bg, ansi.style(Element::CodeBlock).bg);
     }
 
-    /// `reset` as a *foreground* is the terminal's foreground, so
-    /// `fg = palette.background` under `ansi` painted default-on-yellow and the
-    /// inversion these want never happened.
     #[test]
     fn the_ansi_search_highlights_name_a_foreground_that_reads() {
         let ansi = theme(BUILT_IN[0].1);
@@ -342,9 +296,7 @@ mod tests {
             assert_ne!(ansi.style(element).fg, Some(ansi.palette.background), "{element:?} inverts against nothing");
             assert!(ansi.style(element).bg.is_some(), "{element:?} still needs something to invert against");
         }
-        // The current match stays distinguishable from the rest.
         assert_ne!(ansi.style(Element::SearchMatch).bg, ansi.style(Element::SearchCurrent).bg);
-        // And the bold the defaults give the current one survives the override.
         assert!(ansi.style(Element::SearchCurrent).add_modifier.contains(Modifier::BOLD));
     }
 
@@ -353,7 +305,6 @@ mod tests {
         let palette = Palette::default();
         assert!(ColorSpec::Name(String::from("none")).removes_color());
         assert!(!ColorSpec::Name(String::from("reset")).removes_color(), "reset is a color: the terminal's own");
-        // Anywhere a color is actually required, `none` is an error that says so.
         let error = ColorSpec::Name(String::from("none")).resolve_against(&palette).expect_err("none is not a color");
         assert!(error.to_string().contains("bg"), "{error}");
     }
@@ -366,7 +317,6 @@ accent = "#ff0000""##,
         );
         assert_eq!(theme.style(Element::Heading1).fg, Some(Color::Rgb(0xFF, 0, 0)));
         assert_eq!(theme.style(Element::ListBullet).fg, Some(Color::Rgb(0xFF, 0, 0)));
-        // Untouched slots keep the default.
         assert_eq!(theme.style(Element::Link).fg, Some(Palette::default().highlight));
     }
 
@@ -456,8 +406,6 @@ colour = "red""#,
 
     #[test]
     fn an_error_states_its_cause_once() {
-        // The cause is a source, and the binary boundary prints the chain.
-        // Saying it in the message too gets it printed twice.
         let error = from_source("mine.toml", "[elements.link]\nfg = \"blurple\"").expect_err("blurple is not a color");
         let source = std::error::Error::source(&error).expect("the color error is the cause").to_string();
         assert!(!error.to_string().contains(&source), "{error} already contains {source}");
@@ -474,7 +422,6 @@ colour = "red""#,
             assert!(error.is_err(), "{name:?} reached a file a theme name should not address");
         }
 
-        // The flag for naming a path is the one that says so.
         let (theme, _) = resolve(Some(&dir.path().join("outside.toml")), None, Some(dir.path())).expect("the theme loads");
         assert_eq!(theme.palette.accent, Color::Rgb(0, 0, 5));
     }
@@ -539,12 +486,8 @@ colour = "red""#,
         write(dir.path(), "themes/Apple.toml", "");
         write(dir.path(), "themes/ansi.toml", "");
         write(dir.path(), "themes/notes.md", "");
-        // A directory named like a theme is not one, and listing it would
-        // advertise a name `--theme` then refuses.
         std::fs::create_dir_all(dir.path().join("themes/folder.toml")).expect("mkdir");
 
-        // Alphabetically, which is not the byte order `sort` would give
-        // `Apple` and `zebra`.
         let names = available_in(Some(dir.path()));
         assert_eq!(names, ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte", "Apple", "zebra"]);
         assert_eq!(available_in(None), ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);

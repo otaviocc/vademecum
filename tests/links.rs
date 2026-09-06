@@ -1,24 +1,15 @@
 //! Link resolution over the vault fixture, end to end.
-//!
-//! `--resolve-links` is the only place the resolver's answers are visible from
-//! outside the binary, which is why it exists: every rule in the README's link
-//! model is asserted here against real files on disk.
 
 mod common;
 
 use common::{run, vademecum};
 
-/// The report, with the separators flattened so an assertion reads the same on
-/// Windows as it does anywhere else.
 fn resolve(args: &[&str]) -> String {
     let mut arguments = vec!["--plain", "--resolve-links"];
     arguments.extend_from_slice(args);
     run(&arguments).replace('\\', "/")
 }
 
-/// The same, run from inside `directory`. The vault root is discovered by
-/// climbing from the document, so where vademecum was *started* changes the
-/// answer and has to be testable.
 fn resolve_from(directory: &str, args: &[&str]) -> String {
     let mut command = vademecum();
     command.current_dir(directory).args(["--plain", "--resolve-links"]).args(args);
@@ -27,18 +18,12 @@ fn resolve_from(directory: &str, args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("output is utf-8").replace('\\', "/")
 }
 
-/// One reported link: kind, destination, target. A destination can contain a
-/// space (`note#A Heading`), so the columns are split on the arrow first and
-/// on the first gap second, never on whitespace throughout.
 fn parse(line: &str) -> (&str, &str, &str) {
     let (left, target) = line.split_once(" -> ").expect("every line has an arrow");
     let (kind, destination) = left.split_once(' ').expect("every line has a kind");
     (kind, destination.trim(), target)
 }
 
-/// The line reporting `destination`, panicking with the whole report when
-/// there is none — a missing line is otherwise indistinguishable from a wrong
-/// one.
 fn entry<'a>(report: &'a str, destination: &str) -> (&'a str, &'a str) {
     report
         .lines()
@@ -56,8 +41,6 @@ fn kind<'a>(report: &'a str, destination: &str) -> &'a str {
     entry(report, destination).0
 }
 
-/// The form an editor writes for a filename with a space in it. Both forms a
-/// human writes already resolved, which made this the wrong way round.
 #[test]
 fn a_percent_encoded_destination_resolves_to_the_file_it_names() {
     let report = resolve(&["tests/fixtures/vault/index.md"]);
@@ -88,8 +71,6 @@ fn a_wikilink_takes_the_file_beside_the_document() {
 
 #[test]
 fn a_wikilink_searches_the_vault_when_nothing_is_beside_it() {
-    // `index.md` is a directory up, so only a vault search finds it — and the
-    // vault root is found in turn by the fixture's `.obsidian/`.
     let report = resolve(&["tests/fixtures/vault/nested/note.md"]);
     assert_eq!(target(&report, "index"), "tests/fixtures/vault/index.md");
 }
@@ -126,12 +107,8 @@ fn an_external_link_names_no_file_and_a_bare_fragment_names_this_one() {
 
 #[test]
 fn an_explicit_root_is_searched_instead_of_the_marked_one() {
-    // Pointed at `nested/`, the vault no longer contains `index.md`, so the
-    // wikilink that resolved by searching now has nowhere to look.
     let report = resolve(&["--root", "tests/fixtures/vault/nested", "tests/fixtures/vault/nested/note.md"]);
     assert_eq!(target(&report, "index"), "(broken)");
-    // The relative link beside it is unaffected: the root is only consulted
-    // after `base_dir`.
     assert_eq!(target(&report, "../index.md"), "tests/fixtures/vault/index.md");
 }
 
@@ -172,34 +149,24 @@ fn a_document_with_no_links_reports_nothing_rather_than_failing() {
 
 #[test]
 fn the_vault_is_found_from_inside_it() {
-    // `ancestors()` on a relative path ends at the empty path, which `join`
-    // then resolves against the working directory — so this used to match the
-    // marker at `""`, take the empty path as the root, and find nothing under
-    // it. Started from the vault root, every wikilink went broken.
     let report = resolve_from("tests/fixtures/vault", &["nested/note.md"]);
     assert_eq!(target(&report, "index"), "index.md");
 }
 
 #[test]
 fn the_vault_is_found_by_climbing_above_the_working_directory() {
-    // The document is named relatively and the marker is a directory up, so
-    // discovery has to leave the working directory to see it.
     let report = resolve_from("tests/fixtures/vault/nested", &["note.md"]);
     assert_eq!(target(&report, "index"), "../index.md");
 }
 
 #[test]
 fn a_bare_fragment_wikilink_is_the_document_already_open() {
-    // `[[#Heading]]` is the wikilink spelling of `[text](#heading)`; it used to
-    // resolve as a target named "" and render broken.
     let report = resolve(&["tests/fixtures/vault/note.md"]);
     assert_eq!(target(&report, "#A Heading"), "tests/fixtures/vault/note.md");
 }
 
 #[test]
 fn a_root_that_cannot_be_read_is_an_error_before_anything_is_rendered() {
-    // Silence here rendered a document of broken links and exited 0, so a typo
-    // in the flag looked like a fault in the notes.
     let output = vademecum()
         .args(["--plain", "--resolve-links", "--root", "no/such/dir", "tests/fixtures/vault/index.md"])
         .output()
