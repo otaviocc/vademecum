@@ -11,7 +11,7 @@ use crate::render::code;
 use crate::render::line::{self, LinkRef, RenderedLine, StyledSpan};
 use crate::theme::{Element, Theme};
 
-const GUTTER: usize = 1;
+pub const GUTTER: usize = 1;
 const DEFAULT_WIDTH: usize = 100;
 const TERMINAL_MARGIN: usize = 2;
 const BULLETS: [&str; 3] = ["•", "◦", "▪"];

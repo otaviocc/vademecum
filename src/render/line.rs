@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 
 use ratatui::style::Style;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::markdown::links::LinkKind;
 
@@ -92,6 +92,21 @@ impl RenderedLine {
         self.links.iter().position(|link| link.span_range.contains(&span))
     }
 
+    pub fn byte_at(&self, column: usize) -> usize {
+        let mut x = 0;
+        let mut byte = 0;
+        for span in &self.spans {
+            for character in span.text.chars() {
+                if x >= column {
+                    return byte;
+                }
+                x += UnicodeWidthChar::width(character).unwrap_or(0);
+                byte += character.len_utf8();
+            }
+        }
+        byte
+    }
+
     pub fn prefix(&mut self, span: StyledSpan) {
         self.spans.insert(0, span);
         for link in &mut self.links {
@@ -142,6 +157,32 @@ mod tests {
         assert_eq!(line.link_at(5), None, "the space between");
         assert_eq!(line.link_at(11), None, "past the end of the line");
         assert_eq!(line.link_at(usize::MAX), None);
+    }
+
+    #[test]
+    fn a_column_finds_the_byte_the_text_starts_at() {
+        let line = line();
+        assert_eq!(line.byte_at(0), 0);
+        assert_eq!(line.byte_at(6), 6);
+        assert_eq!(&line.text()[line.byte_at(6)..], "world");
+    }
+
+    #[test]
+    fn a_column_past_the_end_of_the_line_finds_its_last_byte() {
+        let line = line();
+        assert_eq!(line.byte_at(11), 11);
+        assert_eq!(line.byte_at(usize::MAX), 11);
+        assert_eq!(RenderedLine::blank().byte_at(4), 0);
+    }
+
+    #[test]
+    fn a_column_inside_a_wide_glyph_finds_the_boundary_after_it() {
+        let mut line = RenderedLine::default();
+        line.push(StyledSpan::new("日本語", Style::default()));
+
+        assert_eq!(line.byte_at(0), 0);
+        assert_eq!(line.byte_at(2), 3, "the second glyph starts at column 2");
+        assert_eq!(line.byte_at(3), 6, "a column inside a glyph does not split it");
     }
 
     #[test]
