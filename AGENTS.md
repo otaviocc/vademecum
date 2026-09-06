@@ -177,7 +177,24 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - `cargo-insta` is not installed. A new snapshot is written as
   `tests/snapshots/*.snap.new`; read it in full, then `mv` it over the `.snap`
   and delete the `assertion_line:` header, which otherwise churns the file
-  whenever the test moves in `stdout.rs`.
+  whenever the test moves in `stdout.rs`. `insta` stops a test at its first
+  failing assertion, so a test holding several snapshots writes one `.snap.new`
+  per run: accept, rerun, repeat. When several snapshots are the same document
+  under different settings, check them against each other by stripping the
+  escapes (`perl -pe 's/\e\[[0-9;]*m//g'`) and comparing hashes — identical
+  text proves only the styling moved.
+- Integration tests must neutralise the environment they run in, not just
+  `NO_COLOR`: `vademecum()` in `tests/stdout.rs` also pins `XDG_CONFIG_HOME`
+  and `APPDATA` at paths that do not exist, or a `theme.toml` in the
+  developer's own config directory repaints every snapshot.
+- `#[serde(untagged)]` does **not** survive `#[serde(flatten)]`: the buffered
+  deserializer flatten uses does not hand an untagged enum the integer type the
+  file wrote, so `fg = 208` fails to match a `u8` variant. `ColorSpec` has a
+  hand-written visitor instead. Reach for one whenever a value can be more than
+  one TOML type inside a struct that captures unknown keys.
+- A raw string in a test that contains a hex color needs `r##"…"##`: `"#` is
+  what closes `r#"…"#`, so `accent = "#ff0000"` inside one ends the literal
+  early and the error points at the Rust, not at the string.
 - Stage commits explicitly. `git add -A` after editing both the README and the
   source sweeps them into one commit, and a README amendment has to stand
   alone (§4).
