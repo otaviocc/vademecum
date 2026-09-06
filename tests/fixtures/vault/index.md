@@ -10,5 +10,6 @@ from here.
 - And with a fragment: [[note#A Heading]]
 - A target that is not there: [[missing]]
 - A target that is there twice: [[dup]]
+- Percent-encoded, as an editor writes it: [a spaced note](spaced%20note.md)
 - Somewhere else entirely: [the web](https://example.com)
 - A fragment on this page: [back to the top](#index)

@@ -56,6 +56,15 @@ fn kind<'a>(report: &'a str, destination: &str) -> &'a str {
     entry(report, destination).0
 }
 
+/// The form an editor writes for a filename with a space in it. Both forms a
+/// human writes already resolved, which made this the wrong way round.
+#[test]
+fn a_percent_encoded_destination_resolves_to_the_file_it_names() {
+    let report = resolve(&["tests/fixtures/vault/index.md"]);
+    assert_eq!(kind(&report, "spaced%20note.md"), "local");
+    assert_eq!(target(&report, "spaced%20note.md"), "tests/fixtures/vault/spaced note.md");
+}
+
 #[test]
 fn a_relative_link_resolves_against_the_document() {
     let report = resolve(&["tests/fixtures/vault/index.md"]);
@@ -140,6 +149,7 @@ fn every_link_is_reported_in_source_order() {
             "note#A Heading",
             "missing",
             "dup",
+            "spaced%20note.md",
             "https://example.com",
             "#index",
         ]

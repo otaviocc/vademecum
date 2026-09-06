@@ -256,12 +256,16 @@ impl Vault {
             // An empty path is `[text](#section)`: the document already open.
             LinkKind::Local { path, .. } if path.as_os_str().is_empty() => Ok(Target::SameDocument),
             LinkKind::Local { path, .. } => {
-                let candidate = normalize(&document.base_dir.join(path));
-                if candidate.is_file() {
-                    Ok(Target::File(candidate))
-                } else {
-                    Err(ResolveError::NotFound(path.display().to_string()))
+                // As written first, decoded second. An editor spells a space
+                // `%20`, but a file may genuinely be called `50%25.md`, and
+                // only trying the raw path first keeps both readable.
+                for candidate in local_candidates(path) {
+                    let candidate = normalize(&document.base_dir.join(candidate));
+                    if candidate.is_file() {
+                        return Ok(Target::File(candidate));
+                    }
                 }
+                Err(ResolveError::NotFound(path.display().to_string()))
             }
             // `[[#Heading]]`: a fragment and nothing else, which is the
             // wikilink spelling of `[text](#heading)` and means the same.
@@ -369,6 +373,44 @@ fn marked_root(base_dir: &Path) -> PathBuf {
         root.push("..");
     }
     normalize(&root)
+}
+
+/// The paths a Local destination may name, in the order they are tried: the
+/// destination as written, then its percent-decoded form when that differs.
+///
+/// Decoding is a fallback rather than a reinterpretation, which is what keeps a
+/// file named `50%25.md` resolving while `my%20note.md` finds `my note.md`.
+fn local_candidates(path: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![path.to_path_buf()];
+    if let Some(decoded) = percent_decode(&path.to_string_lossy())
+        && decoded != path.to_string_lossy()
+    {
+        candidates.push(PathBuf::from(decoded));
+    }
+    candidates
+}
+
+/// Percent-decoding, as CommonMark says a destination is written.
+///
+/// `None` when an escape is malformed — `bad%zz.md` names a file called exactly
+/// that, and guessing at half of it would be worse than leaving it alone. The
+/// decoded bytes must also still be UTF-8, since a path that is not cannot have
+/// come from a destination that was.
+fn percent_decode(destination: &str) -> Option<String> {
+    let bytes = destination.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = destination.get(index + 1..index + 3)?;
+            decoded.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
 }
 
 /// Every `.md` under `dir`, by lowercase file stem.
@@ -734,6 +776,66 @@ mod tests {
         let from = document(root.path(), "index.md");
         let found = Vault::discover(None, &from.base_dir).resolve(&classify("ghost", WIKI), &from);
         assert_eq!(found, Err(ResolveError::NotFound("ghost".into())));
+    }
+
+    /// What an editor writes for a filename with a space in it. Both forms a
+    /// human writes already worked, which made this the wrong way round.
+    #[test]
+    fn a_percent_encoded_destination_finds_the_file_it_names() {
+        let root = vault(&["index.md", "my note.md"]);
+        let path = root.path();
+        assert_eq!(local_link(path, "index.md", "my%20note.md"), Ok(Target::File(path.join("my note.md"))));
+    }
+
+    /// Decoding is a fallback, not a reinterpretation: a file really called
+    /// `50%25.md` is found under the name it has.
+    #[test]
+    fn a_destination_that_is_already_a_filename_wins_over_its_decoding() {
+        let root = vault(&["index.md", "50%25.md", "50%.md"]);
+        let path = root.path();
+        assert_eq!(local_link(path, "index.md", "50%25.md"), Ok(Target::File(path.join("50%25.md"))));
+    }
+
+    /// And when only the decoded spelling exists, the fallback earns its keep.
+    #[test]
+    fn a_decoded_percent_is_the_fallback_when_the_raw_name_is_not_there() {
+        let root = vault(&["index.md", "50%.md"]);
+        let path = root.path();
+        assert_eq!(local_link(path, "index.md", "50%25.md"), Ok(Target::File(path.join("50%.md"))));
+    }
+
+    /// Half an escape is not an escape. Guessing at it would be worse than
+    /// leaving the destination alone.
+    #[test]
+    fn a_malformed_escape_is_used_as_written() {
+        assert_eq!(percent_decode("bad%zz.md"), None);
+        assert_eq!(percent_decode("truncated%2"), None);
+
+        let root = vault(&["index.md", "bad%zz.md"]);
+        let path = root.path();
+        assert_eq!(local_link(path, "index.md", "bad%zz.md"), Ok(Target::File(path.join("bad%zz.md"))));
+    }
+
+    #[test]
+    fn decoding_leaves_an_unescaped_destination_exactly_as_it_was() {
+        assert_eq!(percent_decode("nested/note.md").as_deref(), Some("nested/note.md"));
+        assert_eq!(percent_decode("my%20note.md").as_deref(), Some("my note.md"));
+        // Multi-byte UTF-8, one escape per byte, which is how a browser writes it.
+        assert_eq!(percent_decode("%E6%97%A5.md").as_deref(), Some("日.md"));
+        // Bytes that are not UTF-8 cannot have come from a destination that was.
+        assert_eq!(percent_decode("%FF.md"), None);
+    }
+
+    /// A fragment is split before any decoding, so an encoded `#` stays part of
+    /// the filename rather than becoming a heading reference.
+    #[test]
+    fn an_encoded_hash_is_part_of_the_name_rather_than_a_fragment() {
+        let LinkKind::Local { path, fragment } = classify("a%23b.md", LinkType::Inline) else {
+            panic!("a relative destination is Local");
+        };
+        assert_eq!(fragment, None, "the encoded hash did not split");
+        assert_eq!(path, PathBuf::from("a%23b.md"));
+        assert_eq!(local_candidates(&path).last().map(PathBuf::as_path), Some(Path::new("a#b.md")));
     }
 
     #[test]
