@@ -5,7 +5,7 @@
 //! whether a link is followable, so it also decides whether the link renders
 //! as a link or as a broken one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -318,7 +318,7 @@ impl Vault {
     /// first name to miss would walk the same unchanged tree twice over.
     fn rebuild(&self) -> Arc<Index> {
         let mut index = Index::new();
-        walk(&self.root, &mut index);
+        walk(&self.root, &mut index, &mut HashSet::new());
         // The candidate list a reader is shown, and which of two files a
         // unique match is, must not depend on the order the filesystem
         // handed the directory back.
@@ -367,19 +367,36 @@ fn marked_root(base_dir: &Path) -> PathBuf {
 
 /// Every `.md` under `dir`, by lowercase file stem.
 ///
-/// Hidden directories are skipped, as the README says, and so are symlinks:
-/// a vault with a link back to its own root would otherwise walk forever.
-fn walk(dir: &Path, index: &mut HashMap<String, Vec<PathBuf>>) {
+/// Hidden directories are skipped, as the README says. Symlinked ones are
+/// followed: a shared folder linked into a vault is an ordinary way to build
+/// one, and the relative rule follows links already — `base_dir/target.md` goes
+/// through `is_file()` — so skipping them here made the same note resolvable
+/// beside a document and unresolvable through the vault.
+///
+/// `visited` is what makes that safe. It holds the canonical path of every
+/// directory already walked, so a vault linking back to its own root stops
+/// instead of walking forever, which is what skipping symlinks was really for.
+fn walk(dir: &Path, index: &mut HashMap<String, Vec<PathBuf>>, visited: &mut HashSet<PathBuf>) {
+    // Canonical, and recorded before descending: two names for one directory
+    // are one directory, and only the resolved path can say so.
+    let Ok(real) = dir.canonicalize() else { return };
+    if !visited.insert(real) {
+        return;
+    }
+
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name();
         if name.to_string_lossy().starts_with('.') {
             continue;
         }
-        let Ok(kind) = entry.file_type() else { continue };
         let path = entry.path();
+        // `metadata` follows the link where `file_type` does not, which is the
+        // whole of the change. A broken link fails here and is skipped, which
+        // is what should happen to it anyway.
+        let Ok(kind) = std::fs::metadata(&path) else { continue };
         if kind.is_dir() {
-            walk(&path, index);
+            walk(&path, index, visited);
         } else if kind.is_file()
             && path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
             && let Some(stem) = path.file_stem()
@@ -617,6 +634,49 @@ mod tests {
     fn hidden_directories_are_not_searched() {
         let root = vault(&["index.md", ".trash/note.md"]);
         assert_eq!(wiki_link(root.path(), "index.md", "note"), Err(ResolveError::NotFound("note".into())));
+    }
+
+    /// A shared folder linked into a vault is an ordinary layout, and every
+    /// note under it used to be invisible to wikilink resolution while the
+    /// same note resolved fine when it sat beside the document.
+    #[cfg(unix)]
+    #[test]
+    fn notes_under_a_symlinked_directory_are_found() {
+        let root = vault(&["index.md"]);
+        let elsewhere = vault(&["shared/note.md"]);
+        std::os::unix::fs::symlink(elsewhere.path().join("shared"), root.path().join("shared")).expect("a symlink");
+
+        let from = document(root.path(), "index.md");
+        let found = Vault::discover(None, &from.base_dir).resolve(&classify("note", WIKI), &from);
+        assert_eq!(found, Ok(Target::File(root.path().join("shared/note.md"))));
+    }
+
+    /// The reason symlinks were skipped wholesale, now handled by the guard
+    /// rather than by refusing to look. Without it this test does not fail —
+    /// it never returns.
+    #[cfg(unix)]
+    #[test]
+    fn a_vault_linking_back_to_its_own_root_stops_walking() {
+        let root = vault(&["index.md", "deep/a.md"]);
+        std::os::unix::fs::symlink(root.path(), root.path().join("deep/loop")).expect("a symlink");
+
+        let from = document(root.path(), "index.md");
+        let found = Vault::discover(None, &from.base_dir).resolve(&classify("a", WIKI), &from);
+        assert_eq!(found, Ok(Target::File(root.path().join("deep/a.md"))));
+    }
+
+    /// A link pointing nowhere is not a note. `metadata` fails on it, which is
+    /// exactly the behaviour wanted — the alternative is indexing a path that
+    /// cannot be opened.
+    #[cfg(unix)]
+    #[test]
+    fn a_broken_symlink_is_not_indexed() {
+        let root = vault(&["index.md"]);
+        std::os::unix::fs::symlink(root.path().join("nowhere.md"), root.path().join("ghost.md")).expect("a symlink");
+
+        let from = document(root.path(), "index.md");
+        let found = Vault::discover(None, &from.base_dir).resolve(&classify("ghost", WIKI), &from);
+        assert_eq!(found, Err(ResolveError::NotFound("ghost".into())));
     }
 
     #[test]
