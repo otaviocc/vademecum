@@ -557,11 +557,25 @@ each document as it opens, so `n` keeps working without being retyped.
   `(syntax, syntax theme, text hash)` — the three things its colors depend on;
   the `fancy-regex` engine is slower than Oniguruma, so highlighting is never
   redone on scroll or resize.
+- The cache holds 256 blocks and drops the oldest to stay there. A one-shot
+  render never fills it; a `--watch` session editing a fence, or a walk through
+  a vault, would otherwise keep every revision of every block ever rendered for
+  the life of the process. Eviction is by insertion order rather than by use,
+  because the case the cache exists for is a resize, which re-reads every block
+  of **one** document — so while the bound is well clear of a single document's
+  fences, oldest-first and least-recently-used evict exactly the same things.
 - syntect `Style` → our `Style`: foreground color and bold/italic/underline
   only; background comes from `code_block.bg`.
 - A `syntax_theme` naming a theme that is neither bundled nor present in
-  `<config>/syntax-themes/` is a warning on stderr, printed once, not an error:
-  the document still renders, highlighted with `base16-ocean.dark`.
+  `<config>/syntax-themes/` is a warning, not an error: the document still
+  renders, highlighted with `base16-ocean.dark`. Each distinct name is reported
+  once — a second bad name is a second warning, not silence.
+- **Warnings are collected, never printed from the render layer.** Highlighting
+  happens during layout, which in the TUI runs with the alternate screen up, so
+  an `eprintln!` there paints over the document. Layout leaves its warnings
+  where the caller can find them: the pager shows them in the statusbar in
+  `status_error`, like every other thing it has to say, and stdout mode writes
+  them to stderr.
 - `--list-syntax-themes` prints bundled and user theme names.
 
 ### UI layout & chrome
