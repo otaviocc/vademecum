@@ -539,7 +539,9 @@ area, and a statusbar, separated by hairline `─` rules.
 - **Help overlay** — `?` opens a centered popup (60% width, height clamped
   to 40–90% of the terminal) listing every keybinding; `?`, `Esc`, or `q`
   close it. It does not scroll: a terminal too short for the whole table
-  clips it.
+  clips it. While it is open the document does not move — motion keys and the
+  wheel are swallowed, so closing the overlay returns the reader exactly where
+  they were.
 - **Cursor line** — highlighted with `cursor_line` across the full terminal
   width, and over whatever background the line's own spans carry, so the
   cursor stays visible inside a code block. It moves with `j`/`k`, scrolling
@@ -550,7 +552,9 @@ area, and a statusbar, separated by hairline `─` rules.
   keystroke, so typing stays responsive in a long document. The cursor jumps
   to the first match at or after it, wrapping; every match is highlighted. A
   query that matches nothing leaves the cursor where it is and says so in the
-  statusbar. `Esc` while typing abandons the text and leaves the previous
+  statusbar. Confirming an *empty* query changes nothing, so a standing query
+  and its highlights survive a stray `/`. `Esc` while typing abandons the text
+  and leaves the previous
   query and its highlights standing; `Esc` in Browse mode clears the query,
   the matches and the highlight. Neither moves the cursor.
 - **Mouse** — with `--mouse`, a wheel notch scrolls the viewport three lines;
@@ -561,6 +565,8 @@ area, and a statusbar, separated by hairline `─` rules.
   document out; a taller or shorter terminal costs nothing.
 - **Panic hook** — leaves raw mode and the alternate screen before printing
   the panic, so a bug never leaves the terminal broken.
+- **A terminal too short** for the chrome draws whatever rows it has and no
+  more. The pager is readable at four rows and does not fail below that.
 - **Errors** during navigation or reload never exit the program; they land
   in the statusbar. Errors before the TUI starts (missing file, bad theme)
   print to stderr and exit non-zero.

@@ -56,7 +56,9 @@ pub fn action(event: &Event, mode: Mode) -> Option<Action> {
         // Windows reports a Release for every Press; without the filter every
         // key would fire twice.
         Event::Key(key) if key.kind == KeyEventKind::Press => key_action(*key, mode),
-        Event::Mouse(mouse) => mouse_action(*mouse),
+        // The overlay is modal: the document behind it must not move, or
+        // closing it would put the reader somewhere they never navigated to.
+        Event::Mouse(mouse) if mode != Mode::Help => mouse_action(*mouse),
         Event::Resize(columns, rows) => Some(Action::Resize(Size::new(*columns, *rows))),
         _ => None,
     }
@@ -230,11 +232,18 @@ mod tests {
     }
 
     #[test]
-    fn the_wheel_and_a_resize_reach_the_pager_in_every_mode() {
+    fn a_resize_reaches_the_pager_in_every_mode() {
         for mode in [Mode::Browse, Mode::Search, Mode::Help] {
             assert_eq!(action(&Event::Resize(80, 24), mode), Some(Action::Resize(Size::new(80, 24))), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn the_wheel_scrolls_while_reading_and_typing_but_not_behind_the_overlay() {
+        for mode in [Mode::Browse, Mode::Search] {
             assert_eq!(action(&wheel(MouseEventKind::ScrollDown), mode), Some(Action::Scroll(WHEEL_LINES)), "{mode:?}");
         }
+        assert_eq!(action(&wheel(MouseEventKind::ScrollDown), Mode::Help), None);
     }
 
     #[test]

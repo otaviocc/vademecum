@@ -140,16 +140,13 @@ impl App {
         self.mode = Mode::Browse;
         let query = std::mem::take(&mut self.search.input);
         if query.is_empty() {
-            self.search.clear();
+            // Confirming nothing is not a search. A stray `/` then `Enter`
+            // leaves a standing query and its highlights where they were.
             return;
         }
 
-        self.cache_plain();
-        let matches = search::find(self.plain.as_deref().unwrap_or_default(), &query);
-        self.search.matches = matches;
-        self.search.current = None;
         self.search.query = query;
-        let found = self.search.seek_from(self.cursor);
+        let found = self.rematch();
         self.go_to_match(found);
     }
 
@@ -171,10 +168,16 @@ impl App {
         }
     }
 
-    fn cache_plain(&mut self) {
-        if self.plain.is_none() {
-            self.plain = Some(self.lines.iter().map(RenderedLine::text).collect());
-        }
+    /// Match the standing query against the lines as they are now, and take
+    /// the first hit at or after the cursor. Both the confirm and the re-layout
+    /// need exactly this.
+    fn rematch(&mut self) -> Option<search::Match> {
+        // Built on first use, so opening a document never pays for it, and
+        // borrowed field-wise so the query can be read alongside it.
+        let plain = self.plain.get_or_insert_with(|| self.lines.iter().map(RenderedLine::text).collect());
+        self.search.matches = search::find(plain, &self.search.query);
+        self.search.current = None;
+        self.search.seek_from(self.cursor)
     }
 
     /// Rows the document itself gets. Always at least one, so a terminal too
@@ -222,7 +225,11 @@ impl App {
     /// visible line rather than travelling with it.
     fn scroll(&mut self, delta: isize) {
         let height = self.viewport_height();
-        self.top = offset(self.top, delta);
+        let last = self.lines.len().saturating_sub(1);
+        // Bound the viewport before pulling the cursor into it. At the foot of
+        // the document the view cannot move, and a window past the end would
+        // drag the cursor down a notch at a time with nothing to show for it.
+        self.top = offset(self.top, delta).min(last.saturating_sub(height - 1));
         self.cursor = self.cursor.clamp(self.top, self.top + height - 1);
     }
 
@@ -255,10 +262,7 @@ impl App {
         // stale. A live query is matched again against the new layout.
         self.plain = None;
         if !self.search.query.is_empty() {
-            self.cache_plain();
-            self.search.matches = search::find(self.plain.as_deref().unwrap_or_default(), &self.search.query);
-            self.search.current = None;
-            self.search.seek_from(self.cursor);
+            self.rematch();
         }
     }
 
@@ -298,6 +302,8 @@ fn offset(index: usize, delta: isize) -> usize {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
     /// A document of `count` one-line paragraphs, which lay out one line each
     /// with a blank line between them.
@@ -574,12 +580,62 @@ mod tests {
     }
 
     #[test]
-    fn the_help_overlay_toggles_and_holds_the_reader_still_while_it_is_open() {
+    fn the_help_overlay_toggles() {
         let mut app = paged();
         app.apply(Action::ToggleHelp);
         assert_eq!(app.mode, Mode::Help);
 
         app.apply(Action::ToggleHelp);
+        assert_eq!(app.mode, Mode::Browse);
+    }
+
+    #[test]
+    fn the_document_does_not_move_behind_the_overlay() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::Page(1)));
+        app.apply(Action::ToggleHelp);
+        let (top, cursor) = (app.top, app.cursor);
+
+        // `input` is what refuses the keys, so this is the reducer's half of
+        // the promise: whatever the overlay lets through must not move anyone.
+        for key in [KeyCode::Char('j'), KeyCode::Char('G'), KeyCode::Char('/')] {
+            let event = Event::Key(KeyEvent::new(key, KeyModifiers::NONE));
+            assert_eq!(crate::ui::input::action(&event, app.mode), None, "{key:?}");
+        }
+        let wheel =
+            Event::Mouse(MouseEvent { kind: MouseEventKind::ScrollDown, column: 0, row: 0, modifiers: KeyModifiers::NONE });
+        assert_eq!(crate::ui::input::action(&wheel, app.mode), None);
+
+        assert_eq!((app.top, app.cursor), (top, cursor));
+    }
+
+    #[test]
+    fn the_wheel_stops_dragging_the_cursor_at_the_foot_of_the_document() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::Bottom));
+        // Park the reader at the top of the last screenful.
+        app.cursor = app.top;
+        let (top, cursor) = (app.top, app.cursor);
+
+        for _ in 0..5 {
+            app.apply(Action::Scroll(3));
+        }
+        assert_eq!(app.top, top, "the view is already at the end");
+        assert_eq!(app.cursor, cursor, "so the cursor has no reason to move either");
+    }
+
+    #[test]
+    fn confirming_an_empty_query_leaves_a_standing_one_alone() {
+        let mut app = paged();
+        search_for(&mut app, "line 1");
+        let (query, matches, cursor) = (app.search.query.clone(), app.search.matches.len(), app.cursor);
+
+        app.apply(Action::SearchStart);
+        app.apply(Action::SearchConfirm);
+
+        assert_eq!(app.search.query, query);
+        assert_eq!(app.search.matches.len(), matches);
+        assert_eq!(app.cursor, cursor);
         assert_eq!(app.mode, Mode::Browse);
     }
 
