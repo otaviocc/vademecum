@@ -16,6 +16,7 @@ use crate::ui::input::{Action, Motion};
 use crate::ui::search::{self, Search};
 
 pub(crate) const CHROME_ROWS: u16 = 4;
+pub(crate) const CONTENT_TOP: u16 = 2;
 const STDIN: &str = "stdin";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -113,13 +114,19 @@ impl App {
 
         let moves_cursor = matches!(
             action,
-            Action::Move(_) | Action::SearchConfirm | Action::SearchStep { .. } | Action::Follow | Action::History { .. }
+            Action::Move(_)
+                | Action::Click { .. }
+                | Action::SearchConfirm
+                | Action::SearchStep { .. }
+                | Action::Follow
+                | Action::History { .. }
         );
 
         match action {
             Action::Quit => self.quit = true,
             Action::Move(motion) => self.move_cursor(motion),
             Action::Scroll(delta) => self.scroll(delta),
+            Action::Click { column, row } => self.click(column, row),
             Action::Resize(area) => self.resize(area),
             Action::Reload => self.reload(),
             Action::ToggleHelp => self.mode = if self.mode == Mode::Help { Mode::Browse } else { Mode::Help },
@@ -359,6 +366,21 @@ impl App {
         self.top = offset(self.top, delta);
     }
 
+    fn clicked_line(&self, row: u16) -> Option<usize> {
+        let row = usize::from(row.checked_sub(CONTENT_TOP)?);
+        if row >= self.viewport_height() {
+            return None;
+        }
+        let line = self.top + row;
+        (line < self.lines.len()).then_some(line)
+    }
+
+    fn click(&mut self, _column: u16, row: u16) {
+        let Some(line) = self.clicked_line(row) else { return };
+        self.cursor = line;
+        self.focus = 0;
+    }
+
     fn resize(&mut self, area: Size) {
         self.area = area;
         let width = layout::wrap_width(self.width_override, Some(area.width));
@@ -533,6 +555,49 @@ mod tests {
         let last = app.lines.len() - 1;
         assert_eq!(app.cursor, last);
         assert_eq!(app.top, last - (app.viewport_height() - 1));
+    }
+
+    #[test]
+    fn a_click_puts_the_cursor_on_the_line_under_the_pointer() {
+        let mut app = paged();
+        app.apply(Action::Scroll(12));
+        assert_eq!(app.top, 12);
+
+        app.apply(Action::Click { column: 0, row: CONTENT_TOP + 3 });
+        assert_eq!(app.cursor, 15);
+        assert_eq!(app.top, 12, "a click never moves the view: the line was already visible");
+    }
+
+    #[test]
+    fn a_click_on_the_chrome_is_not_a_click_on_a_line() {
+        let height = paged().viewport_height() as u16;
+        for row in [0, 1, CONTENT_TOP + height, CONTENT_TOP + height + 1] {
+            let mut app = paged();
+            app.apply(Action::Move(Motion::Line(1)));
+            app.apply(Action::Click { column: 0, row });
+            assert_eq!((app.cursor, app.top), (1, 0), "row {row} is chrome, not content");
+        }
+    }
+
+    #[test]
+    fn a_click_past_the_end_of_a_short_document_lands_nowhere() {
+        let mut app = app("one line\n", 14);
+        let last = app.lines.len() - 1;
+        app.apply(Action::Click { column: 0, row: CONTENT_TOP + 5 });
+        assert_eq!(app.cursor, 0);
+
+        app.apply(Action::Click { column: 0, row: CONTENT_TOP + last as u16 });
+        assert_eq!(app.cursor, last);
+    }
+
+    #[test]
+    fn a_click_forgets_which_link_was_focused_the_way_every_other_move_does() {
+        let mut app = app("[one](a.md) and [two](b.md)\n\n[three](c.md)\n", 14);
+        app.apply(Action::Focus { forward: true });
+        assert_eq!(app.focus, 1);
+
+        app.apply(Action::Click { column: 0, row: CONTENT_TOP + 2 });
+        assert_eq!((app.cursor, app.focus), (2, 0));
     }
 
     #[test]
