@@ -473,7 +473,7 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
 | Source | Kind |
 | --- | --- |
 | `[t](https://…)`, `<https://…>`, `mailto:` | External |
-| `[t](other.md)`, `[t](../x/y.md#sec)`, `[t](#sec)` | Local (path relative to `base_dir`; empty path = current file) |
+| `[t](other.md)`, `[t](../x/y.md#sec)`, `[t](#sec)`, `[t](my%20note.md)` | Local (path relative to `base_dir`; empty path = current file) |
 | `[[target]]`, `[[target\|alias]]`, `[[target#Heading]]`, `[[#Heading]]` | Wiki |
 
 **Wikilink resolution** (in order, first hit wins):
@@ -500,6 +500,16 @@ one unreadable subdirectory does not stop a vault resolving — and a discovered
 root needs no check, having been found by looking. A target that
 cannot be followed — missing, or ambiguous — renders in `link_broken` style,
 and `Enter` shows the reason instead of navigating.
+
+**Local destinations are percent-decoded**, because that is what an editor
+writes: Obsidian's Markdown-link mode, VS Code and most others spell a filename
+containing a space as `my%20note.md`, and CommonMark says a destination is
+percent-encoded. The path as written is tried **first** and the decoded form
+only as a fallback, so a file genuinely named `50%25.md` keeps resolving and
+nothing that works today stops working. A destination whose escapes are
+malformed — `bad%zz.md` — is not decodable and is used as written. Only Local
+destinations are decoded: an External URL is kept verbatim on purpose, and a
+wikilink target is a note's name rather than a URL.
 
 The index behind step 2 is built once, on the first wikilink that needs it, and
 then **doubted once per document**. Opening a document — following a link,
