@@ -316,6 +316,8 @@ vademecum/
 │   ├── kanagawa-dragon.toml
 │   ├── catppuccin-mocha.toml
 │   └── catppuccin-latte.toml
+├── .cargo/
+│   └── audit.toml           # cargo-audit policy: deny warnings, accepted advisories
 ├── .github/workflows/
 │   ├── ci.yml               # fmt, clippy, tests (linux/mac/win), MSRV, audit
 │   └── release.yml          # tag → test, build binaries, publish, GitHub Release
@@ -710,7 +712,14 @@ GitHub Actions on `otaviocc/vademecum`, modelled on Holodeck's workflows:
   - `cargo test --locked` on a matrix of `ubuntu-latest`, `macos-latest`,
     `windows-latest`
   - an **MSRV** job that builds with the `rust-version` read from `Cargo.toml`
-  - a **cargo-audit** job
+  - a **cargo-audit** job, running `cargo audit` directly rather than through a
+    check-run action, so it needs no write permission on the repository and
+    works the same on a fork's pull request as on `main`. It runs with
+    `--deny warnings`, and the advisories the project has accepted are listed
+    in `.cargo/audit.toml` with the reason for each — a file a local
+    `cargo audit` reads too. An informational `unmaintained` notice for a crate
+    that is not on that list therefore turns the build red rather than
+    scrolling past, and accepting one is an edit with a rationale next to it
 - **`.github/workflows/release.yml`** — on tags `v*.*.*`:
   1. verify the tag matches `Cargo.toml` `version`
   2. `cargo test --locked`

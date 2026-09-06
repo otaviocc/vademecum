@@ -8,6 +8,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Nothing here writes to the repository. Stated explicitly so a job that starts
+# needing more says so, rather than inheriting whatever the default happens to be.
+permissions:
+  contents: read
+
 jobs:
   fmt:
     name: rustfmt
@@ -65,6 +70,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      # The accepted advisories, with the reason for each, are in
+      # .cargo/audit.toml. Anything not listed there — a new `unmaintained`
+      # notice included — fails the job.
+      - run: cargo audit --deny warnings
