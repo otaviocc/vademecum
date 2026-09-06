@@ -190,9 +190,23 @@ fn convert(style: SyntectStyle) -> Style {
     converted
 }
 
+/// The syntax set: syntect's own, plus the definitions in `syntaxes/`, linked
+/// once at build time by `build.rs` and loaded here as a dump.
+///
+/// Baked rather than built at startup because `SyntaxSetBuilder::build` relinks
+/// contexts across every bundled definition. Measured on this machine: ~8ms to
+/// load syntect's dump, ~93ms to take it apart and put it back together adding
+/// nothing, ~126ms adding our four — so most of the cost is the relink, not the
+/// files, and none of it is worth making the reader wait for on the first code
+/// block they meet. The baked pack loads in about a millisecond.
+///
+/// Origins and licences for the added files are in `syntaxes/LICENSES.md`.
 fn syntax_set() -> &'static SyntaxSet {
     static SYNTAXES: OnceLock<SyntaxSet> = OnceLock::new();
-    SYNTAXES.get_or_init(SyntaxSet::load_defaults_newlines)
+    SYNTAXES.get_or_init(|| {
+        syntect::dumps::from_uncompressed_data(include_bytes!(concat!(env!("OUT_DIR"), "/syntaxes.pack")))
+            .expect("the pack is written by this crate's own build script")
+    })
 }
 
 /// The bundled themes plus whatever `.tmTheme` files the reader has put in
@@ -473,6 +487,40 @@ mod tests {
         theme_for(Some(FALLBACK));
         theme_for(None);
         assert!(take_warnings().is_empty());
+    }
+
+    /// The four syntect's default set leaves out, and the reason `syntaxes/`
+    /// and `build.rs` exist. A fence tagged with one of these rendered as plain
+    /// code before they were bundled.
+    #[test]
+    fn every_bundled_language_is_highlighted() {
+        // Deliberately without a string or a number in them. A sample carrying
+        // `"hi"` passes on the strength of that one literal, which is how a
+        // syntax covering literals and nothing else — no keywords at all — got
+        // as far as being committed here once.
+        let samples = [
+            ("swift", "import Foundation\nclass Greeter {\n    func greet() -> Bool { return true }\n}\n"),
+            ("kotlin", "import java.util.Date\nclass Greeter {\n    fun greet(): Boolean { return true }\n}\n"),
+            ("toml", "[package]\nedition = 2024\n"),
+            ("typescript", "import fs from 'node:fs';\nclass Greeter {\n    greet(): boolean { return true }\n}\n"),
+        ];
+        for (lang, code) in samples {
+            let lines = highlight(Some(lang), code, None);
+            assert!(distinct(&foregrounds(&lines)) > 1, "{lang} came out in one color, so it was not highlighted");
+        }
+    }
+
+    /// The tags a reader actually writes have to reach them, not just the
+    /// syntax's own name.
+    #[test]
+    fn the_bundled_languages_answer_to_their_usual_fence_tags() {
+        let syntaxes = syntax_set();
+        for (tag, expected) in
+            [("swift", "Swift"), ("kotlin", "Kotlin"), ("toml", "TOML"), ("ts", "TypeScript"), ("typescript", "TypeScript")]
+        {
+            let syntax = syntax_for(syntaxes, Some(tag), "");
+            assert_eq!(syntax.name, expected, "the tag {tag:?} found {:?}", syntax.name);
+        }
     }
 
     #[test]
