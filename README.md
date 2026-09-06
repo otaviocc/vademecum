@@ -467,7 +467,7 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
 | --- | --- |
 | `[t](https://…)`, `<https://…>`, `mailto:` | External |
 | `[t](other.md)`, `[t](../x/y.md#sec)`, `[t](#sec)` | Local (path relative to `base_dir`; empty path = current file) |
-| `[[target]]`, `[[target\|alias]]`, `[[target#Heading]]` | Wiki |
+| `[[target]]`, `[[target\|alias]]`, `[[target#Heading]]`, `[[#Heading]]` | Wiki |
 
 **Wikilink resolution** (in order, first hit wins):
 
@@ -487,8 +487,8 @@ for a Local or Wiki target that resolves, `link_broken` for one that does not.
 
 **Fragments** (`#heading`) jump to the first heading whose slug matches after
 the target loads, and put it at the top of the view; a fragment alone stays in
-the current document, and going back returns the reader to where they jumped
-from. One that matches no heading leaves the document at its top rather than
+the current document — `[[#Heading]]` and `[text](#heading)` alike — and going
+back returns the reader to where they jumped from. One that matches no heading leaves the document at its top rather than
 reporting anything.
 
 `--resolve-links` prints what resolution made of every link in the document
