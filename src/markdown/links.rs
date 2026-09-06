@@ -501,8 +501,11 @@ mod tests {
         };
         assert_eq!(target, "dup");
         // Sorted, so the reader is shown the same list whatever order the
-        // filesystem handed the directories back in.
-        assert_eq!(candidates, format!("{}, {}", path.join("a/dup.md").display(), path.join("b/dup.md").display()));
+        // filesystem handed the directories back in. The expectation is joined
+        // a component at a time: `join("a/dup.md")` keeps the forward slash on
+        // Windows, and this is a comparison of strings, not of paths.
+        let expected = |dir: &str| path.join(dir).join("dup.md").display().to_string();
+        assert_eq!(candidates, format!("{}, {}", expected("a"), expected("b")));
     }
 
     #[test]
