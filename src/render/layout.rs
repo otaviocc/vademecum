@@ -17,8 +17,28 @@ use crate::theme::{Element, Theme};
 
 /// The one-column gutter the content is laid out inside.
 const GUTTER: usize = 1;
+/// Wrap width when there is no terminal to measure.
+const DEFAULT_WIDTH: usize = 100;
+/// Leaves a column either side of the content.
+const TERMINAL_MARGIN: usize = 2;
 /// Bullets by nesting depth, cycling.
 const BULLETS: [&str; 3] = ["•", "◦", "▪"];
+
+/// The width to lay a document out at: `--width` if the reader pinned one,
+/// else the terminal less a margin, capped at 100. `None` columns means there
+/// is no terminal to measure — a pipe, or a size query that failed.
+///
+/// Both callers need the same answer: stdout asks once at startup, the pager
+/// asks again on every resize.
+pub fn wrap_width(explicit: Option<u16>, columns: Option<u16>) -> usize {
+    if let Some(width) = explicit {
+        return usize::from(width).max(1);
+    }
+    match columns {
+        Some(columns) => usize::from(columns).saturating_sub(TERMINAL_MARGIN).clamp(1, DEFAULT_WIDTH),
+        None => DEFAULT_WIDTH,
+    }
+}
 
 /// Lay a document out at `width` columns, gutter included.
 pub fn render(blocks: &[SourceBlock], theme: &Theme, width: usize) -> Vec<RenderedLine> {
@@ -681,6 +701,29 @@ fn styled_line(text: impl Into<String>, style: Style, source_line: usize) -> Ren
 mod tests {
     use super::*;
     use crate::markdown::ast::parse;
+
+    #[test]
+    fn an_explicit_width_wins_over_the_terminal() {
+        assert_eq!(wrap_width(Some(80), Some(200)), 80);
+        assert_eq!(wrap_width(Some(80), None), 80);
+    }
+
+    #[test]
+    fn a_zero_width_still_leaves_a_column_to_write_in() {
+        assert_eq!(wrap_width(Some(0), None), 1);
+    }
+
+    #[test]
+    fn no_terminal_to_measure_gets_the_default() {
+        assert_eq!(wrap_width(None, None), DEFAULT_WIDTH);
+    }
+
+    #[test]
+    fn a_terminal_is_measured_less_a_margin_and_capped() {
+        assert_eq!(wrap_width(None, Some(40)), 38);
+        assert_eq!(wrap_width(None, Some(200)), DEFAULT_WIDTH);
+        assert_eq!(wrap_width(None, Some(1)), 1);
+    }
 
     fn lines(source: &str, width: usize) -> Vec<String> {
         let theme = Theme::default();
