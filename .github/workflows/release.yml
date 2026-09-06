@@ -1,0 +1,215 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  # Runs the tag check and the four builds and stops there — no publish, no
+  # release. Publishing to crates.io cannot be undone, only yanked, so the
+  # fragile parts get rehearsed before anything one-way happens.
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Only the job that creates the release writes anything, and it asks for that
+# itself. Stated here so a job that starts needing more has to say so.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The job runs either way and the *step* carries the condition. Making the
+      # job conditional would skip it on a dispatch run, and a skipped `needs`
+      # skips everything downstream — the whole rehearsal would quietly do
+      # nothing and report success.
+      - name: Verify the tag matches Cargo.toml
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $cargo_version in Cargo.toml." >&2
+            exit 1
+          fi
+
+      # What the archives are named after: the tag on a real release, and the
+      # commit on a rehearsal, so a dispatch run's artifacts cannot be mistaken
+      # for a release's.
+      - name: Resolve the version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "version=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
+  build:
+    name: ${{ matrix.name }}
+    needs: [verify, test]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # A native ARM runner rather than a cross-compile: `build.rs` runs on
+          # the host, and making host and target the same machine removes the
+          # question instead of answering it. Free for public repositories.
+          - name: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: macos-universal
+            os: macos-latest
+            target: universal-apple-darwin
+          - name: x86_64-pc-windows-msvc
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (single target)
+        if: matrix.target != 'universal-apple-darwin'
+        run: |
+          rustup target add ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Build (macOS universal)
+        if: matrix.target == 'universal-apple-darwin'
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create -output target/universal-apple-darwin/release/vademecum \
+            target/aarch64-apple-darwin/release/vademecum \
+            target/x86_64-apple-darwin/release/vademecum
+          lipo -info target/universal-apple-darwin/release/vademecum
+
+      - name: Archive (tar.gz)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          staging="vademecum-${{ needs.verify.outputs.version }}-${{ matrix.name }}"
+          mkdir -p "dist/$staging"
+          cp "target/${{ matrix.target }}/release/vademecum" "dist/$staging/"
+          cp README.md LICENSE "dist/$staging/"
+          chmod +x "dist/$staging/vademecum"
+          tar -czf "dist/$staging.tar.gz" -C dist "$staging"
+
+      - name: Archive (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $staging = "vademecum-${{ needs.verify.outputs.version }}-${{ matrix.name }}"
+          New-Item -ItemType Directory -Path "dist/$staging" -Force | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/vademecum.exe" "dist/$staging/"
+          Copy-Item README.md, LICENSE "dist/$staging/"
+          Compress-Archive -Path "dist/$staging" -DestinationPath "dist/$staging.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vademecum-${{ needs.verify.outputs.version }}-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: publish to crates.io
+    # After the binaries build, so a build failure never leaves a published
+    # crate without a release to go with it.
+    needs: [verify, build]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Idempotent: re-running a tag's release after a partial failure must
+          # not fail because the crate is already there at this version.
+          log="$(mktemp)"
+          if cargo publish --locked 2>&1 | tee "$log"; then
+            exit 0
+          fi
+          if grep -q "already uploaded" "$log"; then
+            echo "vademecum is already published at this version, skipping."
+            exit 0
+          fi
+          exit 1
+
+  release:
+    name: github release
+    needs: [verify, build, publish]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -la dist
+          cat > /tmp/notes.md <<NOTES
+          ## Install
+
+          \`\`\`sh
+          cargo install vademecum --locked
+          \`\`\`
+
+          Or take one of the archives below — each holds the binary, the README
+          and the licence. The macOS archive is a universal binary, so there is
+          nothing to choose between Intel and Apple silicon.
+
+          | Platform | Archive |
+          | --- | --- |
+          | Linux, x86-64 | \`vademecum-$VERSION-x86_64-unknown-linux-gnu.tar.gz\` |
+          | Linux, ARM64 | \`vademecum-$VERSION-aarch64-unknown-linux-gnu.tar.gz\` |
+          | macOS, universal | \`vademecum-$VERSION-macos-universal.tar.gz\` |
+          | Windows, x86-64 | \`vademecum-$VERSION-x86_64-pc-windows-msvc.zip\` |
+
+          Building from source needs Rust 1.88 or newer.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" \
+            --title "vademecum $GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes-file /tmp/notes.md \
+            dist/*
