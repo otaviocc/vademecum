@@ -32,6 +32,11 @@ fn main() -> Result<()> {
         return finished(list(&stdout, &render::code::available()));
     }
 
+    // A root that cannot be read is a mistake in the command, so it is caught
+    // here — before the document is loaded, before the alternate screen, and
+    // before the lazy walk that would otherwise swallow it.
+    check_root(cli.root.as_deref())?;
+
     let document = load(&cli)?;
 
     // Where the links go is a question about the vault, not about the theme,
@@ -115,6 +120,23 @@ fn finished(written: std::io::Result<()>) -> Result<()> {
     }
 }
 
+/// `--root` names the vault wikilinks are searched in. The walk that searches
+/// it is silent about an unreadable directory, which is right for one buried in
+/// a vault and wrong for the one the reader typed: it would render a document
+/// of broken links and explain none of them.
+///
+/// `read_dir` answers all three questions at once — does it exist, is it a
+/// directory, can it be read — and is exactly what the walk would go on to do.
+/// A *discovered* root needs no check, having been found by looking.
+fn check_root(root: Option<&Path>) -> Result<()> {
+    match root {
+        Some(root) => {
+            std::fs::read_dir(root).map(drop).with_context(|| format!("--root {}: cannot be read as a directory", root.display()))
+        }
+        None => Ok(()),
+    }
+}
+
 fn load(cli: &Cli) -> Result<Document> {
     match cli.path.as_deref() {
         Some(path) if path == Path::new("-") => Document::from_stdin(),
@@ -178,5 +200,14 @@ mod tests {
     #[test]
     fn a_missing_path_is_an_error_rather_than_a_hang() {
         assert!(load(&cli(&[])).is_err());
+    }
+
+    #[test]
+    fn a_root_is_checked_only_when_one_was_named() {
+        assert!(check_root(None).is_ok(), "a discovered root was found by looking, so it exists");
+        assert!(check_root(Some(Path::new("tests/fixtures/vault"))).is_ok());
+        assert!(check_root(Some(Path::new("tests/fixtures/no-such-vault"))).is_err());
+        // A file is not a vault, and `read_dir` is what says so.
+        assert!(check_root(Some(Path::new("tests/fixtures/note.md"))).is_err());
     }
 }
