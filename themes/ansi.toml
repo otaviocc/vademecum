@@ -23,3 +23,31 @@ accent               = "cyan"
 chrome               = "cyan"
 highlight            = "blue"
 notice               = "magenta"
+
+# Code is styled by foreground alone. `dark_gray` is ANSI bright black, which
+# most terminal schemes render as a mid grey: as the background of inline code
+# and whole code blocks it reads as a washed-out slab, and it collided with the
+# cursor line, which uses the same slot — so the bar vanished exactly where it
+# was most needed. `subtle` is the cursor line's alone now.
+[elements.inline_code]
+fg = "warning"
+bg = "none"
+
+[elements.code_block]
+fg = "foreground"
+bg = "none"
+
+[elements.code_block_lang]
+fg = "muted_text"
+bg = "none"
+
+# `background` is `reset` here, and `reset` as a *foreground* means the
+# terminal's foreground — so the inversion these want never happened and a match
+# painted default-on-yellow. Black is the one foreground that reads on both.
+[elements.search_match]
+fg = "black"
+bg = "warning"
+
+[elements.search_current]
+fg = "black"
+bg = "notice"

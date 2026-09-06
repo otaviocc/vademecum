@@ -29,6 +29,9 @@ pub struct ColorError {
 
 const PALETTE_FORMS: &str = "an ANSI color name, an index 0-255, #rrggbb, or reset";
 const ELEMENT_FORMS: &str = "a palette slot, an ANSI color name, an index 0-255, #rrggbb, or reset";
+/// What `bg` accepts and no other key does: the absence of a color.
+const NO_COLOR: &str = "none";
+const NONE_FORMS: &str = "a color; \"none\" removes a background and is accepted for bg alone";
 
 impl ColorSpec {
     /// Resolve as a `[palette]` value: no slot names, since they are what is
@@ -46,10 +49,23 @@ impl ColorSpec {
     pub fn resolve_against(&self, palette: &Palette) -> Result<Color, ColorError> {
         match self {
             ColorSpec::Index(index) => Ok(Color::Indexed(*index)),
+            // Reached only where a color is required. A background asks
+            // `removes_color` first and never gets here.
+            ColorSpec::Name(name) if name == NO_COLOR => Err(ColorError::new(name, NONE_FORMS)),
             ColorSpec::Name(name) => {
                 palette.slot(name).or_else(|| literal(name)).ok_or_else(|| ColorError::new(name, ELEMENT_FORMS))
             }
         }
+    }
+
+    /// `bg = "none"`: strip the element's background instead of setting one.
+    ///
+    /// Not the same as `reset`, which is a color — the terminal's own
+    /// background, painted *over* whatever is beneath. `none` paints nothing,
+    /// which is what lets `ansi` style code by foreground alone and leave the
+    /// cursor line's band to show through.
+    pub fn removes_color(&self) -> bool {
+        matches!(self, ColorSpec::Name(name) if name == NO_COLOR)
     }
 }
 
