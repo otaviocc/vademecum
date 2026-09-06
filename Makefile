@@ -1,4 +1,4 @@
-.PHONY: build run test clean fmt lint
+.PHONY: build run test clean fmt lint install uninstall
 
 build:
 	cargo build --release
@@ -17,3 +17,9 @@ fmt:
 
 lint:
 	cargo clippy --all-targets -- -D warnings
+
+install:
+	cargo install --path . --locked --force
+
+uninstall:
+	cargo uninstall vademecum
