@@ -266,6 +266,15 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   the pty is 0x0 and the pager correctly draws nothing, which looks like a bug
   and is not one. Keys reach it because crossterm reads `/dev/tty`, which is
   also why `cat x.md | vademecum -` works.
+- That smoke test drives the **mouse** too: with `--mouse`, SGR wheel events fed
+  on stdin work like keys — `\033[<65;10;10M` is a notch down and `\033[<64;10;10M`
+  a notch up. What it cannot easily prove is the statusbar, because the backend
+  redraws changed cells only: moving one line in a long document repaints the
+  single digit that changed, so grepping for `line 6/79` finds nothing even
+  though the pager is right. Anchor on document text instead — a fixture of
+  `LINE-001`…`LINE-040` makes the viewport's travel readable as a list of
+  fragments, and the last frame's `ESC[<row>;1H` plus the `cursor_line`
+  background says exactly which line the cursor ended on.
 - Three things make that smoke test lie unless they are handled. The event
   loop **drains** a burst of events and draws once, so `printf 'jjq'` quits
   before painting anything the keys did: send them a `sleep 0.25` apart. The
@@ -285,6 +294,15 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - macOS's filesystem is case-insensitive, so a test for the resolver's *own*
   case folding has to put the file somewhere the relative rule cannot reach —
   a subdirectory — or the filesystem answers first and the test proves nothing.
+- cargo-audit's `[output]` table in `.cargo/audit.toml` has no serde defaults:
+  writing `deny = ["warnings"]` alone fails to parse with `missing field quiet`,
+  so every field has to be spelled out. `[advisories] ignore = [...]` is fine on
+  its own, which is why the ignore list lives in the file and `--deny warnings`
+  stays on the command line in CI.
+- A GitHub Action that posts a check run (`rustsec/audit-check`) needs
+  `checks: write`, and declaring it still leaves the job red on a pull request
+  from a fork, whose token is read-only whatever the workflow asks for. Prefer
+  running the tool directly when there is one.
 - `App::new` takes `&Options`. A pager option that layout or resolution needs
   goes in there rather than into the parameter list, which is already four
   long and was five before.
