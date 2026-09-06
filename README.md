@@ -574,7 +574,10 @@ area, and a statusbar, separated by hairline `─` rules.
   `status_notice` (transient, cleared on next key) > `status`
   (`file · line X/Y · N%`, where `file` is the filename or `stdin`, Y is the
   rendered line count, and N is `cursor · 100 / (Y − 1)` — the cursor line's
-  position, so the first line reads 0% and the last 100%). Whenever a search
+  position, so the first line reads 0% and the last 100%). It reports the
+  cursor even when the wheel has scrolled it off-screen: the cursor is the
+  reading position, and where the reader is reading is what the statusbar is
+  for. Whenever a search
   query is active, ` · match i/n` is appended.
 - **Help overlay** — `?` opens a centered popup (60% width, height clamped
   to 40–90% of the terminal) listing every keybinding; `?`, `Esc`, or `q`
@@ -587,7 +590,11 @@ area, and a statusbar, separated by hairline `─` rules.
   cursor stays visible inside a code block. It moves with `j`/`k`, scrolling
   the viewport when it hits the edge. A page is the viewport height less one
   line of context and a half page is half the viewport height; both move
-  cursor and viewport together.
+  cursor and viewport together. A motion key pressed while the wheel has left
+  the cursor off-screen moves it to the nearest visible line **first**, and
+  then moves: a reader who scrolled to a new section and pressed `j` meant to
+  carry on reading there, not to be yanked back. Only a motion key does this —
+  scrolling away and back leaves the cursor untouched.
 - **Search** — `/` collects a query and matching runs on `Enter`, not on every
   keystroke, so typing stays responsive in a long document. The cursor jumps
   to the first match at or after it, wrapping; every match is highlighted. A
@@ -597,9 +604,11 @@ area, and a statusbar, separated by hairline `─` rules.
   and leaves the previous
   query and its highlights standing; `Esc` in Browse mode clears the query,
   the matches and the highlight. Neither moves the cursor.
-- **Mouse** — with `--mouse`, a wheel notch scrolls the viewport three lines;
-  the cursor is pulled to the nearest visible line rather than travelling with
-  it.
+- **Mouse** — with `--mouse`, a wheel notch scrolls the viewport three lines
+  and moves nothing else. The cursor keeps its document line and may scroll off
+  the screen; scrolling back reveals it exactly where it was. The wheel is
+  browsing, not reading: it never costs the reader the place they were at, nor
+  the link focused there.
 - **Resize** — re-layout from the cached AST, keep the cursor on the same
   source line, recompute search matches. Only a change of *width* re-lays the
   document out; a taller or shorter terminal costs nothing.
@@ -628,7 +637,7 @@ area, and a statusbar, separated by hairline `─` rules.
 | `?` | Help overlay |
 | `Esc` | Close overlay; abandon a search being typed; clear the search highlight |
 | `q`, `Ctrl-C` | Quit (restore terminal) |
-| Mouse wheel | Scroll the viewport three lines a notch (only with `--mouse`) |
+| Mouse wheel | Scroll the viewport three lines a notch, cursor unmoved (only with `--mouse`) |
 
 ### Stdout mode (`render/ansi.rs`)
 
