@@ -224,15 +224,19 @@ TOML. Origins and licences for the added ones are in
 | `?` | Help |
 | `Esc` | Close the overlay, or clear the search |
 | `q`, `Ctrl-C` | Quit |
-| Left click | Follow the link under the pointer |
+| Left click | Follow the link under the pointer, on release |
+| Left drag | Select text, and copy it when the button is let go |
 
 Copying goes through the terminal, with an `OSC 52` escape, so it works over
 `ssh` as well as locally. Terminals differ on whether they allow it: tmux wants
 `set -g set-clipboard on`, and a few others have it off by default.
 
-The wheel scrolls three lines a notch. Capturing the mouse takes your terminal's
-own text selection away, so `--no-mouse` turns it off; most terminals also let
-you hold `Shift` while dragging to select through a capturing program.
+The wheel scrolls three lines a notch. Dragging selects the text as it is
+painted — wrapped where the page wrapped, without the gutter or the colours —
+and letting go copies it. Capturing the mouse takes your terminal's own
+selection away, so `--no-mouse` turns it off and hands it back; most terminals
+also let you hold `Shift` while dragging to select through a capturing
+program.
 
 ## Flags
 
