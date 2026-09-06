@@ -317,7 +317,10 @@ impl App {
 
     /// The line a `#fragment` names, if any line answers to it.
     fn anchor_line(&self, fragment: Option<&str>) -> Option<usize> {
-        let slug = ast::slug(fragment?);
+        // Decoded first: an editor that writes `my%20note.md` writes
+        // `#A%20Heading` beside it, and the raw form slugs to `a20heading`,
+        // which matches no heading and silently opens the document at its top.
+        let slug = ast::slug(&crate::markdown::links::decode_fragment(fragment?));
         self.lines.iter().position(|line| line.anchor.as_deref() == Some(slug.as_str()))
     }
 
@@ -1296,6 +1299,22 @@ mod tests {
         // And it is history, so the reader can undo the jump.
         app.apply(Action::History { forward: false });
         assert_eq!(app.cursor, app.lines.len() - 1);
+    }
+
+    /// The end-to-end half of the same thing: the link opens the right file and
+    /// has to land on the right heading in it.
+    #[test]
+    fn a_percent_encoded_fragment_jumps_to_the_heading_it_names() {
+        let mut app = vault();
+        focus_link(&mut app, "nested/note.md#a-heading");
+        app.apply(Action::Follow);
+        let plain = app.cursor;
+
+        let mut app = inside_vault("[h](nested/note.md#a%2Dheading)\n");
+        focus_link(&mut app, "nested/note.md#a%2Dheading");
+        app.apply(Action::Follow);
+        assert_eq!(app.file, "note.md");
+        assert_eq!(app.cursor, plain, "the encoded fragment landed somewhere else than the plain one");
     }
 
     #[test]

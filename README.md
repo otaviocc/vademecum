@@ -473,15 +473,22 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
 | Source | Kind |
 | --- | --- |
 | `[t](https://…)`, `<https://…>`, `mailto:` | External |
-| `[t](other.md)`, `[t](../x/y.md#sec)`, `[t](#sec)` | Local (path relative to `base_dir`; empty path = current file) |
+| `[t](other.md)`, `[t](../x/y.md#sec)`, `[t](#sec)`, `[t](my%20note.md)` | Local (path relative to `base_dir`; empty path = current file) |
 | `[[target]]`, `[[target\|alias]]`, `[[target#Heading]]`, `[[#Heading]]` | Wiki |
 
 **Wikilink resolution** (in order, first hit wins):
 
 1. `base_dir/target` and `base_dir/target.md`.
 2. A **unique** file named `target.md` (case-insensitive) anywhere under the
-   vault root, skipping hidden directories. Ambiguity is reported as an
-   error in the statusbar listing the candidates.
+   vault root, skipping hidden directories. Symlinked directories *are*
+   followed — a shared folder linked into a vault is an ordinary way to build
+   one, and it usually lives outside the vault, so the walk may leave the root
+   by design. A directory already visited is not visited twice, so a vault
+   linking back to its own root terminates instead of walking forever, and the
+   entries are walked in sorted order so a directory reachable under two names
+   is always reported under the same one. A file reachable under two names is
+   one file, not two candidates. Ambiguity — two *different* files of one name —
+   is reported as an error in the statusbar listing the candidates.
 
 The vault root is `--root` if given, else the nearest ancestor of the start
 file containing `.obsidian/`, else the start file's directory. A `--root` that
@@ -493,6 +500,44 @@ one unreadable subdirectory does not stop a vault resolving — and a discovered
 root needs no check, having been found by looking. A target that
 cannot be followed — missing, or ambiguous — renders in `link_broken` style,
 and `Enter` shows the reason instead of navigating.
+
+**Local destinations are percent-decoded**, fragment included, because that is
+what an editor writes: Obsidian's Markdown-link mode, VS Code and most others spell a filename
+containing a space as `my%20note.md`, and CommonMark says a destination is
+percent-encoded. The path as written is tried **first** and the decoded form
+only as a fallback, so a file genuinely named `50%25.md` keeps resolving and
+nothing that works today stops working. A destination whose escapes are
+malformed — `bad%zz.md` — is not decodable and is used as written. Only Local
+destinations are decoded: an External URL is kept verbatim on purpose, and a
+wikilink target is a note's name rather than a URL.
+
+The `#fragment` is decoded unconditionally rather than as a fallback. A path can
+be tried against the filesystem twice, once each way; a fragment is matched
+against heading slugs, and there is nothing to test a first spelling against.
+Nothing is lost by it: slugging drops `%` whichever way it is written.
+
+The index behind step 2 is built once, on the first wikilink that needs it, and
+then **doubted once per document**. Opening a document — following a link,
+stepping through history, or reloading a file that changed on disk — marks it
+stale; the next wikilink that *fails* to resolve walks the vault again and
+retries, and the one after that does not. A walk settles the doubt whether it
+was bought by a miss or done to build the index in the first place, so the same
+unchanged tree is never walked twice in a row.
+
+Failing covers both ways a wikilink can fail: **missing** and **ambiguous**.
+Each is what an edit in another window fixes — by writing the note, or by
+removing one of the two files that clashed — so each is worth the walk. A name
+that *resolves* is not in doubt and never triggers one, which is why a document
+whose links all work never pays for a walk however often it is saved. A document
+carrying a broken wikilink pays one walk per save, which is the price of a note
+written elsewhere showing up here without a restart.
+
+What this does not do is re-check a link that already resolved. A target deleted
+or renamed since the walk still renders as a working wikilink, and `Enter`
+reports the failure when the file cannot be read. Resolution is a question about
+names, asked once per layout for every link on screen; confirming each answer
+against the filesystem is a different and much dearer promise than vademecum
+makes.
 
 Resolution runs during layout, alongside the styling it decides, so a link's
 element depends on whether its target exists: `link` for External, `wikilink`
