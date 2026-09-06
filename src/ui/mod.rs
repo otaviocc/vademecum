@@ -38,13 +38,12 @@ pub fn run(document: Document, theme: Theme, options: Options) -> Result<()> {
     }
 
     let mut terminal = ratatui::try_init().context("cannot open the terminal")?;
-    if options.mouse {
-        execute!(io::stdout(), EnableMouseCapture).context("cannot capture the mouse")?;
-    }
 
-    let outcome = terminal
-        .size()
-        .context("cannot measure the terminal")
+    // Past this point nothing may use `?`: the alternate screen is up and raw
+    // mode is on, so an early return would hand the reader's shell back inside
+    // it. Every failure has to fall through to the teardown below instead.
+    let outcome = capture_mouse(options.mouse)
+        .and_then(|()| terminal.size().context("cannot measure the terminal"))
         .map(|area| App::new(document, theme, options.width, area))
         .and_then(|mut app| event_loop(&mut terminal, &mut app));
 
@@ -78,6 +77,13 @@ fn apply(app: &mut App, event: &event::Event) {
     if let Some(action) = input::action(event, app.mode) {
         app.apply(action);
     }
+}
+
+fn capture_mouse(wanted: bool) -> Result<()> {
+    if wanted {
+        execute!(io::stdout(), EnableMouseCapture).context("cannot capture the mouse")?;
+    }
+    Ok(())
 }
 
 fn release_mouse_on_panic() {

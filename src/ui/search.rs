@@ -35,11 +35,10 @@ pub fn find(haystack: &[String], query: &str) -> Vec<Match> {
         let mut from = 0;
         while let Some((start, end)) = locate(&text[from..], &needle, sensitive) {
             matches.push(Match { line, start: from + start, end: from + end });
-            // The needle is never empty, so `end` always advances past `start`.
+            // The needle is never empty, so `end` always advances past `start`
+            // and the tail shrinks; an exhausted tail matches nothing and ends
+            // the loop on its own.
             from += end;
-            if from >= text.len() {
-                break;
-            }
         }
     }
     matches
@@ -134,8 +133,8 @@ impl Search {
 
     /// `match i/n` for the statusbar, when there is a query to report on.
     pub fn progress(&self) -> Option<(usize, usize)> {
-        (!self.query.is_empty() && !self.matches.is_empty())
-            .then(|| (self.current.map_or(0, |index| index + 1), self.matches.len()))
+        let current = self.current?;
+        (!self.query.is_empty()).then_some((current + 1, self.matches.len()))
     }
 }
 
@@ -243,11 +242,14 @@ mod tests {
     }
 
     #[test]
-    fn progress_counts_from_one_and_is_silent_without_a_query() {
+    fn progress_counts_from_one_and_is_silent_until_there_is_a_match_to_be_on() {
         let mut search = search(&["hit", "hit"], "hit");
-        assert_eq!(search.progress(), Some((0, 2)));
+        assert_eq!(search.progress(), None, "nothing to count until a match is current");
+
         search.step(true);
         assert_eq!(search.progress(), Some((1, 2)));
+        search.step(true);
+        assert_eq!(search.progress(), Some((2, 2)));
 
         search.clear();
         assert_eq!(search.progress(), None);

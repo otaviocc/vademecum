@@ -25,8 +25,9 @@ const TITLE_PREFIX: &str = " vademecum · ";
 const HINT_GAP: usize = 2;
 /// The overlay's share of the terminal: 60% of the width, and a height clamped
 /// between these shares of the height.
-const HELP_WIDTH: (u16, u16) = (3, 5);
-const HELP_HEIGHT: ((u16, u16), (u16, u16)) = ((4, 10), (9, 10));
+const HELP_WIDTH: (u32, u32) = (3, 5);
+const HELP_FLOOR: (u32, u32) = (4, 10);
+const HELP_CEILING: (u32, u32) = (9, 10);
 
 /// Every binding, as the overlay lists them — the README's table, in order.
 /// The rows for links and history arrive with milestone 5.
@@ -71,24 +72,33 @@ impl Widget for Screen<'_> {
     }
 }
 
+/// Write one row, clipped to the area, and draw nothing at all when there is
+/// no row to draw on. A terminal too short for the chrome makes `Layout` hand
+/// back zero-height rects, and it places them one row past the buffer; writing
+/// to one of those panics inside ratatui rather than being ignored.
+fn row(area: Rect, buf: &mut Buffer, x: u16, text: &str, style: Style) {
+    if area.height == 0 || x >= area.right() {
+        return;
+    }
+    buf.set_stringn(x, area.y, text, (area.right() - x) as usize, style);
+}
+
 /// ` vademecum · <title>` on the left, the hints on the right. When the two
 /// would collide the hints give way: the title is what says which document
 /// this is.
 fn header(area: Rect, buf: &mut Buffer, app: &App) {
     let title = format!("{TITLE_PREFIX}{}", app.title);
-    buf.set_stringn(area.x, area.y, &title, area.width as usize, app.theme.style(Element::HeaderTitle));
+    row(area, buf, area.x, &title, app.theme.style(Element::HeaderTitle));
 
     let hints = HINTS.width();
     if title.width() + HINT_GAP + hints <= area.width as usize {
-        let x = area.right() - hints as u16;
-        buf.set_stringn(x, area.y, HINTS, hints, app.theme.style(Element::Hint));
+        row(area, buf, area.right() - hints as u16, HINTS, app.theme.style(Element::Hint));
     }
 }
 
 /// A hairline across the full width.
 fn rule(area: Rect, buf: &mut Buffer, style: Style) {
-    let line = symbols::line::HORIZONTAL.repeat(area.width as usize);
-    buf.set_stringn(area.x, area.y, &line, area.width as usize, style);
+    row(area, buf, area.x, &symbols::line::HORIZONTAL.repeat(area.width as usize), style);
 }
 
 fn content(area: Rect, buf: &mut Buffer, app: &App) {
@@ -154,19 +164,24 @@ fn statusbar(area: Rect, buf: &mut Buffer, app: &App) {
         (Mode::Search, _) => (format!("/{}", app.search.input), Element::Status),
         (_, Status::Notice(notice)) => (notice.clone(), Element::StatusNotice),
         (_, Status::Idle) => {
-            let mut status = format!("{} · line {}/{} · {}%", app.file, app.cursor + 1, app.lines.len(), app.percent());
+            // `min` so an empty document reads `line 0/0` rather than `1/0`.
+            let total = app.lines.len();
+            let mut status = format!("{} · line {}/{} · {}%", app.file, (app.cursor + 1).min(total), total, app.percent());
             if let Some((index, total)) = app.search.progress() {
                 status.push_str(&format!(" · match {index}/{total}"));
             }
             (status, Element::Status)
         }
     };
-    buf.set_stringn(area.x, area.y, &text, area.width as usize, app.theme.style(element));
+    row(area, buf, area.x, &text, app.theme.style(element));
 }
 
 /// The keybinding table, in a centred popup over the document.
 fn help(area: Rect, buf: &mut Buffer, app: &App) {
     let popup = help_area(area);
+    if popup.height == 0 || popup.width == 0 {
+        return;
+    }
     Clear.render(popup, buf);
 
     let border = Style::default().fg(app.theme.palette.accent);
@@ -186,13 +201,18 @@ fn help(area: Rect, buf: &mut Buffer, app: &App) {
     }
 }
 
-/// 60% of the width, and a height clamped to 40-90%, centred.
+/// 60% of the width, and a height clamped to 40-90%, centred. The shares are
+/// worked out in `u32`: `height * 9` overflows a `u16` at 7282 rows. Both can
+/// come out zero, on a terminal with no room for a popup; `help` draws nothing
+/// rather than drawing outside itself.
 fn help_area(area: Rect) -> Rect {
-    let width = (area.width * HELP_WIDTH.0 / HELP_WIDTH.1).max(1).min(area.width);
-    let (floor, ceiling) = (area.height * HELP_HEIGHT.0.0 / HELP_HEIGHT.0.1, area.height * HELP_HEIGHT.1.0 / HELP_HEIGHT.1.1);
-    let height = (HELP.len() as u16 + 2).clamp(floor, ceiling).max(1).min(area.height.max(1));
+    let share = |whole: u16, (numerator, denominator): (u32, u32)| (u32::from(whole) * numerator / denominator) as u16;
 
-    Rect { x: area.x + area.width.saturating_sub(width) / 2, y: area.y + area.height.saturating_sub(height) / 2, width, height }
+    let width = share(area.width, HELP_WIDTH).min(area.width);
+    let wanted = HELP.len() as u16 + 2;
+    let height = wanted.clamp(share(area.height, HELP_FLOOR), share(area.height, HELP_CEILING)).min(area.height);
+
+    Rect { x: area.x + (area.width - width) / 2, y: area.y + (area.height - height) / 2, width, height }
 }
 
 #[cfg(test)]
@@ -408,6 +428,44 @@ mod tests {
         // And on a very tall one it is floored at 40%.
         let popup = help_area(Rect::new(0, 0, 60, 100));
         assert_eq!(popup.height, 40);
+    }
+
+    #[test]
+    fn a_terminal_too_short_for_the_chrome_draws_what_it_can_and_does_not_panic() {
+        // ratatui hands a zero-height rect a `y` one row past the buffer, so
+        // every one of these used to abort the pager on the next frame.
+        for height in 0..=6 {
+            for width in [0, 1, 2, 3, 60] {
+                let size = Size::new(width, height);
+                let mut app = app(&body(), size);
+                frame(&app, size);
+
+                app.apply(Action::ToggleHelp);
+                frame(&app, size);
+            }
+        }
+    }
+
+    #[test]
+    fn the_overlay_draws_nothing_rather_than_outside_itself_when_there_is_no_room() {
+        for height in 0..=2 {
+            let popup = help_area(Rect::new(0, 0, 4, height));
+            assert!(popup.bottom() <= height, "{popup:?} escapes a {height}-row terminal");
+        }
+    }
+
+    #[test]
+    fn a_very_tall_terminal_does_not_overflow_the_share_arithmetic() {
+        // `height * 9` leaves a u16 at 7282 rows.
+        let popup = help_area(Rect::new(0, 0, 300, 30000));
+        assert!(popup.height <= 30000 && popup.height >= 12000);
+    }
+
+    #[test]
+    fn an_empty_document_counts_no_lines_rather_than_one() {
+        let size = Size::new(40, 12);
+        let buffer = frame(&app("", size), size);
+        assert!(row(&buffer, 11).starts_with("x.md · line 0/0"), "{:?}", row(&buffer, 11));
     }
 
     #[test]
