@@ -135,8 +135,23 @@ folder, so it is the same on macOS and Linux):
 `<config>/theme.toml` > built-in `ansi`.
 
 Theme files are **partial**: any palette slot or element you omit falls back
-to the built-in default. Unknown keys produce a warning on stderr, never an
-error.
+to the built-in default, and within `[elements.x]` the three keys fall back
+independently — set only `fg` and the default `bg` and modifiers survive.
+`modifiers = []` is how you clear them.
+
+Unknown keys produce a warning on stderr, never an error. A value that cannot
+be read — malformed TOML, a color that is none of the accepted forms — is a
+different matter: it makes the theme unusable, so vademecum reports it on
+stderr and exits non-zero rather than rendering something the file did not
+ask for. So does an unknown `--theme <name>`, which lists the names it does
+know.
+
+A user theme whose file stem matches a built-in **shadows** it, so
+`<config>/themes/kanagawa-dragon.toml` retunes that theme rather than
+forcing a new name for it.
+
+`--list-themes` prints one name per line: the built-ins in the order of the
+Built-in themes table, then user themes alphabetically, each name once.
 
 ### Built-in themes
 
@@ -162,7 +177,11 @@ name = "my-theme"
 # Solarized (light)) or a file in <config>/syntax-themes/.
 syntax_theme = "base16-ocean.dark"
 
-# Semantic palette. Every element style derives from these slots.
+# Semantic palette. Every element style derives from these slots. A slot takes
+# an 8-bit index (208), hex ("#89b4fa"), "reset" for the terminal's own color,
+# or one of the 16 ANSI names: black, red, green, yellow, blue, magenta, cyan,
+# gray, dark_gray, light_red, light_green, light_yellow, light_blue,
+# light_magenta, light_cyan, white. A slot cannot name another slot.
 [palette]
 background           = "#1E1E1E"
 foreground           = "#FFFFFF"
@@ -179,10 +198,9 @@ chrome               = "#56D0B3"   # header title
 highlight            = "#35B0D8"   # links
 notice               = "#F2248C"   # wikilinks, transient status
 
-# Optional per-element overrides. `fg`/`bg` accept a palette slot name
-# ("accent"), an ANSI name ("blue", "dark_gray"), an 8-bit index (208), or
-# hex ("#89b4fa"). Modifiers: bold, italic, underline, dim, reversed,
-# crossed_out.
+# Optional per-element overrides. `fg`/`bg` accept everything a palette slot
+# does, plus the name of a slot ("accent") — resolved against this file's
+# palette. Modifiers: bold, italic, underline, dim, reversed, crossed_out.
 [elements.heading1]
 fg = "accent"
 modifiers = ["bold", "underline"]
