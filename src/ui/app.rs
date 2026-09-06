@@ -4,12 +4,15 @@
 //! *width* changed, because a taller or shorter terminal lays out identically —
 //! so scrolling a very long file never touches the parser or the renderer.
 
+use std::path::Path;
+
 use ratatui::layout::Size;
 
 use crate::document::Document;
 use crate::markdown::ast::{self, SourceBlock};
-use crate::markdown::links::Links;
+use crate::markdown::links::{LinkKind, Links, Target};
 use crate::render::layout::{self, Ctx};
+use crate::render::line::LinkRef;
 use crate::render::line::RenderedLine;
 use crate::theme::Theme;
 use crate::ui::Options;
@@ -30,13 +33,23 @@ pub enum Mode {
     Help,
 }
 
-/// The statusbar's transient line. A notice is cleared by the next key, which
-/// is what makes it transient.
+/// The statusbar's transient line. Both are cleared by the next key, which is
+/// what makes them transient; an error outranks a notice, because it is the
+/// answer to something the reader just asked for and did not get.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Status {
     #[default]
     Idle,
     Notice(String),
+    Error(String),
+}
+
+/// A place in the collection, as the history remembers it.
+struct Entry {
+    document: Document,
+    top: usize,
+    cursor: usize,
+    focus: usize,
 }
 
 /// Everything the pager knows.
@@ -72,17 +85,18 @@ pub struct App {
     pub title: String,
     /// Statusbar file: the file name, else `stdin`.
     pub file: String,
+    /// Which of the cursor line's links `Enter` would follow. A line with one
+    /// link focuses it without being asked, which is what 0 means here.
+    pub focus: usize,
+    /// Where the reader has been, and where `l` would take them back to.
+    back: Vec<Entry>,
+    forward: Vec<Entry>,
 }
 
 impl App {
     pub fn new(document: Document, theme: Theme, options: &Options, area: Size) -> Self {
         let width_override = options.width;
-        let file = document
-            .path
-            .as_deref()
-            .and_then(|path| path.file_name())
-            .map_or_else(|| STDIN.to_string(), |name| name.to_string_lossy().into_owned());
-        let title = document.title.clone().unwrap_or_else(|| file.clone());
+        let (title, file) = names(&document);
 
         let blocks = ast::parse(&document.source);
         let links = Links::new(document, options.root.as_deref());
@@ -106,6 +120,9 @@ impl App {
             plain: None,
             title,
             file,
+            focus: 0,
+            back: Vec::new(),
+            forward: Vec::new(),
         }
     }
 
@@ -138,8 +155,132 @@ impl App {
             }
             Action::SearchConfirm => self.confirm_search(),
             Action::SearchStep { forward } => self.step_search(forward),
+            Action::Focus { forward } => self.cycle_focus(forward),
+            Action::Follow => self.follow(),
+            Action::OpenExternal => self.open_external(),
+            Action::History { forward } => self.travel(forward),
         }
         self.clamp();
+    }
+
+    /// The link `Enter` would follow: the focused one on the cursor line.
+    fn focused(&self) -> Option<&LinkRef> {
+        self.lines.get(self.cursor).and_then(|line| line.links.get(self.focus))
+    }
+
+    /// `Tab` / `Shift-Tab`. A line with one link needs neither: focus starts at
+    /// the first one and there is nowhere else to go.
+    fn cycle_focus(&mut self, forward: bool) {
+        let count = self.lines.get(self.cursor).map_or(0, |line| line.links.len());
+        if count == 0 {
+            return;
+        }
+        self.focus = match forward {
+            true => (self.focus + 1) % count,
+            false => (self.focus + count - 1) % count,
+        };
+    }
+
+    /// `Enter`. An External link is left to `o`, as the README pairs them.
+    fn follow(&mut self) {
+        let Some(kind) = self.focused().map(|link| link.kind.clone()) else { return };
+        match self.links.resolve(&kind) {
+            // Missing or ambiguous: the reader asked to go somewhere and did
+            // not, so they are told why rather than left wondering.
+            Err(error) => self.status = Status::Error(error.to_string()),
+            Ok(Target::External) => {}
+            Ok(Target::SameDocument) => {
+                self.remember();
+                self.jump_to(kind.fragment());
+            }
+            Ok(Target::File(path)) => self.open(&path, kind.fragment()),
+        }
+    }
+
+    /// `o`. Nothing to do on a Local or Wiki link: opening files in an editor
+    /// is out of scope.
+    fn open_external(&mut self) {
+        let Some(LinkKind::External(url)) = self.focused().map(|link| link.kind.clone()) else { return };
+        if let Err(error) = open::that_detached(url.as_str()) {
+            self.status = Status::Error(format!("{url}: {error}"));
+        }
+    }
+
+    /// Load another document and show it. A file that cannot be read is a
+    /// statusbar error, never an exit: the reader is already inside the pager.
+    fn open(&mut self, path: &Path, fragment: Option<&str>) {
+        let document = match Document::load(path) {
+            Ok(document) => document,
+            Err(error) => {
+                self.status = Status::Error(format!("{error:#}"));
+                return;
+            }
+        };
+
+        self.remember();
+        self.show(document);
+        self.jump_to(fragment);
+        self.status = Status::Notice(format!("Opened {}", self.file));
+    }
+
+    /// Push where the reader is onto the back stack. Going somewhere new is
+    /// what makes the forward stack stale, so it is dropped here.
+    fn remember(&mut self) {
+        self.back.push(self.here());
+        self.forward.clear();
+    }
+
+    fn here(&self) -> Entry {
+        Entry { document: self.links.document.clone(), top: self.top, cursor: self.cursor, focus: self.focus }
+    }
+
+    /// `h` / `l`. The two stacks are symmetric: whichever one is being popped,
+    /// the other one gets where the reader was standing.
+    fn travel(&mut self, forward: bool) {
+        let Some(entry) = (if forward { self.forward.pop() } else { self.back.pop() }) else { return };
+        let here = self.here();
+        if forward {
+            self.back.push(here)
+        } else {
+            self.forward.push(here)
+        }
+
+        self.show(entry.document);
+        self.cursor = entry.cursor;
+        self.top = entry.top;
+        self.focus = entry.focus;
+        self.status = Status::Notice(format!("Opened {}", self.file));
+    }
+
+    /// Make `document` the one on screen, at the top of it.
+    fn show(&mut self, document: Document) {
+        (self.title, self.file) = names(&document);
+        self.blocks = ast::parse(&document.source);
+        self.links.open(document);
+        self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
+
+        self.cursor = 0;
+        self.top = 0;
+        self.focus = 0;
+
+        // The lines are another document's, so the cached text and the offsets
+        // into it are stale. A standing query follows the reader across.
+        self.plain = None;
+        if !self.search.query.is_empty() {
+            self.rematch();
+        }
+    }
+
+    /// Put the heading a `#fragment` names at the top of the view. One that
+    /// matches no heading leaves the reader where the document opened, which
+    /// is the top of it.
+    fn jump_to(&mut self, fragment: Option<&str>) {
+        let Some(fragment) = fragment else { return };
+        let slug = ast::slug(fragment);
+        if let Some(index) = self.lines.iter().position(|line| line.anchor.as_deref() == Some(slug.as_str())) {
+            self.cursor = index;
+            self.top = index;
+        }
     }
 
     /// `Enter` on a query: match once, over the whole document, and take the
@@ -204,6 +345,9 @@ impl App {
     }
 
     fn move_cursor(&mut self, motion: Motion) {
+        // The reader has left the line the focus was on, so it is not their
+        // link any more.
+        self.focus = 0;
         let height = self.viewport_height();
         let last = self.lines.len().saturating_sub(1);
         match motion {
@@ -232,6 +376,7 @@ impl App {
     /// The wheel moves the viewport; the cursor is pulled to the nearest
     /// visible line rather than travelling with it.
     fn scroll(&mut self, delta: isize) {
+        self.focus = 0;
         let height = self.viewport_height();
         let last = self.lines.len().saturating_sub(1);
         // Bound the viewport before pulling the cursor into it. At the foot of
@@ -299,6 +444,18 @@ impl App {
         self.top = self.top.min(self.cursor);
         self.top = self.top.max(self.cursor.saturating_sub(height - 1));
     }
+}
+
+/// A document's header title and statusbar name: the frontmatter title, else
+/// the file name, else `stdin` for a document that came from a pipe.
+fn names(document: &Document) -> (String, String) {
+    let file = document
+        .path
+        .as_deref()
+        .and_then(|path| path.file_name())
+        .map_or_else(|| STDIN.to_string(), |name| name.to_string_lossy().into_owned());
+    let title = document.title.clone().unwrap_or_else(|| file.clone());
+    (title, file)
 }
 
 /// Signed movement over an index, saturating at both ends.
@@ -653,5 +810,250 @@ mod tests {
         assert!(!app.quit);
         app.apply(Action::Quit);
         assert!(app.quit);
+    }
+
+    /// The vault fixture, open at its index: the only document in the tree with
+    /// one of every kind of link in it.
+    fn vault() -> App {
+        let document = Document::load(std::path::Path::new("tests/fixtures/vault/index.md")).expect("the fixture is there");
+        App::new(document, Theme::default(), &Options { width: Some(78), ..Options::default() }, Size::new(80, 24))
+    }
+
+    /// A document of vademecum's own inside the vault, for the tests that need
+    /// several links on one line. It never has to exist on disk: resolution
+    /// reads its `base_dir`, which does.
+    fn inside_vault(source: &str) -> App {
+        let document = Document::new(
+            Some(PathBuf::from("tests/fixtures/vault/scratch.md")),
+            PathBuf::from("tests/fixtures/vault"),
+            source.to_string(),
+        );
+        App::new(document, Theme::default(), &Options { width: Some(78), ..Options::default() }, Size::new(80, 24))
+    }
+
+    /// Park the cursor on the link written as `destination`, and focus it.
+    fn focus_link(app: &mut App, destination: &str) {
+        for index in 0..app.lines.len() {
+            if let Some(focus) = app.lines[index].links.iter().position(|link| link.kind.destination() == destination) {
+                app.cursor = index;
+                app.focus = focus;
+                return;
+            }
+        }
+        panic!("no link to {destination:?} in the fixture");
+    }
+
+    /// The document on screen, which is the only way to tell two files of the
+    /// same name apart.
+    fn open_path(app: &App) -> PathBuf {
+        app.links.document.path.clone().expect("the fixture came from a file")
+    }
+
+    #[test]
+    fn a_line_with_one_link_focuses_it_without_being_asked() {
+        let mut app = vault();
+        focus_link(&mut app, "missing");
+        assert_eq!(app.focus, 0);
+        assert_eq!(app.focused().expect("a focused link").kind.destination(), "missing");
+    }
+
+    #[test]
+    fn tab_cycles_the_focus_and_wraps_at_both_ends() {
+        let mut app = inside_vault("[[note]], [[missing]] and [[dup]] on one line\n");
+        let line = app.lines.iter().position(|line| line.links.len() > 1).expect("a line with several links");
+        app.cursor = line;
+        let count = app.lines[line].links.len();
+        assert_eq!(count, 3);
+
+        app.apply(Action::Focus { forward: true });
+        assert_eq!(app.focus, 1);
+        for _ in 1..count {
+            app.apply(Action::Focus { forward: true });
+        }
+        assert_eq!(app.focus, 0, "forward wraps");
+
+        app.apply(Action::Focus { forward: false });
+        assert_eq!(app.focus, count - 1, "and so does backward");
+    }
+
+    #[test]
+    fn moving_the_cursor_takes_the_focus_with_it() {
+        let mut app = inside_vault("[[note]] and [[missing]] on one line\n\nanother paragraph\n");
+        let line = app.lines.iter().position(|line| line.links.len() > 1).expect("a line with several links");
+        app.cursor = line;
+        app.apply(Action::Focus { forward: true });
+        assert_eq!(app.focus, 1);
+
+        app.apply(Action::Move(Motion::Line(1)));
+        assert_eq!(app.focus, 0, "the link on the line the reader left is not the one they meant");
+    }
+
+    #[test]
+    fn tab_on_a_line_with_no_links_does_nothing() {
+        let mut app = vault();
+        app.cursor = app.lines.iter().position(|line| line.links.is_empty()).expect("a line with no links");
+        app.apply(Action::Focus { forward: true });
+        assert_eq!(app.focus, 0);
+    }
+
+    #[test]
+    fn enter_follows_a_wikilink_and_says_where_it_went() {
+        let mut app = vault();
+        focus_link(&mut app, "note");
+        app.apply(Action::Follow);
+
+        assert_eq!(app.file, "note.md");
+        assert_eq!(open_path(&app), PathBuf::from("tests/fixtures/vault/note.md"));
+        assert_eq!(app.status, Status::Notice(String::from("Opened note.md")));
+        assert_eq!((app.cursor, app.top, app.focus), (0, 0, 0), "a new document opens at the top");
+    }
+
+    #[test]
+    fn a_relative_link_is_followed_too() {
+        let mut app = vault();
+        focus_link(&mut app, "nested/note.md");
+        app.apply(Action::Follow);
+        assert_eq!(open_path(&app), PathBuf::from("tests/fixtures/vault/nested/note.md"));
+    }
+
+    #[test]
+    fn history_goes_back_to_the_line_it_left_from_and_forward_again() {
+        let mut app = vault();
+        focus_link(&mut app, "note");
+        let (cursor, focus) = (app.cursor, app.focus);
+
+        app.apply(Action::Follow);
+        app.apply(Action::History { forward: false });
+        assert_eq!(app.file, "index.md");
+        assert_eq!((app.cursor, app.focus), (cursor, focus), "back restores the position, focus included");
+
+        app.apply(Action::History { forward: true });
+        assert_eq!(open_path(&app), PathBuf::from("tests/fixtures/vault/note.md"));
+    }
+
+    #[test]
+    fn going_somewhere_new_drops_the_way_forward() {
+        let mut app = vault();
+        focus_link(&mut app, "note");
+        app.apply(Action::Follow);
+        app.apply(Action::History { forward: false });
+
+        focus_link(&mut app, "nested/note.md");
+        app.apply(Action::Follow);
+        app.apply(Action::History { forward: true });
+        assert_eq!(
+            open_path(&app),
+            PathBuf::from("tests/fixtures/vault/nested/note.md"),
+            "forward is the nested note now, not the one that was abandoned"
+        );
+    }
+
+    #[test]
+    fn history_at_either_end_is_not_an_error() {
+        let mut app = vault();
+        app.apply(Action::History { forward: false });
+        app.apply(Action::History { forward: true });
+        assert_eq!(app.file, "index.md");
+        assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn a_broken_link_says_why_and_leaves_the_reader_where_they_are() {
+        let mut app = vault();
+        focus_link(&mut app, "missing");
+        let (file, cursor) = (app.file.clone(), app.cursor);
+
+        app.apply(Action::Follow);
+        assert_eq!(app.status, Status::Error(String::from("missing: not found")));
+        assert_eq!((app.file, app.cursor), (file, cursor));
+    }
+
+    #[test]
+    fn an_ambiguous_link_names_the_candidates_it_could_not_choose_between() {
+        let mut app = vault();
+        focus_link(&mut app, "dup");
+        app.apply(Action::Follow);
+
+        let Status::Error(error) = &app.status else { panic!("expected an error, got {:?}", app.status) };
+        assert!(error.starts_with("dup: ambiguous ("), "{error}");
+        assert!(error.contains("a/dup.md") || error.contains("a\\dup.md"), "{error}");
+        assert!(error.contains("b/dup.md") || error.contains("b\\dup.md"), "{error}");
+    }
+
+    #[test]
+    fn a_fragment_puts_its_heading_at_the_top_of_the_view() {
+        let mut app = vault();
+        focus_link(&mut app, "note#A Heading");
+        app.apply(Action::Follow);
+
+        assert_eq!(app.file, "note.md");
+        assert_eq!(app.lines[app.cursor].anchor.as_deref(), Some("a-heading"), "the cursor is on the heading it named");
+    }
+
+    #[test]
+    fn a_fragment_on_this_page_moves_without_loading_anything() {
+        let mut app = vault();
+        focus_link(&mut app, "#index");
+        app.cursor = app.lines.len() - 1;
+        app.apply(Action::Follow);
+
+        assert_eq!(app.file, "index.md");
+        assert_eq!(app.lines[app.cursor].anchor.as_deref(), Some("index"));
+
+        // And it is history, so the reader can undo the jump.
+        app.apply(Action::History { forward: false });
+        assert_eq!(app.cursor, app.lines.len() - 1);
+    }
+
+    #[test]
+    fn a_fragment_that_names_no_heading_opens_the_document_at_the_top() {
+        let mut app = vault();
+        focus_link(&mut app, "nested/note.md#a-heading");
+        app.apply(Action::Follow);
+        let found = app.cursor;
+
+        let mut app = vault();
+        focus_link(&mut app, "nested/note.md");
+        app.apply(Action::Follow);
+        assert_ne!(found, app.cursor, "the fragment is what moved the cursor");
+        assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn enter_and_o_each_leave_the_other_kind_of_link_alone() {
+        let mut app = vault();
+        focus_link(&mut app, "https://example.com");
+        app.apply(Action::Follow);
+        assert_eq!(app.status, Status::Idle, "Enter does not follow the web; `o` does");
+        assert_eq!(app.file, "index.md");
+
+        // And `o` on a wikilink does nothing rather than launching anything.
+        focus_link(&mut app, "note");
+        app.apply(Action::OpenExternal);
+        assert_eq!(app.status, Status::Idle);
+        assert_eq!(app.file, "index.md");
+    }
+
+    #[test]
+    fn following_nothing_is_not_an_error() {
+        let mut app = vault();
+        app.cursor = app.lines.iter().position(|line| line.links.is_empty()).expect("a line with no links");
+        app.apply(Action::Follow);
+        app.apply(Action::OpenExternal);
+        assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn a_standing_query_follows_the_reader_into_the_next_document() {
+        let mut app = vault();
+        search_for(&mut app, "heading");
+        focus_link(&mut app, "note");
+        app.apply(Action::Follow);
+
+        assert_eq!(app.search.query, "heading");
+        assert!(!app.search.matches.is_empty(), "the query is matched against the document now on screen");
+        for found in &app.search.matches {
+            assert!(found.line < app.lines.len(), "the offsets index the new document");
+        }
     }
 }

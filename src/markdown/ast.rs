@@ -379,7 +379,7 @@ fn alignment(alignment: pulldown_cmark::Alignment) -> Alignment {
 }
 
 /// GitHub's heading slug: lowercase, punctuation dropped, spaces to hyphens.
-fn slug(text: &str) -> String {
+pub fn slug(text: &str) -> String {
     let mut slug = String::with_capacity(text.len());
     for c in text.chars() {
         if c.is_alphanumeric() {

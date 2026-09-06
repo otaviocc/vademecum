@@ -246,3 +246,25 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   the pty is 0x0 and the pager correctly draws nothing, which looks like a bug
   and is not one. Keys reach it because crossterm reads `/dev/tty`, which is
   also why `cat x.md | vademecum -` works.
+- Three things make that smoke test lie unless they are handled. The event
+  loop **drains** a burst of events and draws once, so `printf 'jjq'` quits
+  before painting anything the keys did: send them a `sleep 0.25` apart. The
+  backend redraws only the cells that **changed**, so grepping for a whole
+  phrase fails when the frame before it shared a prefix — grep for a string the
+  previous frame did not contain (a statusbar notice works, a header title does
+  not), or read the tail of the stream and follow the fragments. And `q` inside
+  the help overlay closes the overlay, so a run that opens it needs a second
+  `?` before the quit or it hangs forever.
+- `layout::render` takes a context (theme + links) rather than more parameters.
+  Anything layout needs to know about the document belongs in `Ctx`; adding a
+  parameter instead ripples through every `*_to_lines` signature and every one
+  of the ~20 layout tests.
+- `Action` derives `Copy`, so a new variant cannot carry a `String`. Split the
+  payload out (`Focus { forward: bool }`, not `Focus(String)`) or the derive
+  goes, and with it the terse reducer tests.
+- macOS's filesystem is case-insensitive, so a test for the resolver's *own*
+  case folding has to put the file somewhere the relative rule cannot reach —
+  a subdirectory — or the filesystem answers first and the test proves nothing.
+- `App::new` takes `&Options`. A pager option that layout or resolution needs
+  goes in there rather than into the parameter list, which is already four
+  long and was five before.

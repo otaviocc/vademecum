@@ -18,7 +18,7 @@ use crate::ui::app::{App, Mode, Status};
 
 /// The shortcut hints, right-aligned in the header. They list the bindings
 /// this build has, and grow as milestones land.
-const HINTS: &str = "? help  / search  q quit";
+const HINTS: &str = "? help  / search  ⇥ link  ⏎ follow  h/l back/fwd  q quit";
 /// Ahead of the title, so the reader can see what they are running.
 const TITLE_PREFIX: &str = " vademecum · ";
 /// One column between the title and the hints before the hints give way.
@@ -30,12 +30,15 @@ const HELP_FLOOR: (u32, u32) = (4, 10);
 const HELP_CEILING: (u32, u32) = (9, 10);
 
 /// Every binding, as the overlay lists them — the README's table, in order.
-/// The rows for links and history arrive with milestone 5.
 const HELP: &[(&str, &str)] = &[
     ("j / k, ↓ / ↑", "Move cursor line down / up"),
     ("d / u, Ctrl-D / Ctrl-U", "Half page down / up"),
     ("Space / b, PgDn / PgUp", "Page down / up"),
     ("g / G, Home / End", "Top / bottom"),
+    ("Tab / Shift-Tab", "Cycle link focus on the cursor line"),
+    ("Enter", "Follow focused local/wiki link"),
+    ("o", "Open focused external link in the browser"),
+    ("h / Backspace, l", "History back, forward"),
     ("/", "Search (Enter confirms, Esc cancels)"),
     ("n / N", "Next / previous match"),
     ("?", "Help overlay"),
@@ -116,8 +119,12 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
             buf.set_style(Rect::new(area.x, y, area.width, 1), cursor_line);
         }
 
+        // The focused link is only ever on the cursor line, so the range is
+        // worked out once a frame rather than once a span.
+        let focused = on_cursor.then(|| line.links.get(app.focus).map(|link| link.span_range.clone())).flatten();
+
         let mut x = area.x;
-        for span in &line.spans {
+        for (index_of_span, span) in line.spans.iter().enumerate() {
             // Layout leaves empty spans behind wherever a padding worked out
             // to zero columns — table cells are full of them. They have to be
             // skipped rather than written: writing one advances nothing, which
@@ -132,7 +139,12 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
             }
             // Patching puts the cursor's background over the span's own, so
             // the bar survives a code block, and leaves the foreground alone.
-            let style = if on_cursor { span.style.patch(cursor_line) } else { span.style };
+            let mut style = if on_cursor { span.style.patch(cursor_line) } else { span.style };
+            // The focused link outranks the cursor bar it sits inside: it is
+            // the one thing on the line `Enter` would act on.
+            if focused.as_ref().is_some_and(|range| range.contains(&index_of_span)) {
+                style = style.patch(app.theme.style(Element::LinkFocused));
+            }
             let (next, _) = buf.set_stringn(x, y, &span.text, (area.right() - x) as usize, style);
             if next == x {
                 // A grapheme too wide for the columns that are left.
@@ -167,11 +179,13 @@ fn highlight(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize, line
     }
 }
 
-/// The `/` prompt while a query is being typed, else a notice, else
-/// `file · line X/Y · N%` with the match count when a query is standing.
+/// The README's priority: the `/` prompt while a query is being typed, else an
+/// error, else a notice, else `file · line X/Y · N%` with the match count when
+/// a query is standing.
 fn statusbar(area: Rect, buf: &mut Buffer, app: &App) {
     let (text, element) = match (app.mode, &app.status) {
         (Mode::Search, _) => (format!("/{}", app.search.input), Element::Status),
+        (_, Status::Error(error)) => (error.clone(), Element::StatusError),
         (_, Status::Notice(notice)) => (notice.clone(), Element::StatusNotice),
         (_, Status::Idle) => {
             // `min` so an empty document reads `line 0/0` rather than `1/0`.
@@ -281,7 +295,9 @@ mod tests {
 
     #[test]
     fn the_hints_sit_against_the_right_edge() {
-        let size = Size::new(60, 12);
+        // Wide enough for the title and the whole hint line: at 60 columns the
+        // two collide, which is what the test below is about.
+        let size = Size::new(90, 12);
         let buffer = frame(&app(&body(), size), size);
         assert!(row(&buffer, 0).ends_with(HINTS), "{:?}", row(&buffer, 0));
     }
@@ -443,7 +459,7 @@ mod tests {
 
     #[test]
     fn the_overlay_is_clamped_rather_than_scrolled_on_a_short_terminal() {
-        // Nine bindings plus a border want thirteen rows; 90% of twelve is ten.
+        // Thirteen bindings plus a border want fifteen rows; 90% of twelve is ten.
         let popup = help_area(Rect::new(0, 0, 60, 12));
         assert_eq!(popup.height, 10);
 
@@ -517,5 +533,66 @@ mod tests {
         let buffer = frame(&app, size);
         assert!(row(&buffer, 0).starts_with(" vademecum · stdin"));
         assert!(row(&buffer, 11).starts_with("stdin · line 1/1"));
+    }
+
+    #[test]
+    fn the_focused_link_is_painted_and_the_others_are_not() {
+        let size = Size::new(60, 12);
+        // Two links on the first line, so the second one is a control: only the
+        // focused one may carry the selection.
+        let mut app = app("[one](a.md) and [two](b.md)\n", size);
+        let selection = app.theme.style(Element::LinkFocused);
+
+        let wanted = selection.bg.expect("the focused link has a background");
+        let painted = |app: &App| -> Vec<ratatui::style::Color> {
+            let buffer = frame(app, size);
+            (0..size.width).map(|x| buffer[(x, CONTENT_TOP)].bg).collect()
+        };
+
+        // The brackets are not rendered, so the line reads ` one and two`.
+        let (first, second) = (1..4, 9..12);
+        let before = painted(&app);
+        assert!(before[first.clone()].iter().all(|bg| *bg == wanted), "the only link on the line is focused");
+        assert!(!before[second.clone()].contains(&wanted), "the second one is not");
+
+        app.apply(Action::Focus { forward: true });
+        let after = painted(&app);
+        assert!(after[second].iter().all(|bg| *bg == wanted), "Tab moved it along");
+        assert!(!after[first].contains(&wanted), "and off the first");
+    }
+
+    #[test]
+    fn a_link_off_the_cursor_line_is_never_focused() {
+        let size = Size::new(60, 12);
+        let mut app = app("[one](a.md)\n\n[two](b.md)\n", size);
+        app.apply(Action::Move(Motion::Bottom));
+
+        let buffer = frame(&app, size);
+        let selection = app.theme.style(Element::LinkFocused).bg.expect("a background");
+        assert!((0..size.width).all(|x| buffer[(x, CONTENT_TOP)].bg != selection), "the first line is not the cursor line");
+    }
+
+    #[test]
+    fn an_error_outranks_a_notice_in_the_statusbar() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        let status = size.height - 1;
+
+        app.status = Status::Notice(String::from("a notice"));
+        assert_eq!(row(&frame(&app, size), status), "a notice");
+
+        app.status = Status::Error(String::from("note.md: not found"));
+        let buffer = frame(&app, size);
+        assert_eq!(row(&buffer, status), "note.md: not found");
+        assert_eq!(buffer[(0, status)].fg, app.theme.style(Element::StatusError).fg.expect("a foreground"));
+    }
+
+    #[test]
+    fn the_help_overlay_lists_every_binding_the_readme_names() {
+        // The table is the README's, so a binding added without a row here is
+        // a binding the reader cannot discover.
+        for key in ["Tab / Shift-Tab", "Enter", "o", "h / Backspace, l"] {
+            assert!(HELP.iter().any(|(row, _)| *row == key), "{key} is not in the help table");
+        }
     }
 }

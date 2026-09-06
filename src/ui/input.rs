@@ -47,6 +47,18 @@ pub enum Action {
     SearchStep {
         forward: bool,
     },
+    /// `Tab` / `Shift-Tab`: move the focus along the cursor line's links.
+    Focus {
+        forward: bool,
+    },
+    /// `Enter`: open the focused local or wiki link.
+    Follow,
+    /// `o`: hand the focused external link to the system browser.
+    OpenExternal,
+    /// `h` / `Backspace` and `l`.
+    History {
+        forward: bool,
+    },
 }
 
 /// The one mapping from a terminal event to an action, given what keys mean
@@ -100,6 +112,12 @@ fn browse(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('b') | KeyCode::PageUp => Some(Action::Move(Motion::Page(-1))),
         KeyCode::Char('g') | KeyCode::Home => Some(Action::Move(Motion::Top)),
         KeyCode::Char('G') | KeyCode::End => Some(Action::Move(Motion::Bottom)),
+        KeyCode::Tab => Some(Action::Focus { forward: true }),
+        KeyCode::BackTab => Some(Action::Focus { forward: false }),
+        KeyCode::Enter => Some(Action::Follow),
+        KeyCode::Char('o') => Some(Action::OpenExternal),
+        KeyCode::Char('h') | KeyCode::Backspace => Some(Action::History { forward: false }),
+        KeyCode::Char('l') => Some(Action::History { forward: true }),
         KeyCode::Char('/') => Some(Action::SearchStart),
         KeyCode::Char('n') => Some(Action::SearchStep { forward: true }),
         KeyCode::Char('N') => Some(Action::SearchStep { forward: false }),
@@ -185,6 +203,13 @@ mod tests {
             (press(KeyCode::Home), Action::Move(Motion::Top)),
             (press(KeyCode::Char('G')), Action::Move(Motion::Bottom)),
             (press(KeyCode::End), Action::Move(Motion::Bottom)),
+            (press(KeyCode::Tab), Action::Focus { forward: true }),
+            (press(KeyCode::BackTab), Action::Focus { forward: false }),
+            (press(KeyCode::Enter), Action::Follow),
+            (press(KeyCode::Char('o')), Action::OpenExternal),
+            (press(KeyCode::Char('h')), Action::History { forward: false }),
+            (press(KeyCode::Backspace), Action::History { forward: false }),
+            (press(KeyCode::Char('l')), Action::History { forward: true }),
             (press(KeyCode::Char('/')), Action::SearchStart),
             (press(KeyCode::Char('n')), Action::SearchStep { forward: true }),
             (press(KeyCode::Char('N')), Action::SearchStep { forward: false }),
@@ -284,7 +309,7 @@ mod tests {
         for code in [KeyCode::Char('?'), KeyCode::Char('q'), KeyCode::Esc] {
             assert_eq!(action(&press(code), Mode::Help), Some(Action::ToggleHelp), "{code:?}");
         }
-        for code in [KeyCode::Char('j'), KeyCode::Char('/'), KeyCode::Down] {
+        for code in [KeyCode::Char('j'), KeyCode::Char('/'), KeyCode::Down, KeyCode::Tab, KeyCode::Enter] {
             assert_eq!(action(&press(code), Mode::Help), None, "{code:?}");
         }
     }
