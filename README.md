@@ -634,7 +634,10 @@ each document as it opens, so `n` keeps working without being retyped.
   apart and put it back adding nothing, ~126ms adding ours. Almost all of that
   is the relink rather than the files, and none of it is worth making a reader
   wait for on the first code block they meet, so it is paid per build instead.
-  Loading the baked pack costs ~5ms.
+  Loading the baked pack costs about a millisecond. Painting the *first* block
+  of a given language then costs a few more while `fancy-regex` compiles that
+  syntax's patterns — once per language per run, and a property of the engine
+  rather than of how the set is packaged.
 - `ThemeSet::load_defaults()` is created lazily once (`OnceLock`), plus user
   `.tmTheme` files from `<config>/syntax-themes/`.
 - Language lookup by fence tag (`find_syntax_by_token`), then by first-line

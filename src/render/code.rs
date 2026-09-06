@@ -198,8 +198,9 @@ fn convert(style: SyntectStyle) -> Style {
 /// load syntect's dump, ~93ms to take it apart and put it back together adding
 /// nothing, ~126ms adding our four — so most of the cost is the relink, not the
 /// files, and none of it is worth making the reader wait for on the first code
-/// block they meet. Origins and licences for the added files are in
-/// `syntaxes/LICENSES.md`.
+/// block they meet. The baked pack loads in about a millisecond.
+///
+/// Origins and licences for the added files are in `syntaxes/LICENSES.md`.
 fn syntax_set() -> &'static SyntaxSet {
     static SYNTAXES: OnceLock<SyntaxSet> = OnceLock::new();
     SYNTAXES.get_or_init(|| {
@@ -493,11 +494,15 @@ mod tests {
     /// code before they were bundled.
     #[test]
     fn every_bundled_language_is_highlighted() {
+        // Deliberately without a string or a number in them. A sample carrying
+        // `"hi"` passes on the strength of that one literal, which is how a
+        // syntax covering literals and nothing else — no keywords at all — got
+        // as far as being committed here once.
         let samples = [
-            ("swift", "let greeting: String = \"hi\"\nfunc main() { print(greeting) }\n"),
-            ("kotlin", "fun main() { val x: String = \"hi\"; println(x) }\n"),
-            ("toml", "[package]\nname = \"vademecum\"\n"),
-            ("typescript", "const greeting: string = \"hi\";\nfunction main(): void {}\n"),
+            ("swift", "import Foundation\nclass Greeter {\n    func greet() -> Bool { return true }\n}\n"),
+            ("kotlin", "import java.util.Date\nclass Greeter {\n    fun greet(): Boolean { return true }\n}\n"),
+            ("toml", "[package]\nedition = 2024\n"),
+            ("typescript", "import fs from 'node:fs';\nclass Greeter {\n    greet(): boolean { return true }\n}\n"),
         ];
         for (lang, code) in samples {
             let lines = highlight(Some(lang), code, None);

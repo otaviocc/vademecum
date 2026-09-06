@@ -10,21 +10,33 @@ upstream commit the file was taken at, so it can be checked or updated.
 
 | File | Upstream | Commit | Licence |
 | --- | --- | --- | --- |
-| `Swift.sublime-syntax` | [wbond/swift-for-sublime](https://github.com/wbond/swift-for-sublime) | `c11c92c83eba` | MIT |
+| `Swift.sublime-syntax` | [aerobounce/Swift-Next](https://github.com/aerobounce/Swift-Next) | `258b6249d8c8` | MIT |
 | `Kotlin.sublime-syntax` | [guille/sublime-kotlin](https://github.com/guille/sublime-kotlin) | `c353694169c0` | Unlicense (public domain) |
 | `TOML.sublime-syntax` | [sublimehq/Packages](https://github.com/sublimehq/Packages) | `f29821e2f98f` | Sublime HQ Packages licence (below) |
 | `TypeScript.sublime-syntax` | [sharkdp/bat](https://github.com/sharkdp/bat) | `d7b651942287` | Apache-2.0 |
 
 ## Notes on individual files
 
-**Swift.** Not the most detailed Swift syntax available. The fuller
-[colinta/decent-swift-syntax](https://github.com/colinta/decent-swift-syntax) is
-unusable here: it matches hex and decimal float literals with regex *subroutine
-calls* (`\g<1>`), which the pure-Rust `fancy-regex` engine does not implement,
-and vademecum uses `fancy-regex` deliberately to avoid a C dependency on
-Oniguruma. Loading it fails outright with `FeatureNotYetSupported("Subroutine
-Call")`. Any replacement has to be checked against that engine, not merely
-against Sublime Text.
+**Swift.** Two others were tried first, and the reasons are worth keeping.
+
+[colinta/decent-swift-syntax](https://github.com/colinta/decent-swift-syntax)
+cannot be used at all: it matches hex and decimal float literals with regex
+*subroutine calls* (`\g<1>`), which the pure-Rust `fancy-regex` engine does not
+implement, and vademecum uses `fancy-regex` deliberately to avoid a C dependency
+on Oniguruma. It fails to load outright with
+`FeatureNotYetSupported("Subroutine Call")`.
+
+[wbond/swift-for-sublime](https://github.com/wbond/swift-for-sublime) loads, and
+looks like a safe choice, but covers literals only: its `expression` context
+includes whitespace, strings and numbers and never the `identifier` context it
+defines, and the file contains no `keyword` scopes at all. A fence of
+`import`/`class`/`func`/`if`/`return` came out in a single colour — the symptom
+this whole directory exists to fix, still present for one language.
+
+So the rule for a replacement is both: it has to load under `fancy-regex`, *and*
+it has to colour a keyword-only sample. The test in `src/render/code.rs` uses
+samples with no string or number literal in them for exactly that reason — a
+sample containing `"hi"` passes on the strength of the one string.
 
 **TypeScript.** Taken from `bat`, which converted it by hand from
 [Microsoft/TypeScript-Sublime-Plugin](https://github.com/Microsoft/TypeScript-Sublime-Plugin)
