@@ -306,3 +306,34 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - `App::new` takes `&Options`. A pager option that layout or resolution needs
   goes in there rather than into the parameter list, which is already four
   long and was five before.
+- A `notify` watch has to be armed on the **canonicalised** path. A document
+  opened through a symlink lives in another directory, and watching the link's
+  own would watch a directory nothing ever writes to — the reader would see
+  nothing reload, ever, with no error to explain it. `unwatch`, on the other
+  hand, must be handed back the *literal* `PathBuf` that `watch` was given:
+  macOS compares the string, not the path.
+- Watching one directory non-recursively makes "is this event ours?" a
+  comparison of file names, which is also what makes it immune to the three
+  ways a path can be spelled (as given, absolutised, canonicalised — on macOS
+  the difference between `/var` and `/private/var`). A watcher over a *tree*
+  has to strip a prefix and therefore has to keep all three spellings; ours
+  does not, and should not grow them back.
+- A debouncer error (`DebounceEventResult::Err`) is a reason to re-read, not to
+  report: an inotify overflow loses exactly the events you would need in order
+  to know what you missed, and re-reading one file is cheaper than being wrong.
+- A filesystem test writes in a **loop** until the watch sees it, against a
+  generous deadline a passing run never pays. A backend is not always armed the
+  instant `watch` returns — FSEvents especially — and a single write landing in
+  that window is simply lost. Never write the negative test: proving no event
+  arrives is a race, and the pure matching functions cover the negatives
+  deterministically.
+- The pty smoke test's statusbar lies twice over, not once. The backend paints
+  changed cells only, so `Opened note.md` followed by `Reloaded note.md` comes
+  out of the stream as `Reloaed note.md` — the `d` was already there and was
+  not repainted. Grep for a fragment (`Reload`), never a phrase, and read the
+  raw tail before believing a notice is missing.
+- A smoke test whose fixture is edited by a background `( sleep N; ... ) &`
+  proves nothing unless N is past the keystrokes: an edit that lands *before*
+  the navigation is already in the file when it opens, and the run looks like a
+  successful reload while no reload happened. Time the writer against the whole
+  key sequence, not against the start.
