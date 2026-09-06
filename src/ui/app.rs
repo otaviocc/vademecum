@@ -134,6 +134,14 @@ impl App {
             self.status = Status::Idle;
         }
 
+        // A resize is not on this list: `relayout` puts the cursor back at the
+        // height it was already at, off-screen included, and revealing it would
+        // pull a scrolled-away viewport back.
+        let moves_cursor = matches!(
+            action,
+            Action::Move(_) | Action::SearchConfirm | Action::SearchStep { .. } | Action::Follow | Action::History { .. }
+        );
+
         match action {
             Action::Quit => self.quit = true,
             Action::Move(motion) => self.move_cursor(motion),
@@ -160,7 +168,15 @@ impl App {
             Action::OpenExternal => self.open_external(),
             Action::History { forward } => self.travel(forward),
         }
-        self.clamp();
+
+        self.bound();
+        // Only an action that moves the cursor drags the viewport after it.
+        // The wheel is the reason: it leaves the cursor where the reader put
+        // it, off-screen if need be, and revealing it here would undo the
+        // scroll on the same tick.
+        if moves_cursor {
+            self.reveal();
+        }
     }
 
     /// The link `Enter` would follow: the focused one on the cursor line.
@@ -376,6 +392,12 @@ impl App {
         self.focus = 0;
         let height = self.viewport_height();
         let last = self.lines.len().saturating_sub(1);
+
+        // A motion key is a statement of position, so it starts from what the
+        // reader can see: the wheel may have left the cursor off-screen, and
+        // pressing `j` there means "carry on reading here", not "go back".
+        self.cursor = self.cursor.clamp(self.top, self.top + height - 1).min(last);
+
         match motion {
             Motion::Line(delta) => self.cursor = offset(self.cursor, delta),
             // A page keeps one line of context; a half page is half the view.
@@ -399,24 +421,11 @@ impl App {
         self.top = offset(self.top, delta);
     }
 
-    /// The wheel moves the viewport; the cursor is pulled to the nearest
-    /// visible line rather than travelling with it.
+    /// The wheel moves the viewport and nothing else. The cursor keeps its
+    /// document line and may scroll off the screen, so scrolling away and back
+    /// puts the reader exactly where they were — with the focused link intact.
     fn scroll(&mut self, delta: isize) {
-        let height = self.viewport_height();
-        let last = self.lines.len().saturating_sub(1);
-        // Bound the viewport before pulling the cursor into it. At the foot of
-        // the document the view cannot move, and a window past the end would
-        // drag the cursor down a notch at a time with nothing to show for it.
-        self.top = offset(self.top, delta).min(last.saturating_sub(height - 1));
-
-        // Most notches leave the cursor where it was, and the focus with it:
-        // dropping the focus on every one of them would take the reader's
-        // chosen link away for scrolling past it and back.
-        let pulled = self.cursor.clamp(self.top, self.top + height - 1);
-        if pulled != self.cursor {
-            self.cursor = pulled;
-            self.focus = 0;
-        }
+        self.top = offset(self.top, delta);
     }
 
     fn resize(&mut self, area: Size) {
@@ -432,7 +441,9 @@ impl App {
     /// were: on the same source line, at the same height on the screen.
     fn relayout(&mut self) {
         let anchor = self.anchor();
-        let row = self.cursor - self.top;
+        // Signed, because the wheel can leave the cursor above or below the
+        // viewport and a rewrap should not quietly pull it back into it.
+        let row = self.cursor as isize - self.top as isize;
 
         self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
 
@@ -442,7 +453,7 @@ impl App {
             .position(|line| line.source_line == anchor)
             .or_else(|| self.lines.iter().position(|line| !line.is_blank() && line.source_line >= anchor))
             .unwrap_or(self.cursor);
-        self.top = self.cursor.saturating_sub(row);
+        self.top = offset(self.cursor, -row);
         // The line the cursor lands on is a different line, with its own links:
         // a narrower width can leave the old index past the end of them, and
         // `Enter` with nothing focused does nothing at all.
@@ -468,14 +479,21 @@ impl App {
             .map_or(0, |line| line.source_line)
     }
 
-    /// The invariants, in one place: the cursor is on a line that exists, and
-    /// the viewport contains it without scrolling past the end.
-    fn clamp(&mut self) {
+    /// The invariants that hold after *every* action: the cursor is on a line
+    /// that exists, and the viewport does not run past the end of the document.
+    fn bound(&mut self) {
         let height = self.viewport_height();
         let last = self.lines.len().saturating_sub(1);
 
         self.cursor = self.cursor.min(last);
         self.top = self.top.min(last.saturating_sub(height.saturating_sub(1)));
+    }
+
+    /// Scroll the viewport the least it can to contain the cursor. Only for
+    /// actions that moved the cursor; see `apply`.
+    fn reveal(&mut self) {
+        let height = self.viewport_height();
+
         self.top = self.top.min(self.cursor);
         self.top = self.top.max(self.cursor.saturating_sub(height - 1));
     }
@@ -574,16 +592,61 @@ mod tests {
     }
 
     #[test]
-    fn the_wheel_moves_the_view_and_pulls_the_cursor_along_only_at_the_edge() {
+    fn scrolling_away_and_back_puts_the_reader_exactly_where_they_were() {
         let mut app = paged();
         app.apply(Action::Move(Motion::Line(1)));
-        app.apply(Action::Scroll(3));
-        assert_eq!(app.top, 3);
-        assert_eq!(app.cursor, 3, "the cursor was above the new view and is pulled to its top");
+        let cursor = app.cursor;
 
-        app.apply(Action::Scroll(-3));
+        // Three screenfuls out, well past anything the viewport can show.
+        for _ in 0..10 {
+            app.apply(Action::Scroll(3));
+        }
+        assert_eq!(app.top, 30);
+        assert_eq!(app.cursor, cursor, "the wheel moves the viewport and nothing else");
+
+        for _ in 0..10 {
+            app.apply(Action::Scroll(-3));
+        }
         assert_eq!(app.top, 0);
-        assert_eq!(app.cursor, 3, "still visible, so it stays where the reader left it");
+        assert_eq!(app.cursor, cursor, "so coming back restores the place, rather than guessing at it");
+    }
+
+    #[test]
+    fn the_wheel_leaves_the_cursor_alone_at_both_ends_of_the_document() {
+        let mut app = paged();
+        let (top, cursor) = (app.top, app.cursor);
+        for _ in 0..5 {
+            app.apply(Action::Scroll(-3));
+        }
+        assert_eq!((app.top, app.cursor), (top, cursor), "the view is already at the head");
+
+        app.apply(Action::Move(Motion::Bottom));
+        // Park the reader at the top of the last screenful.
+        app.cursor = app.top;
+        let (top, cursor) = (app.top, app.cursor);
+        for _ in 0..5 {
+            app.apply(Action::Scroll(3));
+        }
+        assert_eq!(app.top, top, "the view is already at the foot");
+        assert_eq!(app.cursor, cursor, "and the cursor was never the wheel's to move");
+    }
+
+    #[test]
+    fn a_motion_key_starts_from_the_line_the_reader_can_see() {
+        let mut app = paged();
+        app.apply(Action::Scroll(30));
+        assert_eq!((app.top, app.cursor), (30, 0), "the cursor is off the top of the screen");
+
+        app.apply(Action::Move(Motion::Line(1)));
+        assert_eq!(app.cursor, 31, "snapped to the first visible line, then moved");
+        assert_eq!(app.top, 30, "and the viewport the reader chose is left alone");
+
+        // The other way round: the cursor below the viewport, scrolled back up.
+        app.apply(Action::Scroll(-30));
+        assert_eq!((app.top, app.cursor), (0, 31));
+        app.apply(Action::Move(Motion::Line(-1)));
+        assert_eq!(app.cursor, 8, "snapped to the last visible line of a ten-row viewport, then moved");
+        assert_eq!(app.top, 0);
     }
 
     #[test]
@@ -807,21 +870,6 @@ mod tests {
         assert_eq!(crate::ui::input::action(&wheel, app.mode), None);
 
         assert_eq!((app.top, app.cursor), (top, cursor));
-    }
-
-    #[test]
-    fn the_wheel_stops_dragging_the_cursor_at_the_foot_of_the_document() {
-        let mut app = paged();
-        app.apply(Action::Move(Motion::Bottom));
-        // Park the reader at the top of the last screenful.
-        app.cursor = app.top;
-        let (top, cursor) = (app.top, app.cursor);
-
-        for _ in 0..5 {
-            app.apply(Action::Scroll(3));
-        }
-        assert_eq!(app.top, top, "the view is already at the end");
-        assert_eq!(app.cursor, cursor, "so the cursor has no reason to move either");
     }
 
     #[test]
@@ -1111,17 +1159,20 @@ mod tests {
     }
 
     #[test]
-    fn a_wheel_notch_that_drags_the_cursor_does_drop_the_focus() {
+    fn scrolling_the_focused_link_off_the_screen_and_back_keeps_it_focused() {
         let mut app = inside_vault("[[note]] and [[missing]]\n\n".to_string().repeat(30).as_str());
         let line = app.lines.iter().position(|line| line.links.len() > 1).expect("a line with several links");
         app.cursor = line;
         app.apply(Action::Focus { forward: true });
         assert_eq!(app.focus, 1);
 
-        // Far enough that the cursor cannot stay where it is.
-        app.apply(Action::Scroll(app.viewport_height() as isize * 2));
-        assert_ne!(app.cursor, line);
-        assert_eq!(app.focus, 0, "a different line, so a different link");
+        // Far enough that the cursor cannot stay on the screen.
+        let away = app.viewport_height() as isize * 2;
+        app.apply(Action::Scroll(away));
+        assert_eq!((app.cursor, app.focus), (line, 1), "the wheel moved the view, not the reader");
+
+        app.apply(Action::Scroll(-away));
+        assert_eq!((app.cursor, app.focus), (line, 1), "and back again, with the chosen link still chosen");
     }
 
     #[test]
