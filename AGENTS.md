@@ -113,15 +113,26 @@ session, do all of the following:
   - CI must be green (`fmt`, `clippy -D warnings`, tests on Linux, macOS,
     Windows, MSRV, audit) before asking for review.
   - Do not merge, tag, or publish without the user's explicit request.
-- Merging a **stack** of PRs: retarget the PR above before deleting the branch
-  below it. `gh pr merge <lower> --merge --delete-branch` deletes the base of
-  the PR stacked on it, and GitHub answers by **closing** that PR rather than
-  retargeting it — after which `gh pr edit --base main` refuses ("cannot change
-  the base branch of a closed pull request") and `gh pr reopen` refuses too,
-  because the base is gone. Recovering means pushing the deleted branch back at
-  its old SHA, reopening, retargeting, then deleting it again. Merge the lower
-  PR without `--delete-branch`, `gh pr edit <upper> --base main`, and delete the
-  branch by hand.
+- A milestone split into stacked PRs is **merged as a stack**, not one PR at a
+  time. `gh stack` (the official `github/gh-stack` extension) does it
+  atomically: everything up to the chosen PR lands in one all-or-nothing
+  operation, so nothing has to be retargeted or rebased between merges.
+
+  ```sh
+  gh stack link 23 24 30      # bottom to top; PR numbers, URLs, or branches
+  gh stack merge --yes --merge
+  ```
+
+  `link` needs no local tracking state — it takes PRs that already exist and
+  chains their bases — so a stack opened one `gh pr create` at a time can be
+  adopted after the fact. `gh stack merge` checks only that each PR is open and
+  not a draft; branch protection is evaluated by GitHub when the merge runs.
+- Do **not** merge a stack PR-by-PR with `--delete-branch`. Deleting the base of
+  the PR above **closes** that PR rather than retargeting it, and a closed PR
+  whose base branch is gone cannot be recovered directly: `gh pr edit --base
+  main` refuses ("cannot change the base branch of a closed pull request") and
+  so does `gh pr reopen`. Undoing it means pushing the deleted branch back at
+  its old SHA, reopening, retargeting, then deleting it again.
 
 ## 5. Before opening a PR
 
