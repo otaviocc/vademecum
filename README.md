@@ -385,8 +385,7 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
 
 - **Wrap width**: `--width`, else `min(terminal columns − 2, 100)`; `100`
   when stdout is not a TTY. Content is left-aligned with a one-column gutter,
-  which is taken *out* of the wrap width: no line is ever wider than the width
-  asked for.
+  which is taken *out* of the wrap width, so `--width 80` means 80 columns.
 - **Word wrap** on whitespace using `unicode-width` for display width; a word
   longer than the width is broken hard.
 - **Code blocks** never wrap: lines longer than the width are truncated with
@@ -396,13 +395,19 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
 - **Tables**: column width = max cell width; if the sum exceeds the wrap
   width, shrink columns proportionally (min 3) and wrap cells. Box-drawing
   borders in `table_border`, a rule under the header and none between body
-  rows, and the column alignments from the source applied to the padding.
+  rows, and the column alignments from the source applied to the padding. The
+  minimum of 3 is a goal, not a promise: at a narrow enough width, holding it
+  would push the table past the wrap width, so it gives way first.
 - **Lists** indent 2 columns per level; ordered lists use the source start
   number; task markers replace the bullet. Bullets cycle `•`, `◦`, `▪` and
   begin again at the fourth level. A nested list follows its item's text with
   no blank line between them — the separator would split the list in two.
 - **Quotes** get a `┃ ` gutter per nesting level and wrap inside it.
 - **Footnote definitions** hang under a `[^1] ` marker in `footnote`.
+- **No line is ever wider than the wrap width.** Wrapping keeps text inside it,
+  but a table's borders and padding have a floor a narrow width cannot pay for,
+  and a single character can be wider than the whole line. Whatever is left over
+  is cut with `…`, the same mark a long code line gets.
 - **Body text inherits a base style**: `paragraph` at document level, `quote`
   inside a quote. Inline styles patch on top of it, so a link inside a quote
   is a link and the text around it is quoted.
