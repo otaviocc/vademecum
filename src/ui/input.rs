@@ -21,7 +21,9 @@ pub enum Action {
     Quit,
     Move(Motion),
     Scroll(isize),
-    Click { column: u16, row: u16 },
+    SelectStart { column: u16, row: u16 },
+    SelectExtend { column: u16, row: u16 },
+    SelectEnd { column: u16, row: u16 },
     Resize(Size),
     ToggleHelp,
     Dismiss,
@@ -127,7 +129,13 @@ fn mouse_action(mouse: MouseEvent, mode: Mode) -> Option<Action> {
         MouseEventKind::ScrollDown => Some(Action::Scroll(WHEEL_LINES)),
         MouseEventKind::ScrollUp => Some(Action::Scroll(-WHEEL_LINES)),
         MouseEventKind::Down(MouseButton::Left) if mode == Mode::Browse => {
-            Some(Action::Click { column: mouse.column, row: mouse.row })
+            Some(Action::SelectStart { column: mouse.column, row: mouse.row })
+        }
+        MouseEventKind::Drag(MouseButton::Left) if mode == Mode::Browse => {
+            Some(Action::SelectExtend { column: mouse.column, row: mouse.row })
+        }
+        MouseEventKind::Up(MouseButton::Left) if mode == Mode::Browse => {
+            Some(Action::SelectEnd { column: mouse.column, row: mouse.row })
         }
         _ => None,
     }
@@ -236,7 +244,7 @@ mod tests {
             row: 6,
             modifiers: KeyModifiers::NONE,
         });
-        assert_eq!(browsing(&click), Some(Action::Click { column: 17, row: 6 }));
+        assert_eq!(browsing(&click), Some(Action::SelectStart { column: 17, row: 6 }));
     }
 
     #[test]
@@ -253,9 +261,21 @@ mod tests {
     }
 
     #[test]
-    fn a_release_and_a_drag_are_not_a_click() {
-        for kind in [MouseEventKind::Up(MouseButton::Left), MouseEventKind::Drag(MouseButton::Left)] {
-            assert_eq!(browsing(&wheel(kind)), None, "{kind:?}");
+    fn a_drag_and_a_release_carry_the_cell_too() {
+        let at = |kind| Event::Mouse(MouseEvent { kind, column: 4, row: 9, modifiers: KeyModifiers::NONE });
+        let drag = at(MouseEventKind::Drag(MouseButton::Left));
+        let release = at(MouseEventKind::Up(MouseButton::Left));
+
+        assert_eq!(browsing(&drag), Some(Action::SelectExtend { column: 4, row: 9 }));
+        assert_eq!(browsing(&release), Some(Action::SelectEnd { column: 4, row: 9 }));
+    }
+
+    #[test]
+    fn the_other_buttons_select_nothing() {
+        for button in [MouseButton::Right, MouseButton::Middle] {
+            for kind in [MouseEventKind::Down(button), MouseEventKind::Drag(button), MouseEventKind::Up(button)] {
+                assert_eq!(browsing(&wheel(kind)), None, "{kind:?}");
+            }
         }
     }
 
