@@ -223,9 +223,15 @@ TOML. Origins and licences for the added ones are in
 | `q`, `Ctrl-C` | Quit |
 | Left click | Move the cursor to the clicked line, or follow the link under the pointer |
 
-The wheel scrolls three lines a notch. Capturing the mouse takes your terminal's
-own text selection away, so `--no-mouse` turns it off; most terminals also let
-you hold `Shift` while dragging to select through a capturing program.
+The wheel scrolls three lines a notch and moves nothing else — the cursor keeps
+its line and may scroll off screen, so browsing away and back leaves your place
+exactly as it was. The next motion key brings the view back to the cursor before
+it moves, which is why `line X/Y` always names a line you can see. To read
+somewhere you scrolled to, click the line.
+
+Capturing the mouse takes your terminal's own text selection away, so
+`--no-mouse` turns it off; most terminals also let you hold `Shift` while
+dragging to select through a capturing program.
 
 ## Flags
 
