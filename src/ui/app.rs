@@ -115,6 +115,9 @@ impl App {
         let links = Links::new(document, options.root.as_deref());
         let width = layout::wrap_width(width_override, Some(area.width));
         let lines = layout::render(&blocks, &Ctx::new(&theme, &links), width);
+        // Layout may have had something to say — an unknown syntax theme, say.
+        // It cannot print it: the alternate screen is up by now.
+        let status = complaint().unwrap_or_default();
 
         Self {
             theme,
@@ -128,7 +131,7 @@ impl App {
             top: 0,
             quit: false,
             mode: Mode::default(),
-            status: Status::default(),
+            status,
             search: Search::default(),
             plain: None,
             title,
@@ -531,6 +534,9 @@ impl App {
     /// or freshly parsed from a file that changed under the reader.
     fn rerender(&mut self, place: Place) {
         self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
+        if let Some(complaint) = complaint() {
+            self.status = complaint;
+        }
 
         self.cursor = self
             .lines
@@ -582,6 +588,14 @@ impl App {
         self.top = self.top.min(self.cursor);
         self.top = self.top.max(self.cursor.saturating_sub(height - 1));
     }
+}
+
+/// Whatever layout had to say, as a statusbar error. Highlighting runs inside
+/// layout, which has no screen to print to and must not take this one, so it
+/// leaves its warnings to be collected here.
+fn complaint() -> Option<Status> {
+    let warnings = crate::render::code::take_warnings();
+    (!warnings.is_empty()).then(|| Status::Error(warnings.join("; ")))
 }
 
 /// A document's header title and statusbar name: the frontmatter title, else

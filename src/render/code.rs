@@ -12,7 +12,7 @@
 //! why the caller patches these styles over the block style rather than the
 //! other way round: a `.tmTheme` must never repaint the block.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -88,16 +88,36 @@ fn theme_for(name: Option<&str>) -> (&'static str, &'static SyntectTheme) {
         return (name, theme);
     }
     if let Some(name) = name {
-        warn_once(name);
+        warn(name);
     }
 
     let theme = themes.themes.get(FALLBACK).expect("base16-ocean.dark is one of syntect's bundled themes");
     (FALLBACK, theme)
 }
 
-fn warn_once(name: &str) {
-    static WARNED: OnceLock<()> = OnceLock::new();
-    WARNED.get_or_init(|| eprintln!("vademecum: no syntax theme named {name:?}; using {FALLBACK}"));
+/// Say something the reader needs to know, once per distinct thing.
+///
+/// Not printed. Highlighting happens during layout, and in the pager layout
+/// runs with the alternate screen up, so an `eprintln!` here paints over the
+/// document. The message waits in `WARNINGS` until a caller that owns a screen —
+/// or a stderr — comes to collect it.
+fn warn(name: &str) {
+    let mut warnings = warnings().lock().unwrap_or_else(PoisonError::into_inner);
+    let message = format!("no syntax theme named {name:?}; using {FALLBACK}");
+    if !warnings.contains(&message) {
+        warnings.push(message);
+    }
+}
+
+fn warnings() -> &'static Mutex<Vec<String>> {
+    static WARNINGS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    WARNINGS.get_or_init(Mutex::default)
+}
+
+/// Everything layout has had to say since this was last asked, and nothing
+/// twice: the pager puts these on the statusbar, stdout mode on stderr.
+pub fn take_warnings() -> Vec<String> {
+    std::mem::take(&mut *warnings().lock().unwrap_or_else(PoisonError::into_inner))
 }
 
 /// syntect line by syntect line. The set is loaded with newlines, so each line
@@ -196,26 +216,57 @@ fn user_themes() -> Vec<PathBuf> {
 
 /// A block is identified by the syntax that read it, the theme that colored
 /// it, and its text — the three things its spans depend on.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Key {
     syntax: String,
     theme: String,
     text: u64,
 }
 
-fn cache() -> &'static Mutex<HashMap<Key, CodeLines>> {
-    static CACHE: OnceLock<Mutex<HashMap<Key, CodeLines>>> = OnceLock::new();
+/// How many highlighted blocks are kept.
+///
+/// Real documents carry a couple of dozen fences at the outside, so this is an
+/// order of magnitude of headroom over the thing that has to fit: one document,
+/// because a resize re-highlights the blocks of the document on screen and that
+/// is what the cache exists to prevent. Without a bound, a `--watch` session
+/// keeps every revision of every fence the writer saves, and a walk through a
+/// vault keeps every block of every document visited, for the life of the
+/// process.
+const CAPACITY: usize = 256;
+
+/// The blocks, and the order they arrived in. Eviction is oldest-first rather
+/// than least-recently-used: while the bound is clear of one document's fences,
+/// the two evict the same things, and insertion order needs no bookkeeping on
+/// the read path.
+#[derive(Default)]
+struct Cache {
+    blocks: HashMap<Key, CodeLines>,
+    order: VecDeque<Key>,
+}
+
+fn cache() -> &'static Mutex<Cache> {
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     CACHE.get_or_init(Mutex::default)
 }
 
 /// A poisoned cache is a cache, not a reason to stop rendering: whatever
 /// panicked left highlighted spans behind, and they are still correct.
 fn cached(key: &Key) -> Option<CodeLines> {
-    cache().lock().unwrap_or_else(PoisonError::into_inner).get(key).map(Arc::clone)
+    cache().lock().unwrap_or_else(PoisonError::into_inner).blocks.get(key).map(Arc::clone)
 }
 
 fn store(key: Key, lines: CodeLines) {
-    cache().lock().unwrap_or_else(PoisonError::into_inner).insert(key, lines);
+    let mut cache = cache().lock().unwrap_or_else(PoisonError::into_inner);
+    if cache.blocks.insert(key.clone(), lines).is_none() {
+        cache.order.push_back(key);
+    }
+    while cache.order.len() > CAPACITY {
+        // The map and the queue are written together, so a key at the front of
+        // one is in the other.
+        if let Some(oldest) = cache.order.pop_front() {
+            cache.blocks.remove(&oldest);
+        }
+    }
 }
 
 fn hash(text: &str) -> u64 {
@@ -296,6 +347,7 @@ mod tests {
 
     #[test]
     fn an_unknown_theme_falls_back_rather_than_failing() {
+        let _guard = exclusively();
         let (name, _) = theme_for(Some("no-such-theme"));
         assert_eq!(name, FALLBACK);
         let (name, _) = theme_for(None);
@@ -307,6 +359,78 @@ mod tests {
         let lines = highlight(Some("rust"), "let a = 1;\n\nlet b = 2;\n", Some("base16-ocean.dark"));
         assert_eq!(lines.len(), 3);
         assert!(lines[1].is_empty(), "the blank line carries spans: {:?}", lines[1]);
+    }
+
+    /// The cache and the warning list are process-global, and `cargo test` runs
+    /// these in parallel with each other. Anything that asserts on the *whole*
+    /// of either has to hold this first.
+    fn exclusively() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(Mutex::default).lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    #[test]
+    fn the_cache_stops_growing_at_its_bound() {
+        let _guard = exclusively();
+        // Distinct texts, so each is a distinct key and nothing is a hit.
+        for n in 0..CAPACITY + 50 {
+            highlight(Some("rust"), &format!("let x{n} = {n};\n"), None);
+        }
+        let cache = cache().lock().unwrap_or_else(PoisonError::into_inner);
+        assert!(cache.blocks.len() <= CAPACITY, "{} blocks kept", cache.blocks.len());
+        assert_eq!(cache.blocks.len(), cache.order.len(), "the map and the queue drifted apart");
+    }
+
+    /// What the bound is chosen to protect: a resize re-highlights every block
+    /// of the document on screen, and one document is far inside the bound, so
+    /// every one of them is still a hit.
+    #[test]
+    fn nothing_of_one_document_is_evicted_while_it_is_being_read() {
+        let _guard = exclusively();
+        let document: Vec<String> = (0..24).map(|n| format!("fn doc{n}() {{}}\n")).collect();
+        let first: Vec<_> = document.iter().map(|text| highlight(Some("rust"), text, None)).collect();
+
+        for (text, before) in document.iter().zip(&first) {
+            let after = highlight(Some("rust"), text, None);
+            assert!(Arc::ptr_eq(before, &after), "a block of the open document was evicted before it was re-read");
+        }
+    }
+
+    #[test]
+    fn every_distinct_bad_theme_name_is_reported_once() {
+        let _guard = exclusively();
+        let _ = take_warnings();
+
+        theme_for(Some("no-such-theme"));
+        theme_for(Some("no-such-theme"));
+        theme_for(Some("another-missing-theme"));
+
+        let warnings = take_warnings();
+        assert_eq!(warnings.len(), 2, "expected one per distinct name, got {warnings:?}");
+        assert!(warnings.iter().any(|warning| warning.contains("no-such-theme")));
+        assert!(warnings.iter().any(|warning| warning.contains("another-missing-theme")));
+        assert!(warnings.iter().all(|warning| warning.contains(FALLBACK)), "the fallback is not named");
+    }
+
+    /// Collected rather than printed, and handed over exactly once: layout runs
+    /// under the alternate screen and cannot print, and a warning left behind
+    /// would be shown again on every re-layout.
+    #[test]
+    fn taking_the_warnings_empties_them() {
+        let _guard = exclusively();
+        let _ = take_warnings();
+        theme_for(Some("gone-missing"));
+        assert!(!take_warnings().is_empty());
+        assert!(take_warnings().is_empty(), "a warning survived being collected");
+    }
+
+    #[test]
+    fn a_theme_that_exists_says_nothing() {
+        let _guard = exclusively();
+        let _ = take_warnings();
+        theme_for(Some(FALLBACK));
+        theme_for(None);
+        assert!(take_warnings().is_empty());
     }
 
     #[test]
