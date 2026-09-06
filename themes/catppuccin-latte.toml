@@ -1,0 +1,21 @@
+# Catppuccin Latte — the canonical palette, upstream names in the comments.
+# The same slot mapping as Mocha, so the two are the light and dark faces of
+# one theme rather than two unrelated ones.
+name = "catppuccin-latte"
+syntax_theme = "base16-ocean.light"
+
+[palette]
+background           = "#eff1f5"   # base
+foreground           = "#4c4f69"   # text
+muted                = "#bcc0cc"   # surface1
+muted_text           = "#8c8fa1"   # overlay1
+subtle               = "#ccd0da"   # surface0
+selection_background = "#acb0be"   # surface2
+selection_foreground = "#4c4f69"   # text
+error                = "#d20f39"   # red
+success              = "#40a02b"   # green
+warning              = "#df8e1d"   # yellow
+accent               = "#8839ef"   # mauve
+chrome               = "#8839ef"   # mauve
+highlight            = "#1e66f5"   # blue
+notice               = "#ea76cb"   # pink

@@ -1,0 +1,110 @@
+---
+source: tests/stdout.rs
+expression: output
+---
+ [0;36;1mHeading 1[0m
+
+ [0;39mEvery construct in the README element table lives in this file. The snapshot[0m
+ [0;39mtests render it at a fixed width, so anything the renderer changes shows up as[0m
+ [0;39ma diff here first.[0m
+
+ [0;36;1mHeading 2[0m
+
+ [0;34;1mHeading 3[0m
+
+ [0;34mHeading 4[0m
+
+ [0;34mHeading 5[0m
+
+ [0;34mHeading 6[0m
+
+ [0;39mA paragraph with [0;39;3memphasis[0;39m, [0;39;1mstrong[0;39m, [0;37;9mstrikethrough[0;39m, and [0;33;100minline code[0;39m in it, long[0m
+ [0;39menough that it has to wrap at least once at eighty columns.[0m
+
+ [0;39mA paragraph with a soft break in it, and one with a hard[0m
+ [0;39mbreak in it.[0m
+
+ [0;36;1mCode[0m
+
+ [0;39;100m                                                                          [0;37;100mrust[0;39;100m [0m
+ [0;39;100mfn main() {                                                                    [0m
+ [0;39;100m    println!("syntect highlighting arrives in milestone 3");                   [0m
+ [0;39;100m}                                                                              [0m
+ [0;39;100m                                                                               [0m
+
+ [0;39;100m                                                                               [0m
+ [0;39;100mAn unlabelled fence.                                                           [0m
+ [0;39;100mA line long enough that it has to be truncated rather than wrapped, because co…[0m
+ [0;39;100m                                                                               [0m
+
+ [0;36;1mQuotes[0m
+
+ [0;90m┃ [0;37;3mA block quote, long enough to wrap inside its own gutter so the continuation[0m
+ [0;90m┃ [0;37;3mlines line up.[0m
+ [0;90m┃ [0m
+ [0;90m┃ [0;90m┃ [0;37;3mA nested quote, with [0;37;1;3mstrong[0;37;3m and a ]8;;https://example.com\[0;34;3;4mlink]8;;\[0;37;3m inside it.[0m
+
+ [0;36;1mLists[0m
+
+ [0;36m• [0;39mA bullet item[0m
+ [0;36m• [0;39mAnother one, long enough that it wraps and its continuation lines hang under[0m
+   [0;39mthe text rather than the bullet[0m
+   [0;36m◦ [0;39mA nested item[0m
+     [0;36m▪ [0;39mA doubly nested item[0m
+
+ [0;36m3. [0;39mAn ordered list that starts at three[0m
+ [0;36m4. [0;39mAnd counts on from there[0m
+
+ [0;32m☑ [0;39mA finished task[0m
+ [0;37m☐ [0;39mAn unfinished task[0m
+
+ [0;36;1mTables[0m
+
+ [0;90m┌──────┬────────┬───────┐[0m
+ [0;90m│ [0;39;1m[0;39;1mLeft[0;39;1m[0;90m [0;90m│ [0;39;1m[0;39;1mCenter[0;39;1m[0;90m [0;90m│ [0;39;1m[0;39;1mRight[0;39;1m[0;90m [0;90m│[0m
+ [0;90m├──────┼────────┼───────┤[0m
+ [0;90m│ [0;39m[0;39ma[0;39m   [0;90m [0;90m│ [0;39m  [0;39mb[0;39m   [0;90m [0;90m│ [0;39m    [0;39mc[0;39m[0;90m [0;90m│[0m
+ [0;90m│ [0;39m[0;39mone[0;39m [0;90m [0;90m│ [0;39m [0;39mtwo[0;39m  [0;90m [0;90m│ [0;39m[0;39mthree[0;39m[0;90m [0;90m│[0m
+ [0;90m└──────┴────────┴───────┘[0m
+
+ [0;90m┌───────────────────┬─────────────────────────────────────────────────────────┐[0m
+ [0;90m│ [0;39;1m[0;39;1mConstruct[0;39;1m        [0;90m [0;90m│ [0;39;1m[0;39;1mWhat it is for[0;39;1m                                         [0;90m [0;90m│[0m
+ [0;90m├───────────────────┼─────────────────────────────────────────────────────────┤[0m
+ [0;90m│ [0;39m[0;39mA table wider[0;39m    [0;90m [0;90m│ [0;39m[0;39mso that the columns have to shrink proportionally and[0;39m  [0;90m [0;90m│[0m
+ [0;90m│ [0;39m[0;39mthan the wrap[0;39m    [0;90m [0;90m│ [0;39m[0;39mthe cells inside them have to wrap onto more than one[0;39m  [0;90m [0;90m│[0m
+ [0;90m│ [0;39m[0;39mwidth[0;39m            [0;90m [0;90m│ [0;39m[0;39mline[0;39m                                                   [0;90m [0;90m│[0m
+ [0;90m└───────────────────┴─────────────────────────────────────────────────────────┘[0m
+
+ [0;36;1mLinks[0m
+
+ [0;39mAn ]8;;https://example.com/docs\[0;34;4mexternal link]8;;\[0;39m, a [0;35;1mlocal link[0;39m, a [0;35;1mlocal link with a fragment[0;39m, a [0;35;1mfragment on[0m
+ [0;35;1mthis page[0;39m, a wikilink [0;35;1mnote[0;39m, an aliased one [0;35;1mwith an alias[0;39m, and one with a[0m
+ [0;39mfragment [0;35;1mnote#A Heading[0;39m.[0m
+
+ ]8;;https://example.com/autolink\[0;34;4mhttps://example.com/autolink]8;;\[0;39m and ]8;;otavio@example.com\[0;34;4motavio@example.com]8;;\[0;39m.[0m
+
+ [0;36;1mImages[0m
+
+ [0;37;3m[image: a cat, sitting][0m
+
+ [0;36;1mFootnotes[0m
+
+ [0;39mA sentence with a footnote reference[0;37m[^1][0;39m.[0m
+
+ [0;37m[^1] [0;39mThe definition, long enough that it wraps and hangs under its marker.[0m
+
+ [0;36;1mRaw HTML[0m
+
+ [0;37;2m<div class="note">[0m
+ [0;37;2m  <p>A block of raw HTML, shown verbatim.</p>[0m
+ [0;37;2m</div>[0m
+
+ [0;39mA paragraph with [0;37;2m<em>[0;39minline HTML[0;37;2m</em>[0;39m in it.[0m
+
+ [0;36;1mWide characters[0m
+
+ [0;39m日本語のテキストは一文字が二桁分の幅を取るので、折り返しの計算がちがいます。[0m
+
+ [0;36;1mRules[0m
+
+ [0;90m───────────────────────────────────────────────────────────────────────────────[0m

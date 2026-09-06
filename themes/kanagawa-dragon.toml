@@ -1,0 +1,25 @@
+# Kanagawa Dragon — https://github.com/rebelot/kanagawa.nvim, the `dragon`
+# block of lua/kanagawa/themes.lua. The darkest and warmest of Kanagawa's three
+# variants: every neutral leans warm against its #181616 background.
+#
+# The slot each color fills follows Kanagawa's own semantic roles, and the
+# accent is `dragonYellow`, which is the accent the rest of these dotfiles use.
+# Upstream names are in the comments.
+name = "kanagawa-dragon"
+syntax_theme = "base16-eighties.dark"
+
+[palette]
+background           = "#181616"   # dragonBlack3
+foreground           = "#c5c9c5"   # dragonWhite
+muted                = "#625e5a"   # dragonBlack6, the warm grey of borders
+muted_text           = "#737c73"   # dragonAsh, the comment color
+subtle               = "#282727"   # dragonBlack4
+selection_background = "#223249"   # waveBlue1, Dragon's own bg_visual
+selection_foreground = "#c5c9c5"   # dragonWhite
+error                = "#c34043"   # autumnRed
+success              = "#76946a"   # autumnGreen
+warning              = "#dca561"   # autumnYellow
+accent               = "#c4b28a"   # dragonYellow
+chrome               = "#c4b28a"   # dragonYellow
+highlight            = "#8ba4b0"   # dragonBlue2
+notice               = "#8992a7"   # dragonViolet, upstream's color for refs

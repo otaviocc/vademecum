@@ -132,32 +132,56 @@ folder, so it is the same on macOS and Linux):
 | `<config>/syntax-themes/*.tmTheme` | User syntect themes, referenced by name in `syntax_theme` |
 
 **Theme precedence:** `--config <file>` > `--theme <name>` >
-`<config>/theme.toml` > built-in `default-plus`.
+`<config>/theme.toml` > built-in `ansi`.
 
 Theme files are **partial**: any palette slot or element you omit falls back
-to the built-in default. Unknown keys produce a warning on stderr, never an
-error.
+to the built-in default, and within `[elements.x]` the three keys fall back
+independently — set only `fg` and the default `bg` and modifiers survive.
+`modifiers = []` is how you clear them.
+
+Unknown keys produce a warning on stderr, never an error. A value that cannot
+be read — malformed TOML, a color that is none of the accepted forms — is a
+different matter: it makes the theme unusable, so vademecum reports it on
+stderr and exits non-zero rather than rendering something the file did not
+ask for. So does an unknown `--theme <name>`, which lists the names it does
+know.
+
+A user theme whose file stem matches a built-in **shadows** it, so
+`<config>/themes/kanagawa-dragon.toml` retunes that theme rather than
+forcing a new name for it.
+
+`--list-themes` prints one name per line: the built-ins in the order of the
+Built-in themes table, then user themes alphabetically, each name once.
 
 ### Built-in themes
 
 | Name | Appearance | Source |
 | --- | --- | --- |
-| `default-plus` (default) | dark | [Default+](https://github.com/otaviocc/default-plus) `palette.yaml` |
-| `ansi` | inherits terminal | 16 ANSI color names only; follows whatever scheme the terminal uses |
+| `ansi` (default) | inherits terminal | 16 ANSI color names and `reset` only; follows whatever scheme the terminal uses |
+| `kanagawa-dragon` | dark | [kanagawa.nvim](https://github.com/rebelot/kanagawa.nvim) Dragon variant |
 | `catppuccin-mocha` | dark | Catppuccin canonical palette |
 | `catppuccin-latte` | light | Catppuccin canonical palette |
+
+`ansi` is the default because a reader who has not asked for a theme has
+already chosen one — their terminal's. It asserts no color of its own beyond
+the 16 the terminal defines, so vademecum looks like everything else on the
+screen until told otherwise.
 
 ### Theme format
 
 ```toml
 # ~/.config/vademecum/theme.toml
-name = "default-plus"
+name = "my-theme"
 # syntect .tmTheme by name: bundled (base16-ocean.dark, base16-eighties.dark,
 # base16-mocha.dark, base16-ocean.light, InspiredGitHub, Solarized (dark),
 # Solarized (light)) or a file in <config>/syntax-themes/.
 syntax_theme = "base16-ocean.dark"
 
-# Semantic palette. Every element style derives from these slots.
+# Semantic palette. Every element style derives from these slots. A slot takes
+# an 8-bit index (208), hex ("#89b4fa"), "reset" for the terminal's own color,
+# or one of the 16 ANSI names: black, red, green, yellow, blue, magenta, cyan,
+# gray, dark_gray, light_red, light_green, light_yellow, light_blue,
+# light_magenta, light_cyan, white. A slot cannot name another slot.
 [palette]
 background           = "#1E1E1E"
 foreground           = "#FFFFFF"
@@ -174,10 +198,9 @@ chrome               = "#56D0B3"   # header title
 highlight            = "#35B0D8"   # links
 notice               = "#F2248C"   # wikilinks, transient status
 
-# Optional per-element overrides. `fg`/`bg` accept a palette slot name
-# ("accent"), an ANSI name ("blue", "dark_gray"), an 8-bit index (208), or
-# hex ("#89b4fa"). Modifiers: bold, italic, underline, dim, reversed,
-# crossed_out.
+# Optional per-element overrides. `fg`/`bg` accept everything a palette slot
+# does, plus the name of a slot ("accent") — resolved against this file's
+# palette. Modifiers: bold, italic, underline, dim, reversed, crossed_out.
 [elements.heading1]
 fg = "accent"
 modifiers = ["bold", "underline"]
@@ -186,6 +209,23 @@ modifiers = ["bold", "underline"]
 fg = "warning"
 bg = "subtle"
 ```
+
+Every slot a file leaves out keeps its default, which is the `ansi` built-in:
+
+| Slot | Default | Slot | Default |
+| --- | --- | --- | --- |
+| `background` | `reset` | `success` | `green` |
+| `foreground` | `reset` | `warning` | `yellow` |
+| `muted` | `dark_gray` | `accent` | `cyan` |
+| `muted_text` | `gray` | `chrome` | `cyan` |
+| `subtle` | `dark_gray` | `highlight` | `blue` |
+| `selection_background` | `blue` | `notice` | `magenta` |
+| `selection_foreground` | `white` | | |
+| `error` | `red` | | |
+
+`subtle` is the one slot `ansi` cannot leave as `reset`: it is the background
+of the cursor line and of code blocks, and a background equal to the
+terminal's own would make both invisible.
 
 Every element and its default derivation from the palette:
 
@@ -228,7 +268,8 @@ Every element and its default derivation from the palette:
 | `help_window` | foreground | background | — | border in accent |
 
 The `ansi` built-in maps every slot to a `Color::Reset` or a 16-color ANSI
-name so it never asserts truecolor.
+name so it never asserts truecolor. Being the default, it is also the base
+every partial theme file merges over.
 
 The `syntax_theme` key cleanly separates **element styling** (our TOML) from
 **code token coloring** (syntect). Only the syntect theme's *foreground*
@@ -271,8 +312,8 @@ vademecum/
 ├── rustfmt.toml
 ├── Makefile                 # build/run/test/clean/fmt/lint
 ├── themes/                  # built-in themes, embedded with include_str!
-│   ├── default-plus.toml
 │   ├── ansi.toml
+│   ├── kanagawa-dragon.toml
 │   ├── catppuccin-mocha.toml
 │   └── catppuccin-latte.toml
 ├── .github/workflows/
@@ -626,7 +667,7 @@ Each milestone ends with a verifiable state and a green `make lint && make test`
    skeleton. Verifiable: `vademecum --version`; CI green on all three OSes.
 1. **Stdout renderer** — `config.rs`, `document.rs` (file, stdin,
    frontmatter), `markdown/ast.rs` + `links.rs` (classification only),
-   `theme/` with the built-in `default-plus` palette and the element defaults
+   `theme/` with the built-in `ansi` palette and the element defaults
    table (no file loading yet), `render/` (`line`, `layout`, `ansi`; code
    blocks unhighlighted), `--plain`, `--color`, `--width`, automatic non-TTY
    detection. Verifiable: `vademecum --plain README.md` renders every

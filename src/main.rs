@@ -1,5 +1,4 @@
 mod cli;
-#[allow(dead_code, reason = "read once theme files land in milestone 2")]
 mod config;
 mod document;
 mod markdown;
@@ -14,7 +13,6 @@ use clap::Parser;
 
 use crate::cli::{Cli, ColorChoice};
 use crate::document::Document;
-use crate::theme::Theme;
 
 /// Wrap width when there is no terminal to measure.
 const DEFAULT_WIDTH: usize = 100;
@@ -26,16 +24,28 @@ fn main() -> Result<()> {
     let stdout = std::io::stdout();
     let is_terminal = stdout.is_terminal();
 
+    // Listing themes is a question about the installation, not about a
+    // document, so it answers before anything asks for a path.
+    if cli.list_themes {
+        let mut out = BufWriter::new(stdout.lock());
+        let written = theme::loader::available().iter().try_for_each(|name| writeln!(out, "{name}")).and_then(|()| out.flush());
+        return finished(written);
+    }
+
     let document = load(&cli)?;
-    let theme = Theme::default();
+    let theme = theme::loader::load(cli.config.as_deref(), cli.theme.as_deref())?;
     let blocks = markdown::ast::parse(&document.source);
     let lines = render::layout::render(&blocks, &theme, width(&cli, is_terminal));
 
     let mut out = BufWriter::new(stdout.lock());
-    let written = render::ansi::write_lines(&mut out, &lines, color(&cli, is_terminal)).and_then(|()| out.flush());
+    finished(render::ansi::write_lines(&mut out, &lines, color(&cli, is_terminal)).and_then(|()| out.flush()))
+}
+
+/// The outcome of writing to stdout. `vademecum README.md | less -R` is
+/// documented usage, and quitting the pager early closes the pipe; so does
+/// `--list-themes | head`. That is the reader leaving, not a fault.
+fn finished(written: std::io::Result<()>) -> Result<()> {
     match written {
-        // `vademecum README.md | less -R` is documented usage, and quitting the
-        // pager early closes the pipe. That is the reader leaving, not a fault.
         Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         other => other.context("cannot write to stdout"),
     }

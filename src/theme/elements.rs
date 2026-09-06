@@ -1,8 +1,11 @@
 //! The element table: every styled thing vademecum draws, and how its default
 //! style derives from the palette.
 
+use serde::Deserialize;
+
 use ratatui::style::{Modifier, Style};
 
+use crate::theme::color::ColorSpec;
 use crate::theme::palette::Palette;
 
 /// Everything that can be styled. Theme files address elements by these names
@@ -90,6 +93,54 @@ impl Element {
         Element::HelpWindow,
     ];
 
+    /// The name a theme file addresses this element by, under `[elements.*]`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Element::Paragraph => "paragraph",
+            Element::Heading1 => "heading1",
+            Element::Heading2 => "heading2",
+            Element::Heading3 => "heading3",
+            Element::Heading4 => "heading4",
+            Element::Heading5 => "heading5",
+            Element::Heading6 => "heading6",
+            Element::Emphasis => "emphasis",
+            Element::Strong => "strong",
+            Element::Strikethrough => "strikethrough",
+            Element::InlineCode => "inline_code",
+            Element::CodeBlock => "code_block",
+            Element::CodeBlockLang => "code_block_lang",
+            Element::Quote => "quote",
+            Element::ListBullet => "list_bullet",
+            Element::ListNumber => "list_number",
+            Element::TaskDone => "task_done",
+            Element::TaskTodo => "task_todo",
+            Element::Link => "link",
+            Element::Wikilink => "wikilink",
+            Element::LinkFocused => "link_focused",
+            Element::LinkBroken => "link_broken",
+            Element::Image => "image",
+            Element::Footnote => "footnote",
+            Element::Html => "html",
+            Element::TableHeader => "table_header",
+            Element::TableBorder => "table_border",
+            Element::Hr => "hr",
+            Element::HeaderTitle => "header_title",
+            Element::Hint => "hint",
+            Element::Status => "status",
+            Element::StatusNotice => "status_notice",
+            Element::StatusError => "status_error",
+            Element::CursorLine => "cursor_line",
+            Element::SearchMatch => "search_match",
+            Element::SearchCurrent => "search_current",
+            Element::HelpWindow => "help_window",
+        }
+    }
+
+    /// The element a theme file's `[elements.<key>]` addresses, if any.
+    pub fn from_key(key: &str) -> Option<Self> {
+        Element::ALL.into_iter().find(|element| element.key() == key)
+    }
+
     /// The element a heading of this level is styled with.
     pub fn heading(level: u8) -> Self {
         match level {
@@ -141,5 +192,61 @@ pub fn default_style(element: Element, palette: &Palette) -> Style {
         Element::SearchMatch => style.fg(palette.background).bg(palette.warning),
         Element::SearchCurrent => style.fg(palette.background).bg(palette.notice).add_modifier(Modifier::BOLD),
         Element::HelpWindow => style.fg(palette.foreground).bg(palette.background),
+    }
+}
+
+/// An `[elements.*]` table as a theme file writes it. The three keys fall back
+/// to the default style independently, so naming a color does not quietly
+/// discard the modifiers that came with it.
+#[derive(Debug, Default, Deserialize)]
+pub struct ElementFile {
+    pub fg: Option<ColorSpec>,
+    pub bg: Option<ColorSpec>,
+    /// `None` keeps the default modifiers; `Some([])` clears them.
+    pub modifiers: Option<Vec<String>>,
+    /// Anything else the file wrote here. Warned about, never fatal.
+    #[serde(flatten)]
+    pub unknown: std::collections::BTreeMap<String, toml::Value>,
+}
+
+/// The modifiers a theme file may name.
+pub fn modifier(name: &str) -> Option<Modifier> {
+    Some(match name {
+        "bold" => Modifier::BOLD,
+        "italic" => Modifier::ITALIC,
+        "underline" => Modifier::UNDERLINED,
+        "dim" => Modifier::DIM,
+        "reversed" => Modifier::REVERSED,
+        "crossed_out" => Modifier::CROSSED_OUT,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_element_has_a_key_that_finds_it_again() {
+        for element in Element::ALL {
+            assert_eq!(Element::from_key(element.key()), Some(element), "{element:?} is not addressable by its key");
+        }
+    }
+
+    #[test]
+    fn keys_are_the_snake_case_names_the_readme_documents() {
+        assert_eq!(Element::InlineCode.key(), "inline_code");
+        assert_eq!(Element::Heading6.key(), "heading6");
+        assert_eq!(Element::from_key("code_block_lang"), Some(Element::CodeBlockLang));
+        assert_eq!(Element::from_key("headings"), None);
+    }
+
+    #[test]
+    fn the_documented_modifiers_are_the_ones_accepted() {
+        assert_eq!(modifier("bold"), Some(Modifier::BOLD));
+        assert_eq!(modifier("underline"), Some(Modifier::UNDERLINED));
+        assert_eq!(modifier("crossed_out"), Some(Modifier::CROSSED_OUT));
+        assert_eq!(modifier("blinky"), None);
+        assert_eq!(modifier("BOLD"), None);
     }
 }

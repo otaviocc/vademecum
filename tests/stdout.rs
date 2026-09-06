@@ -14,6 +14,10 @@ fn vademecum() -> Command {
     let mut command = Command::cargo_bin("vademecum").expect("the binary is built by the test harness");
     // Colors would otherwise depend on the environment the tests run in.
     command.env_remove("NO_COLOR");
+    // So would the theme: a `theme.toml` in the developer's own config
+    // directory would otherwise repaint every snapshot below.
+    command.env("XDG_CONFIG_HOME", "/nonexistent-vademecum-test-config");
+    command.env("APPDATA", r"C:\nonexistent-vademecum-test-config");
     command
 }
 
@@ -23,10 +27,71 @@ fn run(args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("output is utf-8")
 }
 
+/// The rendered document under one built-in theme.
+fn themed(theme: &str) -> String {
+    run(&["--plain", "--color", "always", "--width", "80", "--theme", theme, "tests/fixtures/elements.md"])
+}
+
 #[test]
 fn every_construct_renders_in_color() {
     let output = run(&["--plain", "--color", "always", "--width", "80", "tests/fixtures/elements.md"]);
-    insta::assert_snapshot!("elements-color", output);
+    insta::assert_snapshot!("elements-ansi", output);
+    assert_eq!(output, themed("ansi"), "the default is not the ansi theme");
+}
+
+#[test]
+fn every_built_in_theme_renders() {
+    // One snapshot per theme: what a palette actually does to a document is
+    // not something a unit test on the palette can show.
+    insta::assert_snapshot!("elements-kanagawa-dragon", themed("kanagawa-dragon"));
+    insta::assert_snapshot!("elements-catppuccin-mocha", themed("catppuccin-mocha"));
+    insta::assert_snapshot!("elements-catppuccin-latte", themed("catppuccin-latte"));
+}
+
+#[test]
+fn a_theme_file_repaints_what_it_names_and_nothing_else() {
+    let default = run(&["--plain", "--color", "always", "--width", "80", "tests/fixtures/elements.md"]);
+    let themed = run(&[
+        "--plain",
+        "--color",
+        "always",
+        "--width",
+        "80",
+        "--config",
+        "tests/fixtures/theme.toml",
+        "tests/fixtures/elements.md",
+    ]);
+
+    // The fixture moves `accent`, which headings 1 and 2 derive from. The
+    // bold they carry by default survives, because the file did not mention it.
+    assert!(default.contains("\x1b[0;36;1mHeading 1\x1b[0m"), "the default heading is bold cyan: {default:?}");
+    assert!(themed.contains("\x1b[0;38;2;255;0;0;1mHeading 1\x1b[0m"), "the heading did not turn red: {themed:?}");
+
+    // And gives `link` an indexed color and an empty modifier list, which
+    // drops the underline the default carries.
+    assert!(default.contains("\x1b[0;34;4mexternal link"), "the default link is underlined blue");
+    assert!(themed.contains("\x1b[0;38;5;208mexternal link"), "the link kept its color or its underline");
+
+    // Everything the file does not name is untouched: heading 3 derives from
+    // `highlight`, which the fixture leaves alone.
+    let unchanged = "\x1b[0;34;1mHeading 3\x1b[0m";
+    assert!(default.contains(unchanged) && themed.contains(unchanged), "an unnamed element moved");
+}
+
+#[test]
+fn themes_are_listed_without_a_document() {
+    let output = run(&["--list-themes"]);
+    let names: Vec<&str> = output.lines().collect();
+    assert_eq!(names, ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);
+}
+
+#[test]
+fn an_unknown_theme_is_an_error_that_names_the_alternatives() {
+    let output = vademecum().args(["--theme", "nonesuch", "tests/fixtures/elements.md"]).output().expect("runs");
+    assert!(!output.status.success(), "an unknown theme should exit non-zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("nonesuch"), "{stderr}");
+    assert!(stderr.contains("kanagawa-dragon"), "{stderr}");
 }
 
 #[test]
