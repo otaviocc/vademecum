@@ -19,13 +19,15 @@ use crate::theme::Theme;
 use crate::ui::app::App;
 
 /// How the pager was asked to run.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Options {
     /// `--mouse`. Off by default because capture takes the terminal's own
     /// text selection away.
     pub mouse: bool,
     /// `--width`, when the reader pinned one.
     pub width: Option<u16>,
+    /// `--root`, when the reader named the vault themselves.
+    pub root: Option<std::path::PathBuf>,
 }
 
 /// Open `document` in the alternate screen, and return when the reader quits.
@@ -44,7 +46,7 @@ pub fn run(document: Document, theme: Theme, options: Options) -> Result<()> {
     // it. Every failure has to fall through to the teardown below instead.
     let outcome = capture_mouse(options.mouse)
         .and_then(|()| terminal.size().context("cannot measure the terminal"))
-        .map(|area| App::new(document, theme, options.width, area))
+        .map(|area| App::new(document, theme, &options, area))
         .and_then(|mut app| event_loop(&mut terminal, &mut app));
 
     // Teardown on every path, including the failing one.

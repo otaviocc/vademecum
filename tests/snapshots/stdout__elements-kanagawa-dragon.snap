@@ -90,6 +90,9 @@ expression: "themed(\"kanagawa-dragon\")"
  [0;38;2;137;146;167;1mthis page[0;38;2;197;201;197m, a wikilink [0;38;2;137;146;167;1mnote[0;38;2;197;201;197m, an aliased one [0;38;2;137;146;167;1mwith an alias[0;38;2;197;201;197m, and one with a[0m
  [0;38;2;197;201;197mfragment [0;38;2;137;146;167;1mnote#A Heading[0;38;2;197;201;197m.[0m
 
+ [0;38;2;197;201;197mTargets that are not there: a [0;38;2;195;64;67;9mlocal link to nothing[0;38;2;197;201;197m and a [0;38;2;195;64;67;9mmissing-note[0;38;2;197;201;197m both[0m
+ [0;38;2;197;201;197mrender broken.[0m
+
  ]8;;https://example.com/autolink\[0;38;2;139;164;176;4mhttps://example.com/autolink]8;;\[0;38;2;197;201;197m and ]8;;otavio@example.com\[0;38;2;139;164;176;4motavio@example.com]8;;\[0;38;2;197;201;197m.[0m
 
  [0;38;2;196;178;138;1mImages[0m

@@ -3,29 +3,12 @@
 //! The snapshot in `snapshots/` is the readable record of what every construct
 //! renders to. Review its diff deliberately; never accept one blind.
 
-use std::process::Command;
+mod common;
 
-use assert_cmd::prelude::*;
+use common::{run, vademecum};
 
 /// The escape byte every `--color never` run must be free of.
 const ESC: char = '\x1b';
-
-fn vademecum() -> Command {
-    let mut command = Command::cargo_bin("vademecum").expect("the binary is built by the test harness");
-    // Colors would otherwise depend on the environment the tests run in.
-    command.env_remove("NO_COLOR");
-    // So would the theme: a `theme.toml` in the developer's own config
-    // directory would otherwise repaint every snapshot below.
-    command.env("XDG_CONFIG_HOME", "/nonexistent-vademecum-test-config");
-    command.env("APPDATA", r"C:\nonexistent-vademecum-test-config");
-    command
-}
-
-fn run(args: &[&str]) -> String {
-    let output = vademecum().args(args).output().expect("vademecum runs");
-    assert!(output.status.success(), "vademecum {args:?} failed: {}", String::from_utf8_lossy(&output.stderr));
-    String::from_utf8(output.stdout).expect("output is utf-8")
-}
 
 /// The rendered document under one built-in theme.
 fn themed(theme: &str) -> String {

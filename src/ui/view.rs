@@ -236,11 +236,12 @@ mod tests {
 
     use crate::document::Document;
     use crate::theme::Theme;
+    use crate::ui::Options;
     use crate::ui::input::{Action, Motion};
 
     fn app(source: &str, size: Size) -> App {
         let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), source.to_string());
-        App::new(document, Theme::default(), None, size)
+        App::new(document, Theme::default(), &Options { width: None, ..Options::default() }, size)
     }
 
     /// One frame, as a buffer to assert against.
@@ -512,7 +513,7 @@ mod tests {
     fn a_document_from_stdin_is_titled_as_such() {
         let size = Size::new(60, 12);
         let piped = Document::new(None, PathBuf::from("."), "hi\n".to_string());
-        let app = App::new(piped, Theme::default(), None, size);
+        let app = App::new(piped, Theme::default(), &Options { width: None, ..Options::default() }, size);
         let buffer = frame(&app, size);
         assert!(row(&buffer, 0).starts_with(" vademecum · stdin"));
         assert!(row(&buffer, 11).starts_with("stdin · line 1/1"));
