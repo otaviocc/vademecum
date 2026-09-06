@@ -5,6 +5,11 @@ mod markdown;
 mod render;
 mod theme;
 mod ui;
+// Removed by the commit that wires the watcher into the pager; until then every
+// item here is reachable only from its own tests, which is what `dead_code`
+// calls dead in a binary crate.
+#[allow(dead_code, reason = "wired into the pager two commits from now")]
+mod watch;
 
 use std::io::{BufWriter, IsTerminal, Write};
 use std::path::Path;
