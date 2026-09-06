@@ -14,11 +14,6 @@ use clap::Parser;
 use crate::cli::{Cli, ColorChoice};
 use crate::document::Document;
 
-/// Wrap width when there is no terminal to measure.
-const DEFAULT_WIDTH: usize = 100;
-/// Leaves a column either side of the content.
-const TERMINAL_MARGIN: usize = 2;
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let stdout = std::io::stdout();
@@ -78,18 +73,11 @@ fn color(cli: &Cli, is_terminal: bool) -> bool {
     }
 }
 
-/// `--width`, else the terminal less a margin, capped at 100.
+/// `--width`, else the terminal less a margin, capped at 100. A pipe and a
+/// failed size query both mean "no terminal to measure".
 fn width(cli: &Cli, is_terminal: bool) -> usize {
-    if let Some(width) = cli.width {
-        return usize::from(width).max(1);
-    }
-    if !is_terminal {
-        return DEFAULT_WIDTH;
-    }
-    match crossterm::terminal::size() {
-        Ok((columns, _)) => usize::from(columns).saturating_sub(TERMINAL_MARGIN).clamp(1, DEFAULT_WIDTH),
-        Err(_) => DEFAULT_WIDTH,
-    }
+    let columns = is_terminal.then(|| crossterm::terminal::size().ok()).flatten().map(|(columns, _)| columns);
+    render::layout::wrap_width(cli.width, columns)
 }
 
 #[cfg(test)]
@@ -101,14 +89,9 @@ mod tests {
     }
 
     #[test]
-    fn an_explicit_width_wins() {
-        assert_eq!(width(&cli(&["--width", "80", "x.md"]), true), 80);
+    fn a_pipe_is_measured_as_having_no_terminal() {
+        assert_eq!(width(&cli(&["x.md"]), false), render::layout::wrap_width(None, None));
         assert_eq!(width(&cli(&["--width", "80", "x.md"]), false), 80);
-    }
-
-    #[test]
-    fn a_pipe_gets_the_default_width() {
-        assert_eq!(width(&cli(&["x.md"]), false), DEFAULT_WIDTH);
     }
 
     #[test]
