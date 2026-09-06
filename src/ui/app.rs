@@ -1,5 +1,6 @@
 //! The pager's state, and the reducer that is the only way to change it.
 
+use std::ops::Range;
 use std::path::Path;
 
 use ratatui::layout::Size;
@@ -42,6 +43,29 @@ struct Entry {
     focus: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Point {
+    line: usize,
+    byte: usize,
+    next: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Selection {
+    anchor: Point,
+    head: Point,
+    dragged: bool,
+}
+
+impl Selection {
+    fn span(&self) -> (Point, Point) {
+        match self.anchor <= self.head {
+            true => (self.anchor, self.head),
+            false => (self.head, self.anchor),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Place {
     anchor: usize,
@@ -67,6 +91,8 @@ pub struct App {
     pub file: String,
     pub focus: usize,
     reload_failed: bool,
+    selection: Option<Selection>,
+    copied: Option<String>,
     back: Vec<Entry>,
     forward: Vec<Entry>,
 }
@@ -101,6 +127,8 @@ impl App {
             file,
             focus: 0,
             reload_failed: false,
+            selection: None,
+            copied: None,
             back: Vec::new(),
             forward: Vec::new(),
         }
@@ -112,6 +140,10 @@ impl App {
             self.reload_failed = false;
         }
 
+        if !matches!(action, Action::SelectStart { .. } | Action::SelectExtend { .. } | Action::SelectEnd { .. }) {
+            self.selection = None;
+        }
+
         let moves_cursor = matches!(
             action,
             Action::Move(_) | Action::SearchConfirm | Action::SearchStep { .. } | Action::Follow | Action::History { .. }
@@ -121,7 +153,9 @@ impl App {
             Action::Quit => self.quit = true,
             Action::Move(motion) => self.move_cursor(motion),
             Action::Scroll(delta) => self.scroll(delta),
-            Action::Click { column, row } => self.click(column, row),
+            Action::SelectStart { column, row } => self.select_start(column, row),
+            Action::SelectExtend { column, row } => self.select_extend(column, row),
+            Action::SelectEnd { column, row } => self.select_end(column, row),
             Action::Resize(area) => self.resize(area),
             Action::Reload => self.reload(),
             Action::ToggleHelp => self.mode = if self.mode == Mode::Help { Mode::Browse } else { Mode::Help },
@@ -144,6 +178,8 @@ impl App {
             Action::Follow => self.follow(),
             Action::OpenExternal => self.open_external(),
             Action::History { forward } => self.travel(forward),
+            Action::Yank => self.yank(),
+            Action::YankLink => self.yank_link(),
         }
 
         self.bound();
@@ -188,6 +224,35 @@ impl App {
         if let Err(error) = open::that_detached(url.as_str()) {
             self.status = Status::Error(format!("{url}: {error}"));
         }
+    }
+
+    fn yank(&mut self) {
+        let Some(line) = self.lines.get(self.cursor) else { return };
+        let text = line.text();
+        let text = text[line.byte_at(layout::GUTTER)..].trim_end().to_string();
+        self.copy(text, String::from("Copied the line"));
+    }
+
+    fn yank_link(&mut self) {
+        let Some(kind) = self.focused().map(|link| link.kind.clone()) else {
+            self.status = Status::Notice(String::from("no link on this line"));
+            return;
+        };
+        let destination = kind.destination();
+        let notice = format!("Copied {destination}");
+        self.copy(destination, notice);
+    }
+
+    fn copy(&mut self, text: String, notice: String) {
+        if text.is_empty() {
+            return;
+        }
+        self.copied = Some(text);
+        self.status = Status::Notice(notice);
+    }
+
+    pub fn take_copy(&mut self) -> Option<String> {
+        self.copied.take()
     }
 
     fn open(&mut self, path: &Path, fragment: Option<&str>) {
@@ -252,6 +317,7 @@ impl App {
         self.focus = 0;
 
         self.plain = None;
+        self.selection = None;
     }
 
     fn anchor_line(&self, fragment: Option<&str>) -> Option<usize> {
@@ -375,6 +441,73 @@ impl App {
         (line < self.lines.len()).then_some(line)
     }
 
+    fn point(&self, column: u16, row: u16) -> Option<Point> {
+        let line = self.clicked_line(row)?;
+        let column = usize::from(column).max(layout::GUTTER);
+        Some(Point { line, byte: self.lines[line].byte_at(column), next: self.lines[line].byte_at(column + 1) })
+    }
+
+    fn select_start(&mut self, column: u16, row: u16) {
+        self.selection = self.point(column, row).map(|point| Selection { anchor: point, head: point, dragged: false });
+    }
+
+    fn select_extend(&mut self, column: u16, row: u16) {
+        let Some(point) = self.point(column, row) else { return };
+        let Some(selection) = self.selection.as_mut() else { return };
+        selection.head = point;
+        selection.dragged |= selection.head != selection.anchor;
+    }
+
+    fn select_end(&mut self, column: u16, row: u16) {
+        self.select_extend(column, row);
+        match self.selection.filter(|selection| selection.dragged) {
+            Some(_) => self.copy_selection(),
+            None => {
+                self.selection = None;
+                self.click(column, row);
+            }
+        }
+    }
+
+    pub fn selected(&self, index: usize) -> Option<Range<usize>> {
+        let selection = self.selection.filter(|selection| selection.dragged)?;
+        let (from, to) = selection.span();
+        if !(from.line..=to.line).contains(&index) {
+            return None;
+        }
+
+        let line = self.lines.get(index)?;
+        let end = line.text().len();
+        let start = if index == from.line { from.byte } else { line.byte_at(layout::GUTTER) };
+        let stop = if index == to.line { to.next } else { end };
+        (start < stop).then(|| start..stop.min(end))
+    }
+
+    fn copy_selection(&mut self) {
+        let Some(selection) = self.selection.filter(|selection| selection.dragged) else { return };
+        let (from, to) = selection.span();
+
+        let mut lines = Vec::new();
+        for index in from.line..=to.line {
+            let text = self.lines[index].text();
+            let taken = match self.selected(index) {
+                Some(range) => text[range].trim_end().to_string(),
+                None => String::new(),
+            };
+            lines.push(taken);
+        }
+        while lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+
+        let count = lines.len();
+        let notice = match count {
+            1 => String::from("Copied the line"),
+            _ => format!("Copied {count} lines"),
+        };
+        self.copy(lines.join("\n"), notice);
+    }
+
     fn click(&mut self, column: u16, row: u16) {
         let Some(line) = self.clicked_line(row) else { return };
         let Some(index) = self.lines[line].link_at(usize::from(column)) else { return };
@@ -444,6 +577,7 @@ impl App {
         self.focus = 0;
 
         self.plain = None;
+        self.selection = None;
         self.resume_search();
     }
 
@@ -502,6 +636,17 @@ mod tests {
 
     fn numbered(count: usize) -> String {
         (1..=count).map(|n| format!("line {n}\n\n")).collect()
+    }
+
+    fn click(app: &mut App, column: u16, row: u16) {
+        app.apply(Action::SelectStart { column, row });
+        app.apply(Action::SelectEnd { column, row });
+    }
+
+    fn drag(app: &mut App, from: (u16, u16), to: (u16, u16)) {
+        app.apply(Action::SelectStart { column: from.0, row: from.1 });
+        app.apply(Action::SelectExtend { column: to.0, row: to.1 });
+        app.apply(Action::SelectEnd { column: to.0, row: to.1 });
     }
 
     fn app(source: &str, height: u16) -> App {
@@ -570,7 +715,7 @@ mod tests {
         app.apply(Action::Scroll(12));
         let (cursor, top) = (app.cursor, app.top);
 
-        app.apply(Action::Click { column: 0, row: CONTENT_TOP + 3 });
+        click(&mut app, 0, CONTENT_TOP + 3);
         assert_eq!((app.cursor, app.top), (cursor, top), "a click is for links, not for the reading position");
     }
 
@@ -994,6 +1139,145 @@ mod tests {
         App::new(document, Theme::default(), &Options { width: Some(78), ..Options::default() }, Size::new(80, 24))
     }
 
+    #[test]
+    fn a_drag_across_one_line_copies_what_it_covered() {
+        let mut app = app("the quick brown fox\n", 14);
+        drag(&mut app, (layout::GUTTER as u16, CONTENT_TOP), (layout::GUTTER as u16 + 9, CONTENT_TOP));
+
+        assert_eq!(app.take_copy().as_deref(), Some("the quick"));
+        assert_eq!(app.status, Status::Notice(String::from("Copied the line")));
+    }
+
+    #[test]
+    fn a_drag_starting_mid_line_copies_from_where_it_started() {
+        let mut app = app("the quick brown fox\n", 14);
+        drag(&mut app, (layout::GUTTER as u16 + 4, CONTENT_TOP), (layout::GUTTER as u16 + 19, CONTENT_TOP));
+
+        assert_eq!(app.take_copy().as_deref(), Some("quick brown fox"));
+    }
+
+    #[test]
+    fn a_drag_down_the_page_copies_every_line_it_crossed() {
+        let mut app = app("first\n\nsecond\n\nthird\n", 14);
+        drag(&mut app, (layout::GUTTER as u16, CONTENT_TOP), (layout::GUTTER as u16 + 5, CONTENT_TOP + 2));
+
+        assert_eq!(app.take_copy().as_deref(), Some("first\n\nsecond"));
+        assert_eq!(app.status, Status::Notice(String::from("Copied 3 lines")));
+    }
+
+    #[test]
+    fn a_drag_up_the_page_reads_the_same_as_a_drag_down_it() {
+        let mut app = app("first\n\nsecond\n", 14);
+        drag(&mut app, (layout::GUTTER as u16 + 6, CONTENT_TOP + 2), (layout::GUTTER as u16, CONTENT_TOP));
+
+        assert_eq!(app.take_copy().as_deref(), Some("first\n\nsecond"));
+    }
+
+    #[test]
+    fn a_drag_never_reaches_the_gutter() {
+        let mut app = app("indented text\n", 14);
+        drag(&mut app, (0, CONTENT_TOP), (layout::GUTTER as u16 + 8, CONTENT_TOP));
+
+        assert_eq!(app.take_copy().as_deref(), Some("indented"), "the gutter is chrome, not text");
+    }
+
+    #[test]
+    fn a_press_and_release_on_one_cell_is_a_click_rather_than_a_selection() {
+        let mut app = inside_vault("some text and [[note]] on one line\n");
+        click_link(&mut app, "note", 0);
+
+        assert_eq!(app.file, "note.md", "the link was followed");
+        assert_eq!(app.take_copy(), None, "nothing was copied");
+    }
+
+    #[test]
+    fn a_selection_is_dropped_by_the_next_move() {
+        let mut app = app("first\n\nsecond\n", 14);
+        app.apply(Action::SelectStart { column: 1, row: CONTENT_TOP });
+        app.apply(Action::SelectExtend { column: 5, row: CONTENT_TOP });
+        assert!(app.selected(0).is_some());
+
+        app.apply(Action::Move(Motion::Line(1)));
+        assert_eq!(app.selected(0), None);
+    }
+
+    #[test]
+    fn a_selection_is_dropped_when_the_document_is_laid_out_again() {
+        let mut app = app("first\n\nsecond\n", 14);
+        app.apply(Action::SelectStart { column: 1, row: CONTENT_TOP });
+        app.apply(Action::SelectExtend { column: 5, row: CONTENT_TOP });
+
+        app.apply(Action::Resize(Size::new(30, 14)));
+        assert_eq!(app.selected(0), None);
+    }
+
+    #[test]
+    fn a_drag_outside_the_content_pane_selects_nothing() {
+        let mut app = app("first\n", 14);
+        let below = CONTENT_TOP + app.viewport_height() as u16;
+        drag(&mut app, (1, 0), (5, below));
+
+        assert_eq!(app.take_copy(), None);
+    }
+
+    #[test]
+    fn a_selection_covers_the_whole_of_the_lines_between_its_ends() {
+        let mut app = app("first\n\nsecond\n\nthird\n", 14);
+        app.apply(Action::SelectStart { column: layout::GUTTER as u16 + 3, row: CONTENT_TOP });
+        app.apply(Action::SelectExtend { column: layout::GUTTER as u16 + 2, row: CONTENT_TOP + 4 });
+
+        assert_eq!(app.selected(0), Some(4..6), "from where it started to the end");
+        assert_eq!(app.selected(2), Some(1..7), "all of the line in between");
+        assert_eq!(app.selected(4), Some(1..4), "through the cell it stopped on");
+    }
+
+    #[test]
+    fn yanking_copies_the_cursor_line_without_the_gutter() {
+        let mut app = app("a paragraph to copy\n", 14);
+        app.apply(Action::Yank);
+
+        assert_eq!(app.take_copy().as_deref(), Some("a paragraph to copy"));
+        assert_eq!(app.status, Status::Notice(String::from("Copied the line")));
+    }
+
+    #[test]
+    fn a_copy_is_handed_over_once() {
+        let mut app = app("a paragraph to copy\n", 14);
+        app.apply(Action::Yank);
+
+        assert!(app.take_copy().is_some());
+        assert_eq!(app.take_copy(), None);
+    }
+
+    #[test]
+    fn yanking_a_blank_line_copies_nothing() {
+        let mut app = app("first\n\nthird\n", 14);
+        app.apply(Action::Move(Motion::Line(1)));
+        app.apply(Action::Yank);
+
+        assert_eq!(app.take_copy(), None);
+        assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn yanking_a_link_copies_where_it_points_rather_than_its_label() {
+        let mut app = inside_vault("see [the note](notes/note.md) for more\n");
+        focus_link(&mut app, "notes/note.md");
+        app.apply(Action::YankLink);
+
+        assert_eq!(app.take_copy().as_deref(), Some("notes/note.md"));
+        assert_eq!(app.status, Status::Notice(String::from("Copied notes/note.md")));
+    }
+
+    #[test]
+    fn yanking_a_link_off_a_line_that_has_none_says_so() {
+        let mut app = app("no links here\n", 14);
+        app.apply(Action::YankLink);
+
+        assert_eq!(app.take_copy(), None);
+        assert_eq!(app.status, Status::Notice(String::from("no link on this line")));
+    }
+
     fn focus_link(app: &mut App, destination: &str) {
         for index in 0..app.lines.len() {
             if let Some(focus) = app.lines[index].links.iter().position(|link| link.kind.destination() == destination) {
@@ -1071,7 +1355,7 @@ mod tests {
             }
             let column = column_of(line, link);
             let row = CONTENT_TOP + (index - app.top) as u16;
-            app.apply(Action::Click { column, row });
+            click(app, column, row);
             return;
         }
         panic!("no link to {destination:?} in the fixture");
@@ -1110,7 +1394,7 @@ mod tests {
         let mut app = inside_vault("plain\n\nsome text and [[note]] here\n");
         let line = app.lines.iter().position(|line| !line.links.is_empty()).expect("a line with a link");
 
-        app.apply(Action::Click { column: 0, row: CONTENT_TOP + line as u16 });
+        click(&mut app, 0, CONTENT_TOP + line as u16);
         assert_eq!(app.cursor, 0, "landing beside a link is not landing on it");
         assert_eq!(app.file, "scratch.md");
         assert_eq!(app.status, Status::Idle);
@@ -1122,7 +1406,7 @@ mod tests {
         let height = app.viewport_height() as u16;
 
         for row in [0, 1, CONTENT_TOP + height, CONTENT_TOP + height + 1] {
-            app.apply(Action::Click { column: 1, row });
+            click(&mut app, 1, row);
             assert_eq!(app.file, "scratch.md", "row {row} is chrome, not content");
         }
     }

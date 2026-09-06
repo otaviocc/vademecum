@@ -26,6 +26,7 @@ const HELP: &[(&str, &str)] = &[
     ("Tab / Shift-Tab", "Cycle the links on the cursor line, counted on the statusbar"),
     ("Enter", "Follow focused local/wiki link"),
     ("o", "Open focused external link in the browser"),
+    ("y / Y", "Copy the cursor line / the focused link's target"),
     ("h / Backspace, l", "History back, forward"),
     ("/", "Search (Enter confirms, Esc cancels)"),
     ("n / N", "Next / previous match"),
@@ -33,6 +34,7 @@ const HELP: &[(&str, &str)] = &[
     ("Esc", "Close overlay, clear search highlight"),
     ("q, Ctrl-C", "Quit"),
     ("Left click", "Follow the link under the pointer"),
+    ("Left drag", "Select text, and copy it on release"),
 ];
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -120,7 +122,20 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
         }
 
         highlight(area, buf, y, app, index, line);
+        selection(area, buf, y, app, index, line);
     }
+}
+
+fn selection(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize, line: &RenderedLine) {
+    let Some(range) = app.selected(index) else { return };
+
+    let text = line.text();
+    let start = area.x + text[..range.start].width() as u16;
+    if start >= area.right() {
+        return;
+    }
+    let width = text[range].width() as u16;
+    buf.set_style(Rect::new(start, y, width.min(area.right() - start), 1), app.theme.style(Element::Selection));
 }
 
 fn highlight(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize, line: &RenderedLine) {
@@ -389,6 +404,47 @@ mod tests {
         assert_eq!(buffer[(1, 4)].bg, other.bg.expect("a background"));
     }
 
+    fn select(app: &mut App, from: (u16, u16), to: (u16, u16)) {
+        app.apply(Action::SelectStart { column: from.0, row: from.1 });
+        app.apply(Action::SelectExtend { column: to.0, row: to.1 });
+    }
+
+    #[test]
+    fn a_selection_is_painted_over_the_cells_it_covers() {
+        let size = Size::new(60, 12);
+        let mut app = app("the quick brown fox\n", size);
+        select(&mut app, (1, CONTENT_TOP), (9, CONTENT_TOP));
+
+        let buffer = frame(&app, size);
+        let selected = app.theme.style(Element::Selection).bg.expect("a background");
+        assert_eq!(buffer[(1, CONTENT_TOP)].bg, selected, "the first cell of the text");
+        assert_eq!(buffer[(9, CONTENT_TOP)].bg, selected, "through the cell the pointer is on");
+        assert_ne!(buffer[(10, CONTENT_TOP)].bg, selected, "and no further");
+    }
+
+    #[test]
+    fn a_selection_outranks_a_search_highlight() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        search_for(&mut app, "line");
+        select(&mut app, (1, CONTENT_TOP), (6, CONTENT_TOP));
+
+        let buffer = frame(&app, size);
+        let selected = app.theme.style(Element::Selection).bg.expect("a background");
+        assert_eq!(buffer[(1, CONTENT_TOP)].bg, selected, "a match under the selection reads as selected");
+    }
+
+    #[test]
+    fn nothing_is_painted_until_the_pointer_has_moved() {
+        let size = Size::new(60, 12);
+        let mut app = app("the quick brown fox\n", size);
+        app.apply(Action::SelectStart { column: 1, row: CONTENT_TOP });
+
+        let buffer = frame(&app, size);
+        let selected = app.theme.style(Element::Selection).bg.expect("a background");
+        assert_ne!(buffer[(1, CONTENT_TOP)].bg, selected, "a press is not yet a selection");
+    }
+
     #[test]
     fn the_overlay_covers_the_document_and_lists_the_bindings() {
         let size = Size::new(100, 24);
@@ -408,8 +464,8 @@ mod tests {
         let popup = help_area(area);
         assert_eq!(popup.width, 60);
         assert_eq!(popup.x, 20, "centred");
-        assert_eq!(popup.height, 16);
-        assert_eq!(popup.y, 12, "centred");
+        assert_eq!(popup.height, 18);
+        assert_eq!(popup.y, 11, "centred");
     }
 
     #[test]
@@ -581,7 +637,7 @@ mod tests {
 
     #[test]
     fn the_help_overlay_lists_every_binding_the_readme_names() {
-        for key in ["Tab / Shift-Tab", "Enter", "o", "h / Backspace, l"] {
+        for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "h / Backspace, l", "Left drag"] {
             assert!(HELP.iter().any(|(row, _)| *row == key), "{key} is not in the help table");
         }
     }

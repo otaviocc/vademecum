@@ -21,7 +21,9 @@ pub enum Action {
     Quit,
     Move(Motion),
     Scroll(isize),
-    Click { column: u16, row: u16 },
+    SelectStart { column: u16, row: u16 },
+    SelectExtend { column: u16, row: u16 },
+    SelectEnd { column: u16, row: u16 },
     Resize(Size),
     ToggleHelp,
     Dismiss,
@@ -35,6 +37,8 @@ pub enum Action {
     Follow,
     OpenExternal,
     History { forward: bool },
+    Yank,
+    YankLink,
     Reload,
 }
 
@@ -83,6 +87,8 @@ fn browse(key: KeyEvent) -> Option<Action> {
         KeyCode::BackTab => Some(Action::Focus { forward: false }),
         KeyCode::Enter => Some(Action::Follow),
         KeyCode::Char('o') => Some(Action::OpenExternal),
+        KeyCode::Char('y') => Some(Action::Yank),
+        KeyCode::Char('Y') => Some(Action::YankLink),
         KeyCode::Char('h') | KeyCode::Backspace => Some(Action::History { forward: false }),
         KeyCode::Char('l') => Some(Action::History { forward: true }),
         KeyCode::Char('/') => Some(Action::SearchStart),
@@ -123,7 +129,13 @@ fn mouse_action(mouse: MouseEvent, mode: Mode) -> Option<Action> {
         MouseEventKind::ScrollDown => Some(Action::Scroll(WHEEL_LINES)),
         MouseEventKind::ScrollUp => Some(Action::Scroll(-WHEEL_LINES)),
         MouseEventKind::Down(MouseButton::Left) if mode == Mode::Browse => {
-            Some(Action::Click { column: mouse.column, row: mouse.row })
+            Some(Action::SelectStart { column: mouse.column, row: mouse.row })
+        }
+        MouseEventKind::Drag(MouseButton::Left) if mode == Mode::Browse => {
+            Some(Action::SelectExtend { column: mouse.column, row: mouse.row })
+        }
+        MouseEventKind::Up(MouseButton::Left) if mode == Mode::Browse => {
+            Some(Action::SelectEnd { column: mouse.column, row: mouse.row })
         }
         _ => None,
     }
@@ -172,6 +184,8 @@ mod tests {
             (press(KeyCode::BackTab), Action::Focus { forward: false }),
             (press(KeyCode::Enter), Action::Follow),
             (press(KeyCode::Char('o')), Action::OpenExternal),
+            (press(KeyCode::Char('y')), Action::Yank),
+            (press(KeyCode::Char('Y')), Action::YankLink),
             (press(KeyCode::Char('h')), Action::History { forward: false }),
             (press(KeyCode::Backspace), Action::History { forward: false }),
             (press(KeyCode::Char('l')), Action::History { forward: true }),
@@ -230,7 +244,7 @@ mod tests {
             row: 6,
             modifiers: KeyModifiers::NONE,
         });
-        assert_eq!(browsing(&click), Some(Action::Click { column: 17, row: 6 }));
+        assert_eq!(browsing(&click), Some(Action::SelectStart { column: 17, row: 6 }));
     }
 
     #[test]
@@ -247,9 +261,21 @@ mod tests {
     }
 
     #[test]
-    fn a_release_and_a_drag_are_not_a_click() {
-        for kind in [MouseEventKind::Up(MouseButton::Left), MouseEventKind::Drag(MouseButton::Left)] {
-            assert_eq!(browsing(&wheel(kind)), None, "{kind:?}");
+    fn a_drag_and_a_release_carry_the_cell_too() {
+        let at = |kind| Event::Mouse(MouseEvent { kind, column: 4, row: 9, modifiers: KeyModifiers::NONE });
+        let drag = at(MouseEventKind::Drag(MouseButton::Left));
+        let release = at(MouseEventKind::Up(MouseButton::Left));
+
+        assert_eq!(browsing(&drag), Some(Action::SelectExtend { column: 4, row: 9 }));
+        assert_eq!(browsing(&release), Some(Action::SelectEnd { column: 4, row: 9 }));
+    }
+
+    #[test]
+    fn the_other_buttons_select_nothing() {
+        for button in [MouseButton::Right, MouseButton::Middle] {
+            for kind in [MouseEventKind::Down(button), MouseEventKind::Drag(button), MouseEventKind::Up(button)] {
+                assert_eq!(browsing(&wheel(kind)), None, "{kind:?}");
+            }
         }
     }
 

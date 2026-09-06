@@ -1,6 +1,7 @@
 //! The interactive pager: the terminal's lifetime, and the event loop.
 
 pub mod app;
+pub mod clipboard;
 pub mod input;
 pub mod search;
 pub mod view;
@@ -114,8 +115,10 @@ fn start_watching(options: &Options, path: Option<&Path>, tx: &Sender<Wake>) -> 
 }
 
 fn apply(app: &mut App, event: &event::Event) {
-    if let Some(action) = input::action(event, app.mode) {
-        app.apply(action);
+    let Some(action) = input::action(event, app.mode) else { return };
+    app.apply(action);
+    if let Some(text) = app.take_copy() {
+        let _ = clipboard::copy(&text);
     }
 }
 

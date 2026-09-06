@@ -163,7 +163,7 @@ Every element derives from the palette:
 | `muted` | `dark_gray` | rules, table borders |
 | `muted_text` | `gray` | hints, quotes, images, footnotes, HTML |
 | `subtle` | `dark_gray` | the cursor line |
-| `selection_background` / `selection_foreground` | `blue` / `white` | the focused link |
+| `selection_background` / `selection_foreground` | `blue` / `white` | the focused link, copied text |
 | `error` | `red` | broken links, error messages |
 | `success` | `green` | completed task boxes |
 | `warning` | `yellow` | inline code, search matches |
@@ -188,8 +188,8 @@ The element names are `paragraph`, `heading1`–`heading6`, `emphasis`, `strong`
 `list_bullet`, `list_number`, `task_done`, `task_todo`, `link`, `wikilink`,
 `link_focused`, `link_unfocused`, `link_broken`, `image`, `footnote`, `html`, `table_header`,
 `table_border`, `hr`, `header_title`, `hint`, `status`, `status_notice`,
-`status_error`, `cursor_line`, `search_match`, `search_current` and
-`help_window`. Each takes `fg`, `bg` and `modifiers` (`bold`, `italic`,
+`status_error`, `cursor_line`, `search_match`, `search_current`, `selection`
+and `help_window`. Each takes `fg`, `bg` and `modifiers` (`bold`, `italic`,
 `underline`, `dim`, `reversed`, `crossed_out`), and each falls back
 independently.
 
@@ -218,16 +218,25 @@ TOML. Origins and licences for the added ones are in
 | `Tab` / `Shift-Tab` | Cycle the links on the cursor line, counted on the statusbar |
 | `Enter` | Follow the focused link |
 | `o` | Open an external link in the browser |
+| `y` / `Y` | Copy the cursor line / the focused link's target |
 | `h` / `Backspace`, `l` | History back / forward |
 | `/`, then `n` / `N` | Search, next / previous match |
 | `?` | Help |
 | `Esc` | Close the overlay, or clear the search |
 | `q`, `Ctrl-C` | Quit |
-| Left click | Follow the link under the pointer |
+| Left click | Follow the link under the pointer, on release |
+| Left drag | Select text, and copy it when the button is let go |
 
-The wheel scrolls three lines a notch. Capturing the mouse takes your terminal's
-own text selection away, so `--no-mouse` turns it off; most terminals also let
-you hold `Shift` while dragging to select through a capturing program.
+Copying goes through the terminal, with an `OSC 52` escape, so it works over
+`ssh` as well as locally. Terminals differ on whether they allow it: tmux wants
+`set -g set-clipboard on`, and a few others have it off by default.
+
+The wheel scrolls three lines a notch. Dragging selects the text as it is
+painted — wrapped where the page wrapped, without the gutter or the colours —
+and letting go copies it. Capturing the mouse takes your terminal's own
+selection away, so `--no-mouse` turns it off and hands it back; most terminals
+also let you hold `Shift` while dragging to select through a capturing
+program.
 
 ## Flags
 
