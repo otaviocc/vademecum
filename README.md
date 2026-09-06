@@ -352,10 +352,14 @@ vademecum/
 └── tests/
     ├── stdout.rs            # assert_cmd + insta snapshots (--color always --width 80)
     ├── links.rs             # vault fixture navigation via --plain --resolve-links
+    ├── common/mod.rs        # the hermetic `vademecum()` command both tests use
     └── fixtures/
         ├── elements.md      # every Markdown construct
         ├── frontmatter.md
         ├── theme.toml       # partial override file
+        ├── note.md          # elements.md's wikilink target
+        ├── other.md         # its local link target
+        ├── nested/note.md   # its nested target, for the fragment link
         └── vault/           # .obsidian/, index.md, nested/note.md, [[note]] links
 ```
 
@@ -473,12 +477,34 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
    error in the statusbar listing the candidates.
 
 The vault root is `--root` if given, else the nearest ancestor of the start
-file containing `.obsidian/`, else the start file's directory. Broken targets
-render in `link_broken` style and `Enter` shows an error instead of
-navigating.
+file containing `.obsidian/`, else the start file's directory. A target that
+cannot be followed — missing, or ambiguous — renders in `link_broken` style,
+and `Enter` shows the reason instead of navigating.
+
+Resolution runs during layout, alongside the styling it decides, so a link's
+element depends on whether its target exists: `link` for External, `wikilink`
+for a Local or Wiki target that resolves, `link_broken` for one that does not.
 
 **Fragments** (`#heading`) jump to the first heading whose slug matches after
-the target loads; a fragment alone stays in the current document.
+the target loads; a fragment alone stays in the current document, and going
+back returns the reader to where they jumped from.
+
+`--resolve-links` prints what resolution made of every link in the document
+and exits, which is how the vault fixture is tested. One line per link in
+source order: kind, destination, and target, in three columns.
+
+```
+external  https://example.com/docs   -> -
+local     other.md                   -> tests/fixtures/other.md
+local     nested/note.md#a-heading   -> tests/fixtures/nested/note.md
+wiki      note                       -> tests/fixtures/vault/note.md
+wiki      missing                    -> (broken)
+wiki      duplicate                  -> (ambiguous: a/dup.md, b/dup.md)
+```
+
+An External link has no file to name, so its target column is `-`. The
+destination is the link as written, fragment included; the target is the path
+as resolved, relative to wherever vademecum was run from.
 
 **Focus and follow** in the TUI: the cursor line is the reader position. If
 it contains one link, that link is focused; if several, `Tab`/`Shift-Tab`
