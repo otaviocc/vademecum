@@ -107,7 +107,8 @@ fn paint(syntax: &SyntaxReference, theme: &SyntectTheme, text: &str) -> Vec<Vec<
     let syntaxes = syntax_set();
     let mut highlighter = HighlightLines::new(syntax, theme);
 
-    LinesWithEndings::from(text.trim_end_matches('\n'))
+    let body = body(text);
+    LinesWithEndings::from(&body)
         .map(|line| match highlighter.highlight_line(line, syntaxes) {
             Ok(regions) => line::merge(regions.iter().filter_map(|(style, piece)| span(*style, piece))),
             // A syntax that trips the regex engine loses its colors, not its
@@ -119,7 +120,17 @@ fn paint(syntax: &SyntaxReference, theme: &SyntectTheme, text: &str) -> Vec<Vec<
 
 /// Every line as one span of its own. What an unidentified language gets.
 fn unpainted(text: &str) -> Vec<Vec<StyledSpan>> {
-    LinesWithEndings::from(text.trim_end_matches('\n')).map(|line| plain(line).into_iter().collect()).collect()
+    LinesWithEndings::from(&body(text)).map(|line| plain(line).into_iter().collect()).collect()
+}
+
+/// The block's text with exactly one trailing newline, and none at all when
+/// there is nothing to highlight. The syntaxes are loaded with newlines, so a
+/// last line handed over without one can end in the wrong context — a line
+/// comment that never closes, say — and take a color the same line would not
+/// take in the middle of the block.
+fn body(text: &str) -> String {
+    let trimmed = text.trim_end_matches('\n');
+    if trimmed.is_empty() { String::new() } else { format!("{trimmed}\n") }
 }
 
 /// A piece of a line with no color of its own, so the block style shows
@@ -156,21 +167,31 @@ fn syntax_set() -> &'static SyntaxSet {
 }
 
 /// The bundled themes plus whatever `.tmTheme` files the reader has put in
-/// `<config>/syntax-themes/`. No such directory is not a fault; nor is a file
-/// in it that syntect cannot read, which it simply skips.
+/// `<config>/syntax-themes/`. No such directory is not a fault, and neither is
+/// a file in it that syntect cannot read: it is skipped and the rest still
+/// load. `ThemeSet::add_from_folder` cannot do that — it stops at the first
+/// unreadable file and drops every theme after it — so the folder is walked
+/// here instead.
 fn theme_set() -> &'static ThemeSet {
     static THEMES: OnceLock<ThemeSet> = OnceLock::new();
     THEMES.get_or_init(|| {
         let mut themes = ThemeSet::load_defaults();
-        if let Some(dir) = user_themes() {
-            let _ = themes.add_from_folder(dir);
+        for path in user_themes() {
+            let Ok(theme) = ThemeSet::get_theme(&path) else { continue };
+            let Some(name) = path.file_stem().map(|stem| stem.to_string_lossy().into_owned()) else { continue };
+            themes.themes.insert(name, theme);
         }
         themes
     })
 }
 
-fn user_themes() -> Option<PathBuf> {
-    crate::config::config_dir().map(|dir| dir.join("syntax-themes")).filter(|dir| dir.is_dir())
+/// Every `.tmTheme` in `<config>/syntax-themes/`, in the order syntect
+/// discovers them.
+fn user_themes() -> Vec<PathBuf> {
+    crate::config::config_dir()
+        .map(|dir| dir.join("syntax-themes"))
+        .and_then(|dir| ThemeSet::discover_theme_paths(dir).ok())
+        .unwrap_or_default()
 }
 
 /// A block is identified by the syntax that read it, the theme that colored

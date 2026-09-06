@@ -226,12 +226,17 @@ fn code_line(code: &[StyledSpan], block: Style, width: usize, source_line: usize
         if used >= budget {
             break;
         }
-        let (head, _) = split_at_width(&span.text, budget - used);
-        if head.is_empty() {
-            continue;
+        let (head, tail) = split_at_width(&span.text, budget - used);
+        if !head.is_empty() {
+            used += head.width();
+            spans.push(StyledSpan::new(head, block.patch(span.style)));
         }
-        used += head.width();
-        spans.push(StyledSpan::new(head, block.patch(span.style)));
+        // The first span that does not fit whole ends the line, even when a
+        // later one would still fit in the columns a wide character could not
+        // use. What is shown is always a prefix of the source.
+        if !tail.is_empty() {
+            break;
+        }
     }
 
     if cut {
@@ -811,6 +816,22 @@ mod tests {
         assert_eq!(rendered[1].text(), "fn main() {…");
         assert!(rendered.iter().all(|line| line.width() == 12), "{rendered:?}");
         assert!(rendered[1].spans.len() > 1, "the line was not highlighted: {:?}", rendered[1]);
+    }
+
+    #[test]
+    fn a_cut_that_lands_inside_a_wide_character_stops_there() {
+        // The line is several spans, and the one being cut is wider than the
+        // budget left. What follows it must not be pulled forward to fill the
+        // gap: the truncated line is always a prefix of the source.
+        let theme = Theme::default();
+        for width in 4..14 {
+            let rendered =
+                blocks_to_lines(&parse("```rust\nx = \"日本語\";\n```\n"), &theme, theme.style(Element::Paragraph), width, 0);
+            let line = rendered[1].text();
+            let source = "x = \"日本語\";";
+            let kept = line.trim_end().trim_end_matches('…');
+            assert!(source.starts_with(kept), "{line:?} is not a prefix of {source:?} at width {width}");
+        }
     }
 
     #[test]
