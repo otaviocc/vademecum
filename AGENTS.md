@@ -2,23 +2,28 @@
 
 Instructions for AI agents (and humans) contributing to `vademecum`.
 
-## 1. README.md is the source of truth
+## 1. The code is the source of truth
 
-- `README.md` defines the product, architecture, data model, CLI, theme
-  format, keybindings, testing strategy, and milestones. Read it fully before
-  changing anything.
-- When code and README disagree, the README wins. Fix the code, or amend the
-  README **first**, in its own commit, with the reasoning in the commit body.
-- Never add behaviour, flags, theme keys, or keybindings that the README does
-  not describe. Propose the README change first.
-- The README is written for readers, not as a changelog. Keep it consistent
-  and current rather than appending notes.
+- There is no design document. Behaviour is defined by the code and pinned by
+  the tests; when you want to know what something does, read it or read the
+  test that covers it.
+- `README.md` is a **product page** — what vademecum is, how to install it, how
+  to use it, and the reference a user needs to write a theme. It is written for
+  someone who wants to use the program, not for someone changing it.
+- A change that alters what a user sees — a flag, a key, a theme key, a default
+  — updates the README in the same PR. A change that alters only how the code
+  works does not touch it.
+- Keep the README accurate rather than exhaustive. Its tables (flags, palette
+  slots, element names, keys) are checked against the code when they change; a
+  wrong table is worse than a missing one.
+- Explanations belong in commit messages and PR bodies, which are dated and
+  cannot go stale. See §6 for why they do not belong in comments.
 
 ## 2. Work is tracked in GitHub Issues and Milestones
 
 - Repository: `otaviocc/vademecum` (use the `gh` CLI).
-- Every plan milestone in README.md has one GitHub Issue, all grouped under
-  the GitHub Milestone `v0.1.0`:
+- The `v0.1.0` milestone was built as eight tracked milestones, one issue each,
+  all now closed:
 
   | Issue | Plan milestone |
   | --- | --- |
@@ -31,13 +36,11 @@ Instructions for AI agents (and humans) contributing to `vademecum`.
   | #7 | Milestone 6: Live reload (`--watch`) |
   | #8 | Milestone 7: Release |
 
-- Each issue has a **Scope** checklist and **Exit criteria**. Both come from
-  the README; the issue is a tracker, not a second specification.
+- An issue carries a **Scope** checklist and **Exit criteria**. That is where a
+  piece of work is specified; the issue is the record, not a second document.
 - Milestones are worked **in order**. Do not start a milestone while the
   previous one is open unless the user asks.
-- Tick checklist items in the issue as they land (`gh issue edit`). When the
-  README changes in a way that affects an issue, update the issue checklist in
-  the same PR.
+- Tick checklist items in the issue as they land (`gh issue edit`).
 - Bugs and follow-ups found while working get their own issue, assigned to
   the `v0.1.0` milestone if they block the release, otherwise unassigned.
   Do not silently widen the scope of the current issue.
@@ -62,9 +65,8 @@ agent drives the following, without needing to be told:
    tree), the order of work, how each Scope checklist item will be verified,
    and any README ambiguities or gaps discovered. Ask the user only about
    decisions that change the design; make routine calls yourself.
-4. If the plan needs a README change (design gap, wrong assumption, new
-   dependency), make that change as the first commit of the branch, before
-   implementation, and update the issue checklist to match.
+4. If the work changes what a user sees, the README changes with it in the same
+   PR.
 5. Only after the plan is approved: create the branch `m<N>-<slug>` and start.
 
 ### During the session
@@ -104,7 +106,7 @@ session, do all of the following:
   subject and a body explaining *why*:
   `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`.
   Existing history: `docs: rebuild project plan after design audit`.
-- Keep commits focused. A README amendment is its own commit.
+- Keep commits focused.
 - Pull requests:
   - Title: `<type>: <summary>` matching the main commit.
   - Body: what changed, how it was verified (paste the commands run), and
@@ -154,21 +156,31 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - No `unsafe`. No `unwrap` outside tests; `expect` only with an invariant
   message. `anyhow` at the binary boundary, `thiserror` inside modules the UI
   matches on.
-- Module layout, type names, and the `RenderedLine` contract are fixed by the
-  README's Architecture and Core data model sections. Put code where the
-  tree says it goes.
+- **No comments.** A file may carry a single `//!` line saying what it is, for
+  navigation. Nothing else: no `///`, no `//`.
+
+  The reasoning is that a comment is a claim nobody checks. It goes stale
+  silently, and worse, it lends authority to whatever it sits above — a comment
+  explaining why something is done a certain way makes a bug read as a decision,
+  and the next person leaves it alone. The code and the tests are the two things
+  CI keeps honest, so those are what a reader should have to trust.
+
+  Say it in the commit message and the PR body instead. Those are dated, tied to
+  a diff, and never claim to describe code they have drifted from. If a piece of
+  code needs a paragraph to be understandable, prefer a name, a smaller
+  function, or a test that demonstrates the case.
 - Every new construct, flag, or theme element needs: a unit test, an entry
   in `tests/fixtures/elements.md` (if renderable), and a snapshot update.
-- Dependencies: only those listed in the README dependency table. Adding one
-  requires a README change first.
+- Dependencies: add one only when it earns its place, and say why in the commit
+  body.
 - UI conventions (header, hairline rules, statusbar priority, help popup)
   mirror [Holodeck](https://github.com/otaviocc/Holodeck); when in doubt,
   look at how Holodeck does it.
 
 ## 7. Communication
 
-- State assumptions explicitly in the PR body when the README is ambiguous,
-  and open a README amendment PR or issue to remove the ambiguity.
+- State assumptions explicitly in the PR body, and open an issue for anything
+  left unresolved rather than leaving it implied.
 - Report test results faithfully. If something was not verified (for
   example, Windows behaviour on a macOS machine), say so.
 - Prefer small, reviewable PRs over one large drop per milestone.
@@ -232,9 +244,8 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - Integration assertions cannot look for a phrase that spans several styles:
   once a line is highlighted, `fn main()` has escapes inside it. Anchor on a
   substring that lives inside one span, such as a string literal.
-- Stage commits explicitly. `git add -A` after editing both the README and the
-  source sweeps them into one commit, and a README amendment has to stand
-  alone (§4).
+- Stage commits explicitly. `git add -A` sweeps unrelated edits into one
+  commit; add the paths you mean.
 - `clippy -D warnings` also makes an unconstructed enum variant a build
   failure, which is what decides how a TUI milestone splits. Slicing it by
   module (search.rs, then app.rs, then view.rs) leaves `Mode::Search` and
