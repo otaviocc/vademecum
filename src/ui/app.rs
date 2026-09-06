@@ -16,6 +16,7 @@ use crate::ui::input::{Action, Motion};
 use crate::ui::search::{self, Search};
 
 pub(crate) const CHROME_ROWS: u16 = 4;
+pub(crate) const CONTENT_TOP: u16 = 2;
 const STDIN: &str = "stdin";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -120,6 +121,7 @@ impl App {
             Action::Quit => self.quit = true,
             Action::Move(motion) => self.move_cursor(motion),
             Action::Scroll(delta) => self.scroll(delta),
+            Action::Click { column, row } => self.click(column, row),
             Action::Resize(area) => self.resize(area),
             Action::Reload => self.reload(),
             Action::ToggleHelp => self.mode = if self.mode == Mode::Help { Mode::Browse } else { Mode::Help },
@@ -321,6 +323,11 @@ impl App {
         usize::from(self.area.height.saturating_sub(CHROME_ROWS)).max(1)
     }
 
+    pub fn link_progress(&self) -> Option<(usize, usize)> {
+        let count = self.lines.get(self.cursor).map_or(0, |line| line.links.len());
+        (count > 0).then_some((self.focus + 1, count))
+    }
+
     pub fn percent(&self) -> usize {
         match self.lines.len() {
             0 | 1 => 100,
@@ -357,6 +364,28 @@ impl App {
 
     fn scroll(&mut self, delta: isize) {
         self.top = offset(self.top, delta);
+    }
+
+    fn clicked_line(&self, row: u16) -> Option<usize> {
+        let row = usize::from(row.checked_sub(CONTENT_TOP)?);
+        if row >= self.viewport_height() {
+            return None;
+        }
+        let line = self.top + row;
+        (line < self.lines.len()).then_some(line)
+    }
+
+    fn click(&mut self, column: u16, row: u16) {
+        let Some(line) = self.clicked_line(row) else { return };
+        let Some(index) = self.lines[line].link_at(usize::from(column)) else { return };
+
+        self.cursor = line;
+        self.focus = index;
+        match self.focused().map(|link| &link.kind) {
+            Some(LinkKind::External(_)) => self.open_external(),
+            Some(_) => self.follow(),
+            None => {}
+        }
     }
 
     fn resize(&mut self, area: Size) {
@@ -533,6 +562,16 @@ mod tests {
         let last = app.lines.len() - 1;
         assert_eq!(app.cursor, last);
         assert_eq!(app.top, last - (app.viewport_height() - 1));
+    }
+
+    #[test]
+    fn a_click_on_plain_text_changes_nothing() {
+        let mut app = paged();
+        app.apply(Action::Scroll(12));
+        let (cursor, top) = (app.cursor, app.top);
+
+        app.apply(Action::Click { column: 0, row: CONTENT_TOP + 3 });
+        assert_eq!((app.cursor, app.top), (cursor, top), "a click is for links, not for the reading position");
     }
 
     #[test]
@@ -1015,6 +1054,94 @@ mod tests {
         app.cursor = app.lines.iter().position(|line| line.links.is_empty()).expect("a line with no links");
         app.apply(Action::Focus { forward: true });
         assert_eq!(app.focus, 0);
+    }
+
+    fn column_of(line: &RenderedLine, link: &LinkRef) -> u16 {
+        line.spans[..link.span_range.start].iter().map(crate::render::line::StyledSpan::width).sum::<usize>() as u16
+    }
+
+    fn click_link(app: &mut App, destination: &str, occurrence: usize) {
+        let mut seen = 0;
+        for index in 0..app.lines.len() {
+            let line = &app.lines[index];
+            let Some(link) = line.links.iter().find(|link| link.kind.destination() == destination) else { continue };
+            if seen < occurrence {
+                seen += 1;
+                continue;
+            }
+            let column = column_of(line, link);
+            let row = CONTENT_TOP + (index - app.top) as u16;
+            app.apply(Action::Click { column, row });
+            return;
+        }
+        panic!("no link to {destination:?} in the fixture");
+    }
+
+    #[test]
+    fn a_click_on_a_wikilink_opens_it() {
+        let mut app = inside_vault("some text and [[note]] on one line\n");
+        click_link(&mut app, "note", 0);
+
+        assert_eq!(app.file, "note.md");
+        assert_eq!(open_path(&app), PathBuf::from("tests/fixtures/vault/note.md"));
+        assert_eq!(app.status, Status::Notice(String::from("Opened note.md")));
+    }
+
+    #[test]
+    fn a_click_picks_the_link_it_landed_on_rather_than_the_first_one() {
+        let mut app = inside_vault("[[missing]] and [[note]] on one line\n");
+        click_link(&mut app, "note", 0);
+
+        assert_eq!(app.file, "note.md", "the second link is the one under the pointer");
+        assert_eq!(app.focus, 0, "a new document opens with nothing focused");
+    }
+
+    #[test]
+    fn a_click_on_a_broken_link_says_so_rather_than_doing_nothing() {
+        let mut app = inside_vault("a line with [[missing]] in it\n");
+        click_link(&mut app, "missing", 0);
+
+        assert_eq!(app.file, "scratch.md", "nothing was opened");
+        assert!(matches!(app.status, Status::Error(_)), "{:?}", app.status);
+    }
+
+    #[test]
+    fn a_click_beside_a_link_changes_nothing() {
+        let mut app = inside_vault("plain\n\nsome text and [[note]] here\n");
+        let line = app.lines.iter().position(|line| !line.links.is_empty()).expect("a line with a link");
+
+        app.apply(Action::Click { column: 0, row: CONTENT_TOP + line as u16 });
+        assert_eq!(app.cursor, 0, "landing beside a link is not landing on it");
+        assert_eq!(app.file, "scratch.md");
+        assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn a_click_outside_the_content_pane_follows_nothing() {
+        let mut app = inside_vault("[[note]] on the first line\n");
+        let height = app.viewport_height() as u16;
+
+        for row in [0, 1, CONTENT_TOP + height, CONTENT_TOP + height + 1] {
+            app.apply(Action::Click { column: 1, row });
+            assert_eq!(app.file, "scratch.md", "row {row} is chrome, not content");
+        }
+    }
+
+    #[test]
+    fn either_half_of_a_link_broken_across_lines_opens_it() {
+        let text = "the same note under a deliberately long label that will not fit on one rendered line";
+        let source = format!("a paragraph containing [{text}](note.md) and nothing else\n");
+
+        let mut first = inside_vault(&source);
+        let carrying: Vec<usize> = (0..first.lines.len()).filter(|index| !first.lines[*index].links.is_empty()).collect();
+        assert_eq!(carrying.len(), 2, "the fixture must wrap the link");
+
+        click_link(&mut first, "note.md", 0);
+        let mut second = inside_vault(&source);
+        click_link(&mut second, "note.md", 1);
+
+        assert_eq!(open_path(&first), PathBuf::from("tests/fixtures/vault/note.md"));
+        assert_eq!(open_path(&second), open_path(&first));
     }
 
     #[test]

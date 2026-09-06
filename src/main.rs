@@ -45,7 +45,11 @@ fn main() -> Result<()> {
     let theme = theme::loader::load(cli.config.as_deref(), cli.theme.as_deref())?;
 
     if is_terminal && !cli.plain {
-        return ui::run(document, theme, ui::Options { mouse: cli.mouse, width: cli.width, root: cli.root, watch: cli.watch });
+        return ui::run(
+            document,
+            theme,
+            ui::Options { mouse: !cli.no_mouse, width: cli.width, root: cli.root, watch: cli.watch },
+        );
     }
 
     let blocks = markdown::ast::parse(&document.source);
