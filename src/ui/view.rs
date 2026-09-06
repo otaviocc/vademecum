@@ -8,20 +8,39 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
-use ratatui::widgets::Widget;
+use ratatui::widgets::{Block, Clear, Widget};
 use ratatui::{Frame, symbols};
 use unicode_width::UnicodeWidthStr;
 
+use crate::render::line::RenderedLine;
 use crate::theme::Element;
-use crate::ui::app::App;
+use crate::ui::app::{App, Mode, Status};
 
 /// The shortcut hints, right-aligned in the header. They list the bindings
 /// this build has, and grow as milestones land.
-const HINTS: &str = "? help  q quit";
+const HINTS: &str = "? help  / search  q quit";
 /// Ahead of the title, so the reader can see what they are running.
 const TITLE_PREFIX: &str = " vademecum · ";
 /// One column between the title and the hints before the hints give way.
 const HINT_GAP: usize = 2;
+/// The overlay's share of the terminal: 60% of the width, and a height clamped
+/// between these shares of the height.
+const HELP_WIDTH: (u16, u16) = (3, 5);
+const HELP_HEIGHT: ((u16, u16), (u16, u16)) = ((4, 10), (9, 10));
+
+/// Every binding, as the overlay lists them — the README's table, in order.
+/// The rows for links and history arrive with milestone 5.
+const HELP: &[(&str, &str)] = &[
+    ("j / k, ↓ / ↑", "Move cursor line down / up"),
+    ("d / u, Ctrl-D / Ctrl-U", "Half page down / up"),
+    ("Space / b, PgDn / PgUp", "Page down / up"),
+    ("g / G, Home / End", "Top / bottom"),
+    ("/", "Search (Enter confirms, Esc cancels)"),
+    ("n / N", "Next / previous match"),
+    ("?", "Help overlay"),
+    ("Esc", "Close overlay, clear search highlight"),
+    ("q, Ctrl-C", "Quit"),
+];
 
 /// Paint the pager. The single entry point the event loop calls.
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -45,6 +64,10 @@ impl Widget for Screen<'_> {
         content(content_rows, buf, self.app);
         rule(bottom_rule, buf, hint);
         statusbar(status_row, buf, self.app);
+
+        if self.app.mode == Mode::Help {
+            help(area, buf, self.app);
+        }
     }
 }
 
@@ -97,13 +120,79 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
             }
             x = next;
         }
+
+        highlight(area, buf, y, app, index, line);
     }
 }
 
-/// `file · line X/Y · N%`.
+/// Repaint the matched cells of one line. Byte offsets become columns here,
+/// on the handful of visible lines that have a match, rather than everywhere.
+fn highlight(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize, line: &RenderedLine) {
+    let found = app.search.on_line(index);
+    if found.is_empty() {
+        return;
+    }
+
+    let text = line.text();
+    let current = app.search.current.and_then(|index| app.search.matches.get(index));
+    for hit in found {
+        let style =
+            if Some(hit) == current { app.theme.style(Element::SearchCurrent) } else { app.theme.style(Element::SearchMatch) };
+        let start = area.x + text[..hit.start].width() as u16;
+        let width = text[hit.start..hit.end].width() as u16;
+        if start >= area.right() {
+            continue;
+        }
+        buf.set_style(Rect::new(start, y, width.min(area.right() - start), 1), style);
+    }
+}
+
+/// The `/` prompt while a query is being typed, else a notice, else
+/// `file · line X/Y · N%` with the match count when a query is standing.
 fn statusbar(area: Rect, buf: &mut Buffer, app: &App) {
-    let status = format!("{} · line {}/{} · {}%", app.file, app.cursor + 1, app.lines.len(), app.percent());
-    buf.set_stringn(area.x, area.y, &status, area.width as usize, app.theme.style(Element::Status));
+    let (text, element) = match (app.mode, &app.status) {
+        (Mode::Search, _) => (format!("/{}", app.search.input), Element::Status),
+        (_, Status::Notice(notice)) => (notice.clone(), Element::StatusNotice),
+        (_, Status::Idle) => {
+            let mut status = format!("{} · line {}/{} · {}%", app.file, app.cursor + 1, app.lines.len(), app.percent());
+            if let Some((index, total)) = app.search.progress() {
+                status.push_str(&format!(" · match {index}/{total}"));
+            }
+            (status, Element::Status)
+        }
+    };
+    buf.set_stringn(area.x, area.y, &text, area.width as usize, app.theme.style(element));
+}
+
+/// The keybinding table, in a centred popup over the document.
+fn help(area: Rect, buf: &mut Buffer, app: &App) {
+    let popup = help_area(area);
+    Clear.render(popup, buf);
+
+    let border = Style::default().fg(app.theme.palette.accent);
+    let block = Block::bordered().title(" Help ").style(app.theme.style(Element::HelpWindow)).border_style(border);
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+
+    // The overlay does not scroll: a terminal too short for the table clips it.
+    let column = HELP.iter().map(|(key, _)| key.width()).max().unwrap_or(0) + HINT_GAP;
+    for (row, (key, action)) in HELP.iter().take(inner.height as usize).enumerate() {
+        let y = inner.y + row as u16;
+        buf.set_stringn(inner.x, y, key, inner.width as usize, app.theme.style(Element::HeaderTitle));
+        if column < inner.width as usize {
+            let x = inner.x + column as u16;
+            buf.set_stringn(x, y, action, (inner.right() - x) as usize, app.theme.style(Element::Hint));
+        }
+    }
+}
+
+/// 60% of the width, and a height clamped to 40-90%, centred.
+fn help_area(area: Rect) -> Rect {
+    let width = (area.width * HELP_WIDTH.0 / HELP_WIDTH.1).max(1).min(area.width);
+    let (floor, ceiling) = (area.height * HELP_HEIGHT.0.0 / HELP_HEIGHT.0.1, area.height * HELP_HEIGHT.1.0 / HELP_HEIGHT.1.1);
+    let height = (HELP.len() as u16 + 2).clamp(floor, ceiling).max(1).min(area.height.max(1));
+
+    Rect { x: area.x + area.width.saturating_sub(width) / 2, y: area.y + area.height.saturating_sub(height) / 2, width, height }
 }
 
 #[cfg(test)]
@@ -226,6 +315,99 @@ mod tests {
         let buffer = frame(&app("only line\n", size), size);
         assert_eq!(row(&buffer, 2).trim(), "only line");
         assert_eq!(row(&buffer, 5), "");
+    }
+
+    fn search_for(app: &mut App, query: &str) {
+        app.apply(Action::SearchStart);
+        for character in query.chars() {
+            app.apply(Action::SearchType(character));
+        }
+        app.apply(Action::SearchConfirm);
+    }
+
+    #[test]
+    fn the_prompt_shows_the_query_as_it_is_typed() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        app.apply(Action::SearchStart);
+        app.apply(Action::SearchType('l'));
+        app.apply(Action::SearchType('i'));
+
+        let buffer = frame(&app, size);
+        assert_eq!(row(&buffer, 11), "/li");
+    }
+
+    #[test]
+    fn the_prompt_outranks_a_notice_the_reader_has_not_dismissed() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        search_for(&mut app, "absent");
+        assert_eq!(row(&frame(&app, size), 11), "no matches for \"absent\"");
+
+        app.apply(Action::SearchStart);
+        assert_eq!(row(&frame(&app, size), 11), "/");
+    }
+
+    #[test]
+    fn a_standing_query_puts_the_match_count_on_the_statusbar() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        search_for(&mut app, "line 1");
+
+        let status = row(&frame(&app, size), 11);
+        assert!(status.contains(&format!("· match 1/{}", app.search.matches.len())), "{status:?}");
+    }
+
+    #[test]
+    fn a_match_is_painted_over_and_the_current_one_differently() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        search_for(&mut app, "line");
+
+        let buffer = frame(&app, size);
+        let current = app.theme.style(Element::SearchCurrent);
+        let other = app.theme.style(Element::SearchMatch);
+        assert_ne!(current.bg, other.bg, "the two are meant to be told apart");
+
+        // " line 1" — the gutter is column 0, so the match starts at column 1.
+        assert_eq!(buffer[(1, 2)].bg, current.bg.expect("a background"));
+        // The second match is two rows down, past the blank line.
+        assert_eq!(buffer[(1, 4)].bg, other.bg.expect("a background"));
+    }
+
+    #[test]
+    fn the_overlay_covers_the_document_and_lists_the_bindings() {
+        let size = Size::new(100, 24);
+        let mut app = app(&body(), size);
+        app.apply(Action::ToggleHelp);
+
+        let buffer = frame(&app, size);
+        let text: String = (0..size.height).map(|y| row(&buffer, y)).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("Help"), "{text}");
+        assert!(text.contains("Next / previous match"), "{text}");
+        assert!(text.contains("q, Ctrl-C"), "{text}");
+    }
+
+    #[test]
+    fn the_overlay_takes_three_fifths_of_the_width_and_sits_in_the_middle() {
+        let area = Rect::new(0, 0, 100, 40);
+        let popup = help_area(area);
+        assert_eq!(popup.width, 60);
+        assert_eq!(popup.x, 20, "centred");
+        // The table wants eleven rows but the floor is 40% of forty.
+        assert_eq!(popup.height, 16);
+        assert_eq!(popup.y, 12, "centred");
+    }
+
+    #[test]
+    fn the_overlay_is_clamped_rather_than_scrolled_on_a_short_terminal() {
+        // Nine bindings plus a border want thirteen rows; 90% of twelve is ten.
+        let popup = help_area(Rect::new(0, 0, 60, 12));
+        assert_eq!(popup.height, 10);
+
+        // And on a very tall one it is floored at 40%.
+        let popup = help_area(Rect::new(0, 0, 60, 100));
+        assert_eq!(popup.height, 40);
     }
 
     #[test]

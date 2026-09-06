@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod input;
+pub mod search;
 pub mod view;
 
 use std::io;
@@ -74,7 +75,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
 }
 
 fn apply(app: &mut App, event: &event::Event) {
-    if let Some(action) = input::action(event) {
+    if let Some(action) = input::action(event, app.mode) {
         app.apply(action);
     }
 }
