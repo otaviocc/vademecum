@@ -324,6 +324,12 @@ impl Vault {
         // handed the directory back.
         for paths in index.values_mut() {
             paths.sort();
+            // One file reachable under two names — through a symlinked
+            // directory, or as a symlinked file — is one file, not two
+            // candidates to be ambiguous between. Sorting first is what makes
+            // the surviving name the same from one run to the next.
+            let mut seen = HashSet::new();
+            paths.retain(|path| seen.insert(path.canonicalize().unwrap_or_else(|_| path.clone())));
         }
 
         let index = Arc::new(index);
@@ -385,7 +391,13 @@ fn walk(dir: &Path, index: &mut HashMap<String, Vec<PathBuf>>, visited: &mut Has
     }
 
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
+    // Sorted, because two names for one directory are walked only once and the
+    // one that wins would otherwise be whichever the filesystem happened to
+    // hand back first — a different answer on a different machine.
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+
+    for entry in entries {
         let name = entry.file_name();
         if name.to_string_lossy().starts_with('.') {
             continue;
@@ -663,6 +675,51 @@ mod tests {
         let from = document(root.path(), "index.md");
         let found = Vault::discover(None, &from.base_dir).resolve(&classify("a", WIKI), &from);
         assert_eq!(found, Ok(Target::File(root.path().join("deep/a.md"))));
+    }
+
+    /// Following links means a note can be reached by more than one name. One
+    /// file is one file: reporting it as a clash with itself would make the
+    /// link unfollowable, which is worse than not following symlinks at all.
+    #[cfg(unix)]
+    #[test]
+    fn one_file_under_two_names_is_one_candidate() {
+        let root = vault(&["index.md", "shared/note.md", "other/"]);
+        let path = root.path();
+        std::os::unix::fs::symlink(path.join("shared/note.md"), path.join("other/note.md")).expect("a symlink");
+
+        let from = document(path, "index.md");
+        let found = Vault::discover(None, &from.base_dir).resolve(&classify("note", WIKI), &from);
+        assert!(matches!(found, Ok(Target::File(_))), "one file was reported as a clash with itself: {found:?}");
+    }
+
+    /// And two genuinely different files still clash, which is the thing the
+    /// deduplication must not swallow.
+    #[cfg(unix)]
+    #[test]
+    fn two_different_files_of_one_name_are_still_ambiguous() {
+        let root = vault(&["index.md", "a/dup.md", "b/dup.md"]);
+        let from = document(root.path(), "index.md");
+        let found = Vault::discover(None, &from.base_dir).resolve(&classify("dup", WIKI), &from);
+        assert!(matches!(found, Err(ResolveError::Ambiguous { .. })), "{found:?}");
+    }
+
+    /// A directory reachable under two names is walked once, and which name the
+    /// reader is shown must not depend on the order the filesystem handed the
+    /// entries back — that would be a different answer on a different machine.
+    #[cfg(unix)]
+    #[test]
+    fn the_name_a_shared_directory_is_shown_under_is_the_same_every_time() {
+        let root = vault(&["index.md", "shared/note.md"]);
+        let path = root.path();
+        std::os::unix::fs::symlink(path.join("shared"), path.join("alias")).expect("a symlink");
+
+        let from = document(path, "index.md");
+        // `alias` sorts before `shared`, and the walk is sorted, so this is the
+        // answer on every run and every filesystem.
+        let expected = Ok(Target::File(path.join("alias/note.md")));
+        for _ in 0..3 {
+            assert_eq!(Vault::discover(None, &from.base_dir).resolve(&classify("note", WIKI), &from), expected);
+        }
     }
 
     /// A link pointing nowhere is not a note. `metadata` fails on it, which is
