@@ -480,8 +480,11 @@ scans their text, and cursor/Tab/Enter/`o` read `links`.
 
 1. `base_dir/target` and `base_dir/target.md`.
 2. A **unique** file named `target.md` (case-insensitive) anywhere under the
-   vault root, skipping hidden directories. Ambiguity is reported as an
-   error in the statusbar listing the candidates.
+   vault root, skipping hidden directories. Symlinked directories *are*
+   followed — a shared folder linked into a vault is an ordinary way to build
+   one — and a directory already visited is not visited twice, so a vault
+   linking back to its own root terminates instead of walking forever.
+   Ambiguity is reported as an error in the statusbar listing the candidates.
 
 The vault root is `--root` if given, else the nearest ancestor of the start
 file containing `.obsidian/`, else the start file's directory. A `--root` that
