@@ -11,7 +11,10 @@ use crate::theme::color::{ColorError, ColorSpec};
 use crate::theme::elements::{self, Element, ElementFile};
 use crate::theme::palette::{Palette, PaletteFile};
 
-const BUILT_IN: [(&str, &str); 4] = [
+const DEFAULT: &str = "handbook";
+
+const BUILT_IN: [(&str, &str); 5] = [
+    ("handbook", include_str!("../../themes/handbook.toml")),
     ("ansi", include_str!("../../themes/ansi.toml")),
     ("kanagawa-dragon", include_str!("../../themes/kanagawa-dragon.toml")),
     ("catppuccin-mocha", include_str!("../../themes/catppuccin-mocha.toml")),
@@ -99,7 +102,7 @@ fn resolve(config: Option<&Path>, name: Option<&str>, config_dir: Option<&Path>)
     if let Some(path) = config_dir.map(|dir| dir.join("theme.toml")).filter(|path| path.is_file()) {
         return from_file(&path);
     }
-    from_source(BUILT_IN[0].0, BUILT_IN[0].1)
+    by_name(DEFAULT, config_dir)
 }
 
 fn by_name(name: &str, config_dir: Option<&Path>) -> Result<(Theme, Vec<String>), ThemeError> {
@@ -253,12 +256,12 @@ mod tests {
     }
 
     #[test]
-    fn the_embedded_ansi_theme_is_the_built_in_default() {
-        let embedded = theme(BUILT_IN[0].1);
+    fn the_embedded_ansi_theme_is_the_merge_base_every_partial_file_inherits() {
+        let embedded = built_in("ansi");
         let default = Theme::default();
         assert_eq!(embedded.palette, default.palette);
         for element in Element::ALL {
-            assert_eq!(embedded.style(element), default.style(element), "{element:?} differs from the default");
+            assert_eq!(embedded.style(element), default.style(element), "{element:?} differs from the merge base");
         }
     }
 
@@ -275,7 +278,7 @@ mod tests {
 
     #[test]
     fn a_theme_with_a_real_subtle_can_have_its_code_background() {
-        for name in ["catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
+        for name in ["handbook", "catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
             let concrete = built_in(name);
             for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
                 assert_eq!(concrete.style(element).bg, Some(concrete.palette.subtle), "{name} {element:?}");
@@ -310,7 +313,7 @@ mod tests {
 
     #[test]
     fn a_theme_that_bands_its_code_still_shows_the_cursor_line_over_it() {
-        for name in ["catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
+        for name in ["handbook", "catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
             let concrete = built_in(name);
             assert_ne!(concrete.palette.cursor, concrete.palette.subtle, "{name} cursor is the code band");
             assert_ne!(
@@ -483,11 +486,20 @@ colour = "red""#,
     fn with_nothing_configured_the_built_in_default_is_used() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (theme, _) = resolve(None, None, Some(dir.path())).expect("the theme loads");
-        assert_eq!(theme.name, "ansi");
-        assert_eq!(theme.palette, Palette::default());
+        assert_eq!(theme.name, DEFAULT);
+        assert_eq!(theme.palette, built_in(DEFAULT).palette);
 
         let (nowhere, _) = resolve(None, None, None).expect("the theme loads");
-        assert_eq!(nowhere.palette, Palette::default());
+        assert_eq!(nowhere.palette, built_in(DEFAULT).palette);
+        assert_ne!(nowhere.palette, Palette::default(), "the default theme is no longer the merge base");
+    }
+
+    #[test]
+    fn a_user_file_named_after_the_default_shadows_it_like_any_other() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), &format!("themes/{DEFAULT}.toml"), "[palette]\naccent = \"#000007\"");
+        let (theme, _) = resolve(None, None, Some(dir.path())).expect("the theme loads");
+        assert_eq!(theme.palette.accent, Color::Rgb(0, 0, 7));
     }
 
     #[test]
@@ -525,7 +537,8 @@ colour = "red""#,
         std::fs::create_dir_all(dir.path().join("themes/folder.toml")).expect("mkdir");
 
         let names = available_in(Some(dir.path()));
-        assert_eq!(names, ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte", "Apple", "zebra"]);
-        assert_eq!(available_in(None), ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);
+        assert_eq!(names, ["handbook", "ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte", "Apple", "zebra"]);
+        assert_eq!(available_in(None), ["handbook", "ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);
+        assert_eq!(names[0], DEFAULT, "the listing leads with the default");
     }
 }
