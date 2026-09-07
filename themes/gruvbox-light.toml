@@ -1,0 +1,32 @@
+# Gruvbox Light — the medium hard contrast, upstream names in the comments.
+name = "gruvbox-light"
+syntax_theme = "base16-ocean.light"
+
+[palette]
+background           = "#fbf1c7"   # bg0
+foreground           = "#3c3836"   # fg1
+muted                = "#d5c4a1"   # bg2
+muted_text           = "#7c6f64"   # fg4
+subtle               = "#f2e5bc"   # bg0_s
+cursor               = "#ebdbb2"   # bg1, a step darker than the code band
+selection_background = "#bdae93"   # bg3
+selection_foreground = "#282828"   # fg0
+error                = "#9d0006"   # faded red
+success              = "#79740e"   # faded green
+warning              = "#b57614"   # faded yellow
+accent               = "#b57614"   # faded yellow
+chrome               = "#427b58"   # faded aqua
+highlight            = "#076678"   # faded blue
+notice               = "#8f3f71"   # faded purple
+
+# This palette's `subtle` is a real near-background tint rather than ANSI bright
+# black, so code gets its band back; the element defaults leave it off for
+# `ansi`'s sake.
+[elements.inline_code]
+bg = "subtle"
+
+[elements.code_block]
+bg = "subtle"
+
+[elements.code_block_lang]
+bg = "subtle"

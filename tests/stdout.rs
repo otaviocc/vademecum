@@ -20,9 +20,17 @@ fn every_construct_renders_in_color() {
 #[test]
 fn every_built_in_theme_renders() {
     insta::assert_snapshot!("elements-ansi", themed("ansi"));
-    insta::assert_snapshot!("elements-kanagawa-dragon", themed("kanagawa-dragon"));
-    insta::assert_snapshot!("elements-catppuccin-mocha", themed("catppuccin-mocha"));
     insta::assert_snapshot!("elements-catppuccin-latte", themed("catppuccin-latte"));
+    insta::assert_snapshot!("elements-catppuccin-mocha", themed("catppuccin-mocha"));
+    insta::assert_snapshot!("elements-gruvbox-dark", themed("gruvbox-dark"));
+    insta::assert_snapshot!("elements-gruvbox-light", themed("gruvbox-light"));
+    insta::assert_snapshot!("elements-kanagawa-dragon", themed("kanagawa-dragon"));
+    insta::assert_snapshot!("elements-nord", themed("nord"));
+    insta::assert_snapshot!("elements-solarized-dark", themed("solarized-dark"));
+    insta::assert_snapshot!("elements-solarized-light", themed("solarized-light"));
+    insta::assert_snapshot!("elements-tokyo-night", themed("tokyo-night"));
+    insta::assert_snapshot!("elements-tokyo-night-day", themed("tokyo-night-day"));
+    insta::assert_snapshot!("elements-vesper", themed("vesper"));
 }
 
 #[test]
@@ -90,7 +98,24 @@ fn a_config_file_that_names_a_built_in_and_one_override_differs_only_there() {
 fn themes_are_listed_without_a_document() {
     let output = run(&["--list-themes"]);
     let names: Vec<&str> = output.lines().collect();
-    assert_eq!(names, ["handbook", "ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);
+    assert_eq!(
+        names,
+        [
+            "handbook",
+            "ansi",
+            "catppuccin-latte",
+            "catppuccin-mocha",
+            "gruvbox-dark",
+            "gruvbox-light",
+            "kanagawa-dragon",
+            "nord",
+            "solarized-dark",
+            "solarized-light",
+            "tokyo-night",
+            "tokyo-night-day",
+            "vesper",
+        ]
+    );
 }
 
 #[test]

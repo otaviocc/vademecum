@@ -1,0 +1,32 @@
+# Tokyo Night Day — the light variant, upstream names in the comments.
+name = "tokyo-night-day"
+syntax_theme = "base16-ocean.light"
+
+[palette]
+background           = "#e1e2e7"   # bg
+foreground           = "#3760bf"   # fg
+muted                = "#a1a6c5"   # terminal black
+muted_text           = "#848cb5"   # comment
+subtle               = "#d4d6e4"   # bg_dark, the code band
+cursor               = "#c4c8da"   # bg_highlight, a step darker
+selection_background = "#b6bfe2"   # bg_visual
+selection_foreground = "#3760bf"   # fg
+error                = "#f52a65"   # red
+success              = "#587539"   # green
+warning              = "#8c6c3e"   # yellow
+accent               = "#2e7de9"   # blue
+chrome               = "#007197"   # cyan
+highlight            = "#9854f1"   # magenta
+notice               = "#b15c00"   # orange
+
+# This palette's `subtle` is a real near-background tint rather than ANSI bright
+# black, so code gets its band back; the element defaults leave it off for
+# `ansi`'s sake.
+[elements.inline_code]
+bg = "subtle"
+
+[elements.code_block]
+bg = "subtle"
+
+[elements.code_block_lang]
+bg = "subtle"

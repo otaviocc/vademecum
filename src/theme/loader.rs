@@ -13,12 +13,20 @@ use crate::theme::palette::{Palette, PaletteFile};
 
 const DEFAULT: &str = "handbook";
 
-const BUILT_IN: [(&str, &str); 5] = [
+const BUILT_IN: [(&str, &str); 13] = [
     ("handbook", include_str!("../../themes/handbook.toml")),
     ("ansi", include_str!("../../themes/ansi.toml")),
-    ("kanagawa-dragon", include_str!("../../themes/kanagawa-dragon.toml")),
-    ("catppuccin-mocha", include_str!("../../themes/catppuccin-mocha.toml")),
     ("catppuccin-latte", include_str!("../../themes/catppuccin-latte.toml")),
+    ("catppuccin-mocha", include_str!("../../themes/catppuccin-mocha.toml")),
+    ("gruvbox-dark", include_str!("../../themes/gruvbox-dark.toml")),
+    ("gruvbox-light", include_str!("../../themes/gruvbox-light.toml")),
+    ("kanagawa-dragon", include_str!("../../themes/kanagawa-dragon.toml")),
+    ("nord", include_str!("../../themes/nord.toml")),
+    ("solarized-dark", include_str!("../../themes/solarized-dark.toml")),
+    ("solarized-light", include_str!("../../themes/solarized-light.toml")),
+    ("tokyo-night", include_str!("../../themes/tokyo-night.toml")),
+    ("tokyo-night-day", include_str!("../../themes/tokyo-night-day.toml")),
+    ("vesper", include_str!("../../themes/vesper.toml")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -869,8 +877,27 @@ colour = "red""#,
         std::fs::create_dir_all(dir.path().join("themes/folder.toml")).expect("mkdir");
 
         let names = available_in(Some(dir.path()));
-        assert_eq!(names, ["handbook", "ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte", "Apple", "zebra"]);
-        assert_eq!(available_in(None), ["handbook", "ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);
+        let built_ins = [
+            "handbook",
+            "ansi",
+            "catppuccin-latte",
+            "catppuccin-mocha",
+            "gruvbox-dark",
+            "gruvbox-light",
+            "kanagawa-dragon",
+            "nord",
+            "solarized-dark",
+            "solarized-light",
+            "tokyo-night",
+            "tokyo-night-day",
+            "vesper",
+        ];
+        let expected: Vec<&str> = built_ins.iter().copied().chain(["Apple", "zebra"]).collect();
+        assert_eq!(names, expected);
+        assert_eq!(available_in(None), built_ins);
+        let mut alphabetical = built_ins[2..].to_vec();
+        alphabetical.sort_by_key(|name| name.to_lowercase());
+        assert_eq!(built_ins[2..], alphabetical[..], "the built-ins after the default and the merge base are alphabetical");
         assert_eq!(names[0], DEFAULT, "the listing leads with the default");
     }
 }

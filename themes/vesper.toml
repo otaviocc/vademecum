@@ -1,0 +1,33 @@
+# Vesper — a near-monochrome dark scheme with three colours to spend, so most
+# of the palette is grey on purpose and the accents carry the meaning.
+name = "vesper"
+syntax_theme = "base16-ocean.dark"
+
+[palette]
+background           = "#101010"   # bg
+foreground           = "#ffffff"   # fg
+muted                = "#343434"   # border
+muted_text           = "#8b8b8b"   # comment
+subtle               = "#161616"   # surface, the code band
+cursor               = "#232323"   # active, a step lighter
+selection_background = "#343434"   # border
+selection_foreground = "#ffffff"   # fg
+error                = "#ff8080"   # red
+success              = "#99ffe4"   # mint
+warning              = "#ffc799"   # orange
+accent               = "#ffc799"   # orange
+chrome               = "#8b8b8b"   # comment grey, to keep the chrome quiet
+highlight            = "#ffcfa8"   # pale orange
+notice               = "#99ffe4"   # mint
+
+# This palette's `subtle` is a real near-background tint rather than ANSI bright
+# black, so code gets its band back; the element defaults leave it off for
+# `ansi`'s sake.
+[elements.inline_code]
+bg = "subtle"
+
+[elements.code_block]
+bg = "subtle"
+
+[elements.code_block_lang]
+bg = "subtle"
