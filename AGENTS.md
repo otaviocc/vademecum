@@ -411,8 +411,14 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   skips OSC entirely, so it cannot see this.
 - `cargo build` in this working tree can report the binary `Fresh` while
   `target/debug/vademecum` is a day old, so a pty smoke test silently runs the
-  previous build. Check `strings target/debug/vademecum` for a string only the
-  new code has, or build into a scratch `CARGO_TARGET_DIR`.
+  previous build. **Build into a scratch `CARGO_TARGET_DIR`** — that is the only
+  remedy that works. Touching `src/main.rs` does not, and neither does deleting
+  `target/debug/vademecum`: cargo puts the same stale file back, mtime and all.
+  `cargo test` uses that copy too (`Command::cargo_bin`, `tests/common/mod.rs`),
+  so the whole integration suite, snapshots included, can pass against a build
+  from yesterday. Checking `strings` for a string only the new code has works
+  only if the string really is new: a hex colour picked out of a theme file is a
+  bad probe, because the same value usually sits in another slot.
 - The reducer must not write to the terminal, or nothing about copying is
   testable. `App` fills an outbox that the event loop drains after every **wake**
   — not just after an input event, or a copy produced by a reload is dropped —
