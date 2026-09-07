@@ -50,6 +50,43 @@ fn a_theme_file_repaints_what_it_names_and_nothing_else() {
 }
 
 #[test]
+fn a_config_file_that_names_a_built_in_renders_as_that_built_in() {
+    let based = run(&[
+        "--plain",
+        "--color",
+        "always",
+        "--width",
+        "80",
+        "--config",
+        "tests/fixtures/theme-base.toml",
+        "tests/fixtures/elements.md",
+    ]);
+
+    assert_eq!(based, themed("catppuccin-mocha"), "a file whose only line names a base is not that theme");
+}
+
+#[test]
+fn a_config_file_that_names_a_built_in_and_one_override_differs_only_there() {
+    let tweaked = run(&[
+        "--plain",
+        "--color",
+        "always",
+        "--width",
+        "80",
+        "--config",
+        "tests/fixtures/theme-base-override.toml",
+        "tests/fixtures/elements.md",
+    ]);
+    let mocha = themed("catppuccin-mocha");
+
+    assert!(tweaked.contains("\x1b[0;38;2;255;0;0;1mHeading 1\x1b[0m"), "the accent did not reach headings: {tweaked:?}");
+    assert!(mocha.contains("\x1b[0;38;2;203;166;247;1mHeading 1\x1b[0m"), "mocha's own heading moved: {mocha:?}");
+
+    let unchanged = "\x1b[0;38;2;137;180;250;1mHeading 3\x1b[0m";
+    assert!(tweaked.contains(unchanged) && mocha.contains(unchanged), "an element the override does not name moved");
+}
+
+#[test]
 fn themes_are_listed_without_a_document() {
     let output = run(&["--list-themes"]);
     let names: Vec<&str> = output.lines().collect();

@@ -1,0 +1,4 @@
+base = "catppuccin-mocha"
+
+[palette]
+accent = "#ff0000"
