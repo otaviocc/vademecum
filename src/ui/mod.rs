@@ -92,6 +92,14 @@ fn handle(app: &mut App, wake: Wake, watcher: &mut Option<watch::Watcher>) {
         }
         Wake::InputLost => app.quit = true,
     }
+    drain_copy(app);
+}
+
+fn drain_copy(app: &mut App) {
+    let Some(text) = app.take_copy() else { return };
+    if let Err(error) = clipboard::copy(&text) {
+        app.report(&format!("could not copy: {error}"));
+    }
 }
 
 fn rearm(app: &mut App, watcher: &mut Option<watch::Watcher>) {
@@ -117,9 +125,6 @@ fn start_watching(options: &Options, path: Option<&Path>, tx: &Sender<Wake>) -> 
 fn apply(app: &mut App, event: &event::Event) {
     let Some(action) = input::action(event, app.mode) else { return };
     app.apply(action);
-    if let Some(text) = app.take_copy() {
-        let _ = clipboard::copy(&text);
-    }
 }
 
 fn spawn_input(tx: Sender<Wake>) {

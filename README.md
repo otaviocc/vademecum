@@ -206,9 +206,14 @@ TOML. Origins and licences for the added ones are in
 | Left click | Follow the link under the pointer, on release |
 | Left drag | Select text, and copy it when the button is let go |
 
-Copying goes through the terminal, with an `OSC 52` escape, so it works over
-`ssh` as well as locally. Terminals differ on whether they allow it: tmux wants
-`set -g set-clipboard on`, and a few others have it off by default.
+Copying uses the platform's own clipboard tool when one is on `PATH` —
+`pbcopy` on macOS, `wl-copy` under Wayland, `xclip` or `xsel` under X11,
+`clip.exe` on Windows. It also always sends an `OSC 52` escape, which is what
+carries a copy back over `ssh`. Terminals differ on whether they accept that
+escape: Apple Terminal and GNOME Terminal ignore it entirely, tmux wants
+`set -g set-clipboard on`, and a few others have it off by default — hence the
+native tool, which does not care. If the copy fails outright the statusbar says
+so rather than claiming success.
 
 The wheel scrolls three lines a notch. Dragging selects the text as it is
 painted — wrapped where the page wrapped, without the gutter or the colours —
