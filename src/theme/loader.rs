@@ -11,7 +11,10 @@ use crate::theme::color::{ColorError, ColorSpec};
 use crate::theme::elements::{self, Element, ElementFile};
 use crate::theme::palette::{Palette, PaletteFile};
 
-const BUILT_IN: [(&str, &str); 4] = [
+const DEFAULT: &str = "handbook";
+
+const BUILT_IN: [(&str, &str); 5] = [
+    ("handbook", include_str!("../../themes/handbook.toml")),
     ("ansi", include_str!("../../themes/ansi.toml")),
     ("kanagawa-dragon", include_str!("../../themes/kanagawa-dragon.toml")),
     ("catppuccin-mocha", include_str!("../../themes/catppuccin-mocha.toml")),
@@ -99,7 +102,7 @@ fn resolve(config: Option<&Path>, name: Option<&str>, config_dir: Option<&Path>)
     if let Some(path) = config_dir.map(|dir| dir.join("theme.toml")).filter(|path| path.is_file()) {
         return from_file(&path);
     }
-    from_source(BUILT_IN[0].0, BUILT_IN[0].1)
+    by_name(DEFAULT, config_dir)
 }
 
 fn by_name(name: &str, config_dir: Option<&Path>) -> Result<(Theme, Vec<String>), ThemeError> {
@@ -170,6 +173,9 @@ impl ThemeFile {
             })?;
             PaletteFile::set(&mut palette, slot, color);
         }
+        if self.palette.cursor.is_none() && self.palette.subtle.is_some() {
+            palette.cursor = palette.subtle;
+        }
         Ok(palette)
     }
 }
@@ -220,6 +226,11 @@ mod tests {
         from_source("test.toml", source).expect("the theme loads").0
     }
 
+    fn built_in(name: &str) -> Theme {
+        let source = BUILT_IN.iter().find(|(built_in, _)| *built_in == name).expect("a built-in by that name").1;
+        theme(source)
+    }
+
     fn warnings(source: &str) -> Vec<String> {
         from_source("test.toml", source).expect("the theme loads").1
     }
@@ -245,12 +256,12 @@ mod tests {
     }
 
     #[test]
-    fn the_embedded_ansi_theme_is_the_built_in_default() {
-        let embedded = theme(BUILT_IN[0].1);
+    fn the_embedded_ansi_theme_is_the_merge_base_every_partial_file_inherits() {
+        let embedded = built_in("ansi");
         let default = Theme::default();
         assert_eq!(embedded.palette, default.palette);
         for element in Element::ALL {
-            assert_eq!(embedded.style(element), default.style(element), "{element:?} differs from the default");
+            assert_eq!(embedded.style(element), default.style(element), "{element:?} differs from the merge base");
         }
     }
 
@@ -267,30 +278,58 @@ mod tests {
 
     #[test]
     fn a_theme_with_a_real_subtle_can_have_its_code_background() {
-        for name in ["catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
-            let source = BUILT_IN.iter().find(|(built_in, _)| *built_in == name).expect("a built-in").1;
-            let built_in = theme(source);
+        for name in ["handbook", "catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
+            let concrete = built_in(name);
             for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
-                assert_eq!(built_in.style(element).bg, Some(built_in.palette.subtle), "{name} {element:?}");
+                assert_eq!(concrete.style(element).bg, Some(concrete.palette.subtle), "{name} {element:?}");
             }
         }
     }
 
     #[test]
     fn the_ansi_theme_gives_code_no_background() {
-        let ansi = theme(BUILT_IN[0].1);
+        let ansi = built_in("ansi");
         for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
             assert_eq!(ansi.style(element).bg, None, "{element:?} still paints a background");
             assert!(ansi.style(element).fg.is_some(), "{element:?} has to say something, having no background");
         }
 
-        assert_eq!(ansi.style(Element::CursorLine).bg, Some(ansi.palette.subtle));
+        assert_eq!(ansi.style(Element::CursorLine).bg, Some(ansi.palette.cursor));
         assert_ne!(ansi.style(Element::CursorLine).bg, ansi.style(Element::CodeBlock).bg);
     }
 
     #[test]
+    fn a_file_that_names_subtle_and_not_cursor_keeps_the_cursor_on_the_band() {
+        let inherited = theme("[palette]\nsubtle = \"#101010\"\n");
+        assert_eq!(inherited.palette.cursor, Color::Rgb(16, 16, 16), "a theme written before the two slots split moved");
+        assert_eq!(inherited.style(Element::CursorLine).bg, Some(Color::Rgb(16, 16, 16)));
+
+        let separate = theme("[palette]\nsubtle = \"#101010\"\ncursor = \"#202020\"\n");
+        assert_eq!(separate.palette.cursor, Color::Rgb(32, 32, 32), "a theme that names both must keep them apart");
+
+        let neither = theme("name = \"mine\"\n");
+        assert_eq!(neither.palette.cursor, Palette::default().cursor);
+    }
+
+    #[test]
+    fn a_theme_that_bands_its_code_still_shows_the_cursor_line_over_it() {
+        for name in ["handbook", "catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
+            let concrete = built_in(name);
+            assert_ne!(concrete.palette.cursor, concrete.palette.subtle, "{name} cursor is the code band");
+            assert_ne!(
+                concrete.style(Element::CursorLine).bg,
+                concrete.style(Element::CodeBlock).bg,
+                "{name} loses the cursor line inside a code block"
+            );
+        }
+
+        let ansi = built_in("ansi");
+        assert_eq!(ansi.palette.cursor, ansi.palette.subtle, "ansi has 16 colors and one grey to spend");
+    }
+
+    #[test]
     fn the_ansi_search_highlights_name_a_foreground_that_reads() {
-        let ansi = theme(BUILT_IN[0].1);
+        let ansi = built_in("ansi");
         for element in [Element::SearchMatch, Element::SearchCurrent] {
             assert_eq!(ansi.style(element).fg, Some(Color::Black), "{element:?}");
             assert_ne!(ansi.style(element).fg, Some(ansi.palette.background), "{element:?} inverts against nothing");
@@ -447,11 +486,20 @@ colour = "red""#,
     fn with_nothing_configured_the_built_in_default_is_used() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (theme, _) = resolve(None, None, Some(dir.path())).expect("the theme loads");
-        assert_eq!(theme.name, "ansi");
-        assert_eq!(theme.palette, Palette::default());
+        assert_eq!(theme.name, DEFAULT);
+        assert_eq!(theme.palette, built_in(DEFAULT).palette);
 
         let (nowhere, _) = resolve(None, None, None).expect("the theme loads");
-        assert_eq!(nowhere.palette, Palette::default());
+        assert_eq!(nowhere.palette, built_in(DEFAULT).palette);
+        assert_ne!(nowhere.palette, Palette::default(), "the default theme is no longer the merge base");
+    }
+
+    #[test]
+    fn a_user_file_named_after_the_default_shadows_it_like_any_other() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), &format!("themes/{DEFAULT}.toml"), "[palette]\naccent = \"#000007\"");
+        let (theme, _) = resolve(None, None, Some(dir.path())).expect("the theme loads");
+        assert_eq!(theme.palette.accent, Color::Rgb(0, 0, 7));
     }
 
     #[test]
@@ -489,7 +537,8 @@ colour = "red""#,
         std::fs::create_dir_all(dir.path().join("themes/folder.toml")).expect("mkdir");
 
         let names = available_in(Some(dir.path()));
-        assert_eq!(names, ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte", "Apple", "zebra"]);
-        assert_eq!(available_in(None), ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);
+        assert_eq!(names, ["handbook", "ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte", "Apple", "zebra"]);
+        assert_eq!(available_in(None), ["handbook", "ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);
+        assert_eq!(names[0], DEFAULT, "the listing leads with the default");
     }
 }

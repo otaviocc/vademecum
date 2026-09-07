@@ -1,10 +1,12 @@
-# The default theme, and the base every partial theme file merges over.
+# The base every partial theme file merges over. `handbook` is what a reader
+# gets by default; this is what they get by asking for it, and what a file
+# that names only an accent inherits the rest of.
 #
 # Nothing here asserts a color the terminal has not already chosen: the 16 ANSI
 # names are whatever the reader's scheme says they are, and `reset` is the
-# terminal's own foreground and background. The one exception is `subtle`,
-# the background of the cursor line and of code blocks, which `reset` would
-# make invisible.
+# terminal's own foreground and background. The one exception is `cursor`, the
+# background of the cursor line, which `reset` would make invisible; `subtle` is
+# the same grey, there for a theme that points its code band at it.
 name = "ansi"
 syntax_theme = "base16-ocean.dark"
 
@@ -14,6 +16,7 @@ foreground           = "reset"
 muted                = "dark_gray"
 muted_text           = "gray"
 subtle               = "dark_gray"
+cursor               = "dark_gray"
 selection_background = "blue"
 selection_foreground = "white"
 error                = "red"

@@ -8,6 +8,7 @@ foreground           = "#cdd6f4"   # text
 muted                = "#45475a"   # surface1
 muted_text           = "#7f849c"   # overlay1
 subtle               = "#313244"   # surface0
+cursor               = "#45475a"   # surface1, a step lighter than the code band
 selection_background = "#585b70"   # surface2
 selection_foreground = "#cdd6f4"   # text
 error                = "#f38ba8"   # red
@@ -19,7 +20,8 @@ highlight            = "#89b4fa"   # blue
 notice               = "#f5c2e7"   # pink
 
 # This palette's `subtle` is a real near-background tint rather than ANSI bright
-# black, so code gets its band back; the default leaves it off for `ansi`'s sake.
+# black, so code gets its band back; the element defaults leave it off for
+# `ansi`'s sake.
 [elements.inline_code]
 bg = "subtle"
 

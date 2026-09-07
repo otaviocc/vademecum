@@ -12,6 +12,7 @@ pub struct Palette {
     pub muted: Color,
     pub muted_text: Color,
     pub subtle: Color,
+    pub cursor: Color,
     pub selection_background: Color,
     pub selection_foreground: Color,
     pub error: Color,
@@ -31,6 +32,7 @@ impl Palette {
             "muted" => self.muted,
             "muted_text" => self.muted_text,
             "subtle" => self.subtle,
+            "cursor" => self.cursor,
             "selection_background" => self.selection_background,
             "selection_foreground" => self.selection_foreground,
             "error" => self.error,
@@ -53,6 +55,7 @@ impl Default for Palette {
             muted: Color::DarkGray,
             muted_text: Color::Gray,
             subtle: Color::DarkGray,
+            cursor: Color::DarkGray,
             selection_background: Color::Blue,
             selection_foreground: Color::White,
             error: Color::Red,
@@ -73,6 +76,7 @@ pub struct PaletteFile {
     pub muted: Option<ColorSpec>,
     pub muted_text: Option<ColorSpec>,
     pub subtle: Option<ColorSpec>,
+    pub cursor: Option<ColorSpec>,
     pub selection_background: Option<ColorSpec>,
     pub selection_foreground: Option<ColorSpec>,
     pub error: Option<ColorSpec>,
@@ -87,13 +91,14 @@ pub struct PaletteFile {
 }
 
 impl PaletteFile {
-    pub fn slots(&self) -> [(&'static str, Option<&ColorSpec>); 14] {
+    pub fn slots(&self) -> [(&'static str, Option<&ColorSpec>); 15] {
         [
             ("background", self.background.as_ref()),
             ("foreground", self.foreground.as_ref()),
             ("muted", self.muted.as_ref()),
             ("muted_text", self.muted_text.as_ref()),
             ("subtle", self.subtle.as_ref()),
+            ("cursor", self.cursor.as_ref()),
             ("selection_background", self.selection_background.as_ref()),
             ("selection_foreground", self.selection_foreground.as_ref()),
             ("error", self.error.as_ref()),
@@ -113,6 +118,7 @@ impl PaletteFile {
             "muted" => palette.muted = color,
             "muted_text" => palette.muted_text = color,
             "subtle" => palette.subtle = color,
+            "cursor" => palette.cursor = color,
             "selection_background" => palette.selection_background = color,
             "selection_foreground" => palette.selection_foreground = color,
             "error" => palette.error = color,

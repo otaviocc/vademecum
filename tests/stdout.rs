@@ -13,12 +13,13 @@ fn themed(theme: &str) -> String {
 #[test]
 fn every_construct_renders_in_color() {
     let output = run(&["--plain", "--color", "always", "--width", "80", "tests/fixtures/elements.md"]);
-    insta::assert_snapshot!("elements-ansi", output);
-    assert_eq!(output, themed("ansi"), "the default is not the ansi theme");
+    insta::assert_snapshot!("elements-handbook", output);
+    assert_eq!(output, themed("handbook"), "the default is not the handbook theme");
 }
 
 #[test]
 fn every_built_in_theme_renders() {
+    insta::assert_snapshot!("elements-ansi", themed("ansi"));
     insta::assert_snapshot!("elements-kanagawa-dragon", themed("kanagawa-dragon"));
     insta::assert_snapshot!("elements-catppuccin-mocha", themed("catppuccin-mocha"));
     insta::assert_snapshot!("elements-catppuccin-latte", themed("catppuccin-latte"));
@@ -26,8 +27,8 @@ fn every_built_in_theme_renders() {
 
 #[test]
 fn a_theme_file_repaints_what_it_names_and_nothing_else() {
-    let default = run(&["--plain", "--color", "always", "--width", "80", "tests/fixtures/elements.md"]);
-    let themed = run(&[
+    let default = themed("ansi");
+    let partial = run(&[
         "--plain",
         "--color",
         "always",
@@ -38,21 +39,21 @@ fn a_theme_file_repaints_what_it_names_and_nothing_else() {
         "tests/fixtures/elements.md",
     ]);
 
-    assert!(default.contains("\x1b[0;36;1mHeading 1\x1b[0m"), "the default heading is bold cyan: {default:?}");
-    assert!(themed.contains("\x1b[0;38;2;255;0;0;1mHeading 1\x1b[0m"), "the heading did not turn red: {themed:?}");
+    assert!(default.contains("\x1b[0;36;1mHeading 1\x1b[0m"), "the merge base heading is bold cyan: {default:?}");
+    assert!(partial.contains("\x1b[0;38;2;255;0;0;1mHeading 1\x1b[0m"), "the heading did not turn red: {partial:?}");
 
-    assert!(default.contains("\x1b[0;34;4mexternal link"), "the default link is underlined blue");
-    assert!(themed.contains("\x1b[0;38;5;208mexternal link"), "the link kept its color or its underline");
+    assert!(default.contains("\x1b[0;34;4mexternal link"), "the merge base link is underlined blue");
+    assert!(partial.contains("\x1b[0;38;5;208mexternal link"), "the link kept its color or its underline");
 
     let unchanged = "\x1b[0;34;1mHeading 3\x1b[0m";
-    assert!(default.contains(unchanged) && themed.contains(unchanged), "an unnamed element moved");
+    assert!(default.contains(unchanged) && partial.contains(unchanged), "an unnamed element moved");
 }
 
 #[test]
 fn themes_are_listed_without_a_document() {
     let output = run(&["--list-themes"]);
     let names: Vec<&str> = output.lines().collect();
-    assert_eq!(names, ["ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);
+    assert_eq!(names, ["handbook", "ansi", "kanagawa-dragon", "catppuccin-mocha", "catppuccin-latte"]);
 }
 
 #[test]
@@ -82,19 +83,28 @@ fn a_rust_fence_is_highlighted_and_an_unknown_one_is_not() {
     assert!(colors.len() > 1, "the Rust fence is one color: {rust:?}");
 
     let unknown = line_containing(&output, "A fence tagged with a language");
-    assert!(foregrounds(unknown).is_empty(), "an unhighlighted fence took truecolor from the .tmTheme: {unknown:?}");
+    let plain = foregrounds(unknown);
+    assert!(plain.len() <= 1, "an unhighlighted fence took colors from the .tmTheme: {unknown:?}");
+    assert!(colors.iter().any(|color| !plain.contains(color)), "the Rust fence has no color of its own: {rust:?}");
 
     let shebang = line_containing(&output, "usr/bin/env python3");
-    assert!(!foregrounds(shebang).is_empty(), "the shebang did not name a language: {shebang:?}");
+    assert!(foregrounds(shebang).len() > 1, "the shebang did not name a language: {shebang:?}");
 }
 
 fn line_containing<'a>(output: &'a str, needle: &str) -> &'a str {
     output.lines().find(|line| line.contains(needle)).unwrap_or_else(|| panic!("no line contains {needle:?}"))
 }
 
-fn foregrounds(line: &str) -> Vec<&str> {
-    let mut found: Vec<&str> = line.split("38;2;").skip(1).filter_map(|rest| rest.split(['m', ';']).next()).collect();
-    found.sort_unstable();
+fn foregrounds(line: &str) -> Vec<String> {
+    let channels = |rest: &str| {
+        rest.split(';')
+            .take(3)
+            .map(|channel| channel.trim_end_matches(|byte: char| !byte.is_ascii_digit()))
+            .collect::<Vec<_>>()
+            .join(";")
+    };
+    let mut found: Vec<String> = line.split("38;2;").skip(1).map(channels).collect();
+    found.sort();
     found.dedup();
     found
 }

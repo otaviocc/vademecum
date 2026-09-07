@@ -1,0 +1,47 @@
+# Handbook — the default theme, and the one written for vademecum rather than
+# borrowed from an editor.
+#
+# `background` and `foreground` stay `reset`, so the page sits on the reader's
+# own terminal ground and body text is whatever colour they already read in.
+# Everything else is concrete, which is the whole point: `ansi` has to trust
+# that `dark_gray` is dark, and on most schemes bright black is a mid grey, so
+# the cursor line came out a heavy washed-out bar.
+#
+# Tuned against a dark terminal. A light scheme wants `catppuccin-latte`; `ansi`
+# remains the only theme that asserts nothing at all.
+name = "handbook"
+syntax_theme = "base16-ocean.dark"
+
+[palette]
+background           = "reset"
+foreground           = "reset"
+muted                = "#4b5263"
+muted_text           = "#8b93a3"
+subtle               = "#232830"   # the code band, a shade off a dark ground
+cursor               = "#2d3440"   # a step lighter, so it reads over the band
+selection_background = "#33405a"
+selection_foreground = "#e6ebf2"
+error                = "#e0808c"
+success              = "#9dc48a"
+warning              = "#dfb571"
+accent               = "#7fb6cc"
+chrome               = "#7fb6cc"
+highlight            = "#86a9e0"
+notice               = "#b79ad4"
+
+# `subtle` is a real near-background tint rather than ANSI bright black, so code
+# gets its band; the element defaults leave it off for `ansi`'s sake.
+#
+# `code_block` names a foreground as well, which the other elements do not need:
+# it is the colour of a fence no syntax was found for, and `reset` there would
+# put the terminal's own text on a band this theme chose, which is the one place
+# the two can disagree badly.
+[elements.inline_code]
+bg = "subtle"
+
+[elements.code_block]
+fg = "#c5cbd6"
+bg = "subtle"
+
+[elements.code_block_lang]
+bg = "subtle"

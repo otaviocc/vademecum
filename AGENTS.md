@@ -218,7 +218,12 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - Integration tests must neutralise the environment they run in, not just
   `NO_COLOR`: `vademecum()` in `tests/stdout.rs` also pins `XDG_CONFIG_HOME`
   and `APPDATA` at paths that do not exist, or a `theme.toml` in the
-  developer's own config directory repaints every snapshot.
+  developer's own config directory repaints every snapshot. **A manual run has
+  no such harness**, so a pty smoke test of a theme needs
+  `XDG_CONFIG_HOME=/nonexistent` on the command line — on this machine
+  `~/.config/vademecum/theme.toml` makes `kanagawa-dragon` the default, and
+  without the override a run "showing" none of a new theme's colours is
+  reporting the reader's own configuration back at you.
 - `#[serde(untagged)]` does **not** survive `#[serde(flatten)]`: the buffered
   deserializer flatten uses does not hand an untagged enum the integer type the
   file wrote, so `fg = 208` fails to match a `u8` variant. `ColorSpec` has a
@@ -340,11 +345,23 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   with itself, which makes it unfollowable — worse than not following symlinks
   at all. Sort `read_dir` entries too: without it, which of two names the reader
   is shown depends on what the filesystem happened to return first.
+- Adding a palette slot is six edits in `src/theme/palette.rs` — the struct,
+  `slot()`, `Default`, `PaletteFile`, the `slots()` array *and its length*, and
+  `set()` — and `every_slot_reads_back_what_was_written_to_it` catches a missed
+  one in `slot()`/`set()` for free, because it iterates `slots()`. Splitting an
+  existing slot in two needs one more thing the compiler cannot ask for: a
+  theme file already in the wild set the old slot and says nothing about the new
+  one, so the merge has to make the new one follow the old (`resolve_palette`
+  does this for `cursor` and `subtle`) or every user theme silently regresses.
 - A fix belongs in the **element defaults**, not in `themes/ansi.toml`. A
   partial theme file merges over the defaults, so an override that lives only in
   the built-in file leaves every user theme with the old behaviour while the
   shipped one looks right. The drift test between the two is what keeps this
   honest; if it needs an exceptions list, the fix is probably on the wrong side.
+  Note the default theme and the merge base are **two different themes**:
+  `handbook` is what a reader gets, `ansi` is what a partial file inherits. So
+  `BUILT_IN[0]` means neither — say `DEFAULT`, or look one up by name the way
+  the `built_in` test helper does.
 - A "warn once" that deduplicates against a list it also drains says the thing
   again after every collection. Keep a separate set of what has been said and
   never drain it — otherwise, since `theme_for` runs before the cache lookup,
@@ -411,8 +428,14 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   skips OSC entirely, so it cannot see this.
 - `cargo build` in this working tree can report the binary `Fresh` while
   `target/debug/vademecum` is a day old, so a pty smoke test silently runs the
-  previous build. Check `strings target/debug/vademecum` for a string only the
-  new code has, or build into a scratch `CARGO_TARGET_DIR`.
+  previous build. **Build into a scratch `CARGO_TARGET_DIR`** — that is the only
+  remedy that works. Touching `src/main.rs` does not, and neither does deleting
+  `target/debug/vademecum`: cargo puts the same stale file back, mtime and all.
+  `cargo test` uses that copy too (`Command::cargo_bin`, `tests/common/mod.rs`),
+  so the whole integration suite, snapshots included, can pass against a build
+  from yesterday. Checking `strings` for a string only the new code has works
+  only if the string really is new: a hex colour picked out of a theme file is a
+  bad probe, because the same value usually sits in another slot.
 - The reducer must not write to the terminal, or nothing about copying is
   testable. `App` fills an outbox that the event loop drains after every **wake**
   — not just after an input event, or a copy produced by a reload is dropped —
