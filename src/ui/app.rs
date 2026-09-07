@@ -229,7 +229,7 @@ impl App {
     fn yank(&mut self) {
         let Some(line) = self.lines.get(self.cursor) else { return };
         let text = line.text();
-        let text = text[line.byte_at(layout::GUTTER)..].trim_end().to_string();
+        let text = text[line.byte_at(line.inset)..].trim_end().to_string();
         self.copy(text, String::from("Copied the line"));
     }
 
@@ -478,7 +478,7 @@ impl App {
 
         let line = self.lines.get(index)?;
         let end = line.text().len();
-        let start = if index == from.line { from.byte } else { line.byte_at(layout::GUTTER) };
+        let start = if index == from.line { from.byte } else { line.byte_at(line.inset) };
         let stop = if index == to.line { to.next } else { end };
         (start < stop).then(|| start..stop.min(end))
     }
@@ -1238,6 +1238,35 @@ mod tests {
 
         assert_eq!(app.take_copy().as_deref(), Some("a paragraph to copy"));
         assert_eq!(app.status, Status::Notice(String::from("Copied the line")));
+    }
+
+    #[test]
+    fn yanking_a_code_line_copies_the_code_without_its_padding() {
+        let mut app = app("```rust\n    let x = 1;\n```\n", 14);
+        app.apply(Action::Move(Motion::Line(1)));
+        app.apply(Action::Yank);
+
+        assert_eq!(app.take_copy().as_deref(), Some("    let x = 1;"), "the pad was copied, or the indentation was not");
+    }
+
+    #[test]
+    fn yanking_a_quoted_code_line_copies_only_the_code() {
+        let mut app = app("> ```rust\n>     let x = 1;\n> ```\n", 14);
+        app.apply(Action::Move(Motion::Line(1)));
+        app.apply(Action::Yank);
+
+        assert_eq!(app.take_copy().as_deref(), Some("    let x = 1;"), "the quote gutter or the pad came along");
+    }
+
+    #[test]
+    fn a_drag_down_a_code_block_copies_the_lines_without_their_padding() {
+        let mut app = app("```rust\nlet x = 1;\nlet y = 2;\n```\n", 14);
+        let first = app.lines.iter().position(|line| line.text().contains("let x")).expect("a code row");
+        let row = CONTENT_TOP + first as u16;
+        let inset = app.lines[first].inset as u16;
+        drag(&mut app, (inset, row), (60, row + 1));
+
+        assert_eq!(app.take_copy().as_deref(), Some("let x = 1;\nlet y = 2;"));
     }
 
     #[test]
