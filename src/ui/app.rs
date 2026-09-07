@@ -3,7 +3,7 @@
 use std::ops::Range;
 use std::path::Path;
 
-use ratatui::layout::Size;
+use ratatui::layout::{Rect, Size};
 
 use crate::document::Document;
 use crate::markdown::ast::{self, SourceBlock};
@@ -14,7 +14,9 @@ use crate::render::line::RenderedLine;
 use crate::theme::Theme;
 use crate::ui::Options;
 use crate::ui::input::{Action, Motion};
+use crate::ui::outline::{self, Outline};
 use crate::ui::search::{self, Search};
+use crate::ui::view;
 
 pub(crate) const CHROME_ROWS: u16 = 4;
 pub(crate) const CONTENT_TOP: u16 = 2;
@@ -25,6 +27,7 @@ pub enum Mode {
     #[default]
     Browse,
     Search,
+    Toc,
     Help,
 }
 
@@ -86,6 +89,7 @@ pub struct App {
     pub mode: Mode,
     pub status: Status,
     pub search: Search,
+    pub outline: Outline,
     plain: Option<Vec<String>>,
     pub title: String,
     pub file: String,
@@ -106,6 +110,7 @@ impl App {
         let links = Links::new(document, options.root.as_deref());
         let width = layout::wrap_width(width_override, Some(area.width));
         let lines = layout::render(&blocks, &Ctx::new(&theme, &links), width);
+        let outline = Outline { entries: outline::build(&blocks, &lines), selected: 0, top: 0 };
         let status = complaint().unwrap_or_default();
 
         Self {
@@ -122,6 +127,7 @@ impl App {
             mode: Mode::default(),
             status,
             search: Search::default(),
+            outline,
             plain: None,
             title,
             file,
@@ -146,7 +152,13 @@ impl App {
 
         let moves_cursor = matches!(
             action,
-            Action::Move(_) | Action::SearchConfirm | Action::SearchStep { .. } | Action::Follow | Action::History { .. }
+            Action::Move(_)
+                | Action::SearchConfirm
+                | Action::SearchStep { .. }
+                | Action::Follow
+                | Action::History { .. }
+                | Action::TocSelect
+                | Action::TocClick { .. }
         );
 
         match action {
@@ -159,6 +171,11 @@ impl App {
             Action::Resize(area) => self.resize(area),
             Action::Reload => self.reload(),
             Action::ToggleHelp => self.mode = if self.mode == Mode::Help { Mode::Browse } else { Mode::Help },
+            Action::ToggleToc => self.toggle_toc(),
+            Action::TocMove(motion) => self.outline.move_by(motion, self.toc_height()),
+            Action::TocScroll(delta) => self.outline.scroll(delta, self.toc_height()),
+            Action::TocSelect => self.pick_heading(None),
+            Action::TocClick { row } => self.pick_heading(Some(row)),
             Action::Dismiss => self.search.clear(),
             Action::SearchStart => {
                 self.mode = Mode::Search;
@@ -311,6 +328,7 @@ impl App {
         self.blocks = ast::parse(&document.source);
         self.links.open(document);
         self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
+        self.reoutline();
         if let Some(complaint) = complaint() {
             self.status = complaint;
         }
@@ -332,6 +350,52 @@ impl App {
         if let Some(line) = self.anchor_line(fragment) {
             self.go_to(line);
         }
+    }
+
+    fn reoutline(&mut self) {
+        self.outline.entries = outline::build(&self.blocks, &self.lines);
+        self.outline.selected = 0;
+        self.outline.top = 0;
+    }
+
+    fn toc_view(&self) -> Rect {
+        let area = Rect::new(0, 0, self.area.width, self.area.height);
+        view::toc_inner(area, self.outline.entries.len())
+    }
+
+    pub fn toc_height(&self) -> usize {
+        usize::from(self.toc_view().height).max(1)
+    }
+
+    fn toc_row(&self, row: u16) -> Option<usize> {
+        let inner = self.toc_view();
+        (row >= inner.y && row < inner.bottom()).then(|| usize::from(row - inner.y))
+    }
+
+    fn toggle_toc(&mut self) {
+        if self.mode == Mode::Toc {
+            self.mode = Mode::Browse;
+            return;
+        }
+        if self.outline.is_empty() {
+            self.status = Status::Notice(String::from("no headings in this document"));
+            return;
+        }
+        self.mode = Mode::Toc;
+        self.outline.open_at(self.cursor, self.toc_height());
+    }
+
+    fn pick_heading(&mut self, row: Option<u16>) {
+        self.mode = Mode::Browse;
+        let line = match row {
+            Some(row) => self.toc_row(row).and_then(|row| self.outline.pick(row)).map(|entry| entry.line),
+            None => self.outline.selected().map(|entry| entry.line),
+        };
+        let Some(line) = line else { return };
+
+        self.remember();
+        self.go_to(line);
+        self.resume_search();
     }
 
     fn go_to(&mut self, line: usize) {
@@ -564,6 +628,7 @@ impl App {
 
     fn rerender(&mut self, place: Place) {
         self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
+        self.reoutline();
         if let Some(complaint) = complaint() {
             self.status = complaint;
         }
@@ -1174,6 +1239,134 @@ mod tests {
 
         app.apply(Action::ToggleHelp);
         assert_eq!(app.mode, Mode::Browse);
+    }
+
+    fn sectioned() -> App {
+        let source: String = (1..=12).map(|n| format!("## Section {n}\n\n{}", "filler\n\n".repeat(4))).collect();
+        app(&source, 14)
+    }
+
+    fn heading_line(app: &App, text: &str) -> usize {
+        app.outline.entries.iter().find(|entry| entry.text == text).expect("heading").line
+    }
+
+    #[test]
+    fn the_contents_overlay_toggles() {
+        let mut app = sectioned();
+        app.apply(Action::ToggleToc);
+        assert_eq!(app.mode, Mode::Toc);
+
+        app.apply(Action::ToggleToc);
+        assert_eq!(app.mode, Mode::Browse);
+    }
+
+    #[test]
+    fn a_document_with_no_headings_says_so_rather_than_opening_an_empty_box() {
+        let mut app = paged();
+        app.apply(Action::ToggleToc);
+
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.status, Status::Notice(String::from("no headings in this document")));
+    }
+
+    #[test]
+    fn the_contents_overlay_opens_on_the_section_the_reader_is_in() {
+        let mut app = sectioned();
+        app.apply(Action::Move(Motion::Bottom));
+        app.apply(Action::ToggleToc);
+
+        assert_eq!(app.outline.selected().map(|entry| entry.text.as_str()), Some("Section 12"));
+    }
+
+    #[test]
+    fn choosing_a_heading_closes_the_overlay_and_puts_it_on_the_first_row() {
+        let mut app = sectioned();
+        let wanted = heading_line(&app, "Section 2");
+
+        app.apply(Action::ToggleToc);
+        app.apply(Action::TocMove(Motion::Line(1)));
+        app.apply(Action::TocSelect);
+
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.top, wanted, "the heading is the first line in view");
+        assert_eq!(app.cursor, wanted, "and the cursor is on it");
+    }
+
+    #[test]
+    fn history_goes_back_to_where_the_reader_was_before_the_jump() {
+        let mut app = sectioned();
+        app.apply(Action::Move(Motion::Line(1)));
+        let (top, cursor) = (app.top, app.cursor);
+
+        app.apply(Action::ToggleToc);
+        app.apply(Action::TocMove(Motion::Bottom));
+        app.apply(Action::TocSelect);
+        assert_ne!(app.cursor, cursor);
+
+        app.apply(Action::History { forward: false });
+        assert_eq!((app.top, app.cursor), (top, cursor));
+    }
+
+    #[test]
+    fn a_click_in_the_overlay_chooses_the_heading_on_that_row() {
+        let mut app = sectioned();
+        let wanted = heading_line(&app, "Section 2");
+        app.apply(Action::ToggleToc);
+
+        let row = crate::ui::view::toc_inner(Rect::new(0, 0, 60, 14), app.outline.entries.len()).y + 1;
+        app.apply(Action::TocClick { row });
+
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.cursor, wanted);
+    }
+
+    #[test]
+    fn a_click_outside_the_listing_closes_the_overlay_without_moving() {
+        let mut app = sectioned();
+        app.apply(Action::ToggleToc);
+        let (top, cursor) = (app.top, app.cursor);
+
+        app.apply(Action::TocClick { row: 0 });
+
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!((app.top, app.cursor), (top, cursor));
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_listing_and_not_the_document_behind_it() {
+        let mut app = sectioned();
+        app.apply(Action::ToggleToc);
+        let (top, cursor) = (app.top, app.cursor);
+
+        app.apply(Action::TocScroll(1));
+
+        assert_eq!((app.top, app.cursor), (top, cursor), "the document stays put");
+        assert_eq!(app.outline.top, 1);
+    }
+
+    #[test]
+    fn the_outline_still_points_at_its_headings_after_a_resize() {
+        let mut app = sectioned();
+        app.apply(Action::Resize(Size::new(30, 20)));
+
+        assert!(!app.outline.entries.is_empty());
+        for entry in &app.outline.entries {
+            assert!(app.lines[entry.line].anchor.is_some(), "{entry:?} is not on a heading line");
+        }
+    }
+
+    #[test]
+    fn the_outline_follows_the_document_across_a_reload() {
+        let (dir, mut app) = on_disk("# One\n\ntext\n");
+        assert_eq!(app.outline.entries.len(), 1);
+
+        rewrite(&dir, "# One\n\ntext\n\n## Added\n\nmore\n");
+        app.apply(Action::Reload);
+
+        assert_eq!(app.outline.entries.iter().map(|entry| entry.text.as_str()).collect::<Vec<_>>(), vec!["One", "Added"]);
+        for entry in &app.outline.entries {
+            assert!(app.lines[entry.line].anchor.is_some(), "{entry:?} is not on a heading line");
+        }
     }
 
     #[test]

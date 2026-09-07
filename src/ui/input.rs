@@ -26,6 +26,11 @@ pub enum Action {
     SelectEnd { column: u16, row: u16 },
     Resize(Size),
     ToggleHelp,
+    ToggleToc,
+    TocMove(Motion),
+    TocScroll(isize),
+    TocSelect,
+    TocClick { row: u16 },
     Dismiss,
     SearchStart,
     SearchType(char),
@@ -58,6 +63,7 @@ fn key_action(key: KeyEvent, mode: Mode) -> Option<Action> {
     match mode {
         Mode::Browse => browse(key),
         Mode::Search => typing(key),
+        Mode::Toc => contents(key),
         Mode::Help => overlay(key),
     }
 }
@@ -95,6 +101,7 @@ fn browse(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('n') => Some(Action::SearchStep { forward: true }),
         KeyCode::Char('N') => Some(Action::SearchStep { forward: false }),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
+        KeyCode::Char('t') => Some(Action::ToggleToc),
         KeyCode::Esc => Some(Action::Dismiss),
         KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
@@ -114,6 +121,33 @@ fn typing(key: KeyEvent) -> Option<Action> {
     }
 }
 
+fn contents(key: KeyEvent) -> Option<Action> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match key.code {
+            KeyCode::Char('d') => Some(Action::TocMove(Motion::HalfPage(1))),
+            KeyCode::Char('u') => Some(Action::TocMove(Motion::HalfPage(-1))),
+            _ => None,
+        };
+    }
+    if key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER) {
+        return None;
+    }
+
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Some(Action::TocMove(Motion::Line(1))),
+        KeyCode::Char('k') | KeyCode::Up => Some(Action::TocMove(Motion::Line(-1))),
+        KeyCode::Char('d') => Some(Action::TocMove(Motion::HalfPage(1))),
+        KeyCode::Char('u') => Some(Action::TocMove(Motion::HalfPage(-1))),
+        KeyCode::Char(' ') | KeyCode::PageDown => Some(Action::TocMove(Motion::Page(1))),
+        KeyCode::Char('b') | KeyCode::PageUp => Some(Action::TocMove(Motion::Page(-1))),
+        KeyCode::Char('g') | KeyCode::Home => Some(Action::TocMove(Motion::Top)),
+        KeyCode::Char('G') | KeyCode::End => Some(Action::TocMove(Motion::Bottom)),
+        KeyCode::Enter => Some(Action::TocSelect),
+        KeyCode::Char('t') | KeyCode::Char('q') | KeyCode::Esc => Some(Action::ToggleToc),
+        _ => None,
+    }
+}
+
 fn overlay(key: KeyEvent) -> Option<Action> {
     if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
         return None;
@@ -125,6 +159,14 @@ fn overlay(key: KeyEvent) -> Option<Action> {
 }
 
 fn mouse_action(mouse: MouseEvent, mode: Mode) -> Option<Action> {
+    if mode == Mode::Toc {
+        return match mouse.kind {
+            MouseEventKind::ScrollDown => Some(Action::TocScroll(WHEEL_LINES)),
+            MouseEventKind::ScrollUp => Some(Action::TocScroll(-WHEEL_LINES)),
+            MouseEventKind::Up(MouseButton::Left) => Some(Action::TocClick { row: mouse.row }),
+            _ => None,
+        };
+    }
     match mouse.kind {
         MouseEventKind::ScrollDown => Some(Action::Scroll(WHEEL_LINES)),
         MouseEventKind::ScrollUp => Some(Action::Scroll(-WHEEL_LINES)),
@@ -193,6 +235,7 @@ mod tests {
             (press(KeyCode::Char('n')), Action::SearchStep { forward: true }),
             (press(KeyCode::Char('N')), Action::SearchStep { forward: false }),
             (press(KeyCode::Char('?')), Action::ToggleHelp),
+            (press(KeyCode::Char('t')), Action::ToggleToc),
             (press(KeyCode::Esc), Action::Dismiss),
             (press(KeyCode::Char('q')), Action::Quit),
             (control('c'), Action::Quit),
@@ -281,7 +324,7 @@ mod tests {
 
     #[test]
     fn a_resize_reaches_the_pager_in_every_mode() {
-        for mode in [Mode::Browse, Mode::Search, Mode::Help] {
+        for mode in [Mode::Browse, Mode::Search, Mode::Toc, Mode::Help] {
             assert_eq!(action(&Event::Resize(80, 24), mode), Some(Action::Resize(Size::new(80, 24))), "{mode:?}");
         }
     }
@@ -295,8 +338,56 @@ mod tests {
     }
 
     #[test]
+    fn the_contents_overlay_answers_to_the_keys_that_walk_it() {
+        let table = [
+            (press(KeyCode::Char('j')), Action::TocMove(Motion::Line(1))),
+            (press(KeyCode::Down), Action::TocMove(Motion::Line(1))),
+            (press(KeyCode::Char('k')), Action::TocMove(Motion::Line(-1))),
+            (press(KeyCode::Up), Action::TocMove(Motion::Line(-1))),
+            (press(KeyCode::Char('d')), Action::TocMove(Motion::HalfPage(1))),
+            (control('d'), Action::TocMove(Motion::HalfPage(1))),
+            (press(KeyCode::Char('u')), Action::TocMove(Motion::HalfPage(-1))),
+            (control('u'), Action::TocMove(Motion::HalfPage(-1))),
+            (press(KeyCode::Char(' ')), Action::TocMove(Motion::Page(1))),
+            (press(KeyCode::PageDown), Action::TocMove(Motion::Page(1))),
+            (press(KeyCode::Char('b')), Action::TocMove(Motion::Page(-1))),
+            (press(KeyCode::PageUp), Action::TocMove(Motion::Page(-1))),
+            (press(KeyCode::Char('g')), Action::TocMove(Motion::Top)),
+            (press(KeyCode::Home), Action::TocMove(Motion::Top)),
+            (press(KeyCode::Char('G')), Action::TocMove(Motion::Bottom)),
+            (press(KeyCode::End), Action::TocMove(Motion::Bottom)),
+            (press(KeyCode::Enter), Action::TocSelect),
+            (press(KeyCode::Char('t')), Action::ToggleToc),
+            (press(KeyCode::Char('q')), Action::ToggleToc),
+            (press(KeyCode::Esc), Action::ToggleToc),
+        ];
+        for (event, expected) in table {
+            assert_eq!(action(&event, Mode::Toc), Some(expected), "{event:?}");
+        }
+    }
+
+    #[test]
+    fn the_contents_overlay_answers_to_nothing_that_would_move_the_document() {
+        for key in [KeyCode::Char('y'), KeyCode::Char('o'), KeyCode::Char('h'), KeyCode::Char('/'), KeyCode::Tab] {
+            let event = Event::Key(KeyEvent::new(key, KeyModifiers::NONE));
+            assert_eq!(action(&event, Mode::Toc), None, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn the_wheel_and_a_click_walk_the_contents_overlay_rather_than_the_document() {
+        assert_eq!(action(&wheel(MouseEventKind::ScrollDown), Mode::Toc), Some(Action::TocScroll(WHEEL_LINES)));
+        assert_eq!(action(&wheel(MouseEventKind::ScrollUp), Mode::Toc), Some(Action::TocScroll(-WHEEL_LINES)));
+
+        let at = |kind| Event::Mouse(MouseEvent { kind, column: 4, row: 9, modifiers: KeyModifiers::NONE });
+        assert_eq!(action(&at(MouseEventKind::Up(MouseButton::Left)), Mode::Toc), Some(Action::TocClick { row: 9 }));
+        assert_eq!(action(&at(MouseEventKind::Down(MouseButton::Left)), Mode::Toc), None, "the click lands on the release");
+        assert_eq!(action(&at(MouseEventKind::Drag(MouseButton::Left)), Mode::Toc), None, "there is no drag in the listing");
+    }
+
+    #[test]
     fn ctrl_c_quits_from_anywhere() {
-        for mode in [Mode::Browse, Mode::Search, Mode::Help] {
+        for mode in [Mode::Browse, Mode::Search, Mode::Toc, Mode::Help] {
             assert_eq!(action(&control('c'), mode), Some(Action::Quit), "{mode:?}");
         }
     }
