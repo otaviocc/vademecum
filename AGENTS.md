@@ -389,13 +389,36 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   run of cells that share a style, so a selection spanning two lines shows as
   one colour sequence followed by two cursor moves; counting colour sequences
   undercounts what was painted.
-- OSC 52 is how anything gets to the clipboard: `crossterm`'s `osc52` feature
-  costs no package in the lock file (`base64` is already there), works over
-  `ssh`, and needs `set -g set-clipboard on` under tmux. `arboard` would have
-  been a dozen crates and X11/Wayland linkage.
+- OSC 52 alone is **not** a clipboard. `crossterm`'s `osc52` feature costs no
+  package in the lock file (`base64` is already there) and is the only thing
+  that carries a copy back over `ssh`, but it is a request the terminal is free
+  to ignore — and Apple Terminal and GNOME Terminal implement no clipboard write
+  at all, so on a stock macOS or Fedora desktop it does nothing (#69). Spawning
+  the platform's own tool (`pbcopy`, `wl-copy`, `xclip`, `xsel`, `clip.exe`)
+  costs no crate either, so `src/ui/clipboard.rs` does both: the native tool
+  decides the result when one is installed, OSC 52 covers the rest. `arboard`
+  would have been a dozen crates and X11/Wayland linkage.
+- Gate the X11 and Wayland helpers on `DISPLAY` / `WAYLAND_DISPLAY`. A headless
+  host often has `xclip` installed and it always fails there; without the gate
+  every `ssh` copy reports an error over a copy that OSC 52 delivered fine.
+  Keep the choice a pure function of `(target, wayland, x11)` so all five arms
+  are testable on one machine — spawning is not.
+- Before believing a clipboard bug, split emission from delivery:
+  `printf 'y' | script -q /dev/null sh -c 'stty rows 24 cols 80; ./target/debug/vademecum README.md'`
+  piped through a base64 decode of `\x1b]52;c;([A-Za-z0-9+/=]*)`. If the text
+  comes back out, the Rust is right and the terminal is dropping it. Note the
+  key sequence must end in `q` or the run hangs, and `tools/replay-frame.py`
+  skips OSC entirely, so it cannot see this.
+- `cargo build` in this working tree can report the binary `Fresh` while
+  `target/debug/vademecum` is a day old, so a pty smoke test silently runs the
+  previous build. Check `strings target/debug/vademecum` for a string only the
+  new code has, or build into a scratch `CARGO_TARGET_DIR`.
 - The reducer must not write to the terminal, or nothing about copying is
-  testable. `App` fills an outbox that the event loop drains after every action,
-  which keeps "what would be copied" a value a test can assert on.
+  testable. `App` fills an outbox that the event loop drains after every **wake**
+  — not just after an input event, or a copy produced by a reload is dropped —
+  which keeps "what would be copied" a value a test can assert on. The drain is
+  also where a failed copy turns into a statusbar notice: the reducer sets the
+  optimistic one, `App::report` overwrites it.
 - A press that might start a drag cannot also be a click: the click has to move
   to the **release**, and the release decides which it was by whether anything
   moved. Existing tests that applied a click action directly need a helper that
