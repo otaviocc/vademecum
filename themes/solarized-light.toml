@@ -1,0 +1,32 @@
+# Solarized Light — Ethan Schoonover's palette, upstream names in the comments.
+name = "solarized-light"
+syntax_theme = "Solarized (light)"
+
+[palette]
+background           = "#fdf6e3"   # base3
+foreground           = "#657b83"   # base00
+muted                = "#93a1a1"   # base1
+muted_text           = "#839496"   # base0
+subtle               = "#eee8d5"   # base2, the code band
+cursor               = "#e3ddca"   # a shade under base2, a step darker
+selection_background = "#93a1a1"   # base1
+selection_foreground = "#002b36"   # base03
+error                = "#dc322f"   # red
+success              = "#859900"   # green
+warning              = "#b58900"   # yellow
+accent               = "#268bd2"   # blue
+chrome               = "#2aa198"   # cyan
+highlight            = "#6c71c4"   # violet
+notice               = "#d33682"   # magenta
+
+# This palette's `subtle` is a real near-background tint rather than ANSI bright
+# black, so code gets its band back; the element defaults leave it off for
+# `ansi`'s sake.
+[elements.inline_code]
+bg = "subtle"
+
+[elements.code_block]
+bg = "subtle"
+
+[elements.code_block_lang]
+bg = "subtle"

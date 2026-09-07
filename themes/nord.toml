@@ -1,0 +1,32 @@
+# Nord — the sixteen official swatches, upstream numbers in the comments.
+name = "nord"
+syntax_theme = "base16-ocean.dark"
+
+[palette]
+background           = "#2e3440"   # nord0
+foreground           = "#d8dee9"   # nord4
+muted                = "#434c5e"   # nord2
+muted_text           = "#7b88a1"   # between nord3 and nord4
+subtle               = "#353c4a"   # a shade off nord0, the code band
+cursor               = "#3b4252"   # nord1, a step lighter
+selection_background = "#4c566a"   # nord3
+selection_foreground = "#eceff4"   # nord6
+error                = "#bf616a"   # nord11
+success              = "#a3be8c"   # nord14
+warning              = "#ebcb8b"   # nord13
+accent               = "#88c0d0"   # nord8
+chrome               = "#8fbcbb"   # nord7
+highlight            = "#81a1c1"   # nord9
+notice               = "#b48ead"   # nord15
+
+# This palette's `subtle` is a real near-background tint rather than ANSI bright
+# black, so code gets its band back; the element defaults leave it off for
+# `ansi`'s sake.
+[elements.inline_code]
+bg = "subtle"
+
+[elements.code_block]
+bg = "subtle"
+
+[elements.code_block_lang]
+bg = "subtle"

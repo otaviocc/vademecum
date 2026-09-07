@@ -308,7 +308,14 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   background says exactly which line the cursor ended on.
 - Three things make that smoke test lie unless they are handled. The event
   loop **drains** a burst of events and draws once, so `printf 'jjq'` quits
-  before painting anything the keys did: send them a `sleep 0.25` apart. The
+  before painting anything the keys did: send them a `sleep 0.25` apart. On this
+  machine even that fails — `{ sleep 0.5; printf "$J"; sleep 0.6; printf 'q'; } |
+  script -q /dev/null …` delivered the whole sequence in one drain and the
+  capture held exactly one frame, the initial one, so the keys were invisible.
+  When only the *painting* is in question and not the navigation, sidestep it:
+  point the run at a fixture that puts what you want to see in the first frame
+  (a code fence on line 1 shows the band and the cursor line over it) and send
+  nothing but `q`. The
   backend redraws only the cells that **changed**, so grepping for a whole
   phrase fails when the frame before it shared a prefix — grep for a string the
   previous frame did not contain (a statusbar notice works, a header title does
@@ -377,6 +384,15 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   with itself, which makes it unfollowable — worse than not following symlinks
   at all. Sort `read_dir` entries too: without it, which of two names the reader
   is shown depends on what the filesystem happened to return first.
+- Adding a built-in theme is three edits: the file in `themes/`, one
+  `include_str!` row in `BUILT_IN` (whose array length is written out), and an
+  `insta::assert_snapshot!` line plus its committed `.snap`. The invariants —
+  every element resolves, no `base`, no unknown keys, the code band, `cursor`
+  distinct from `subtle` — derive their theme list from `BUILT_IN` and cover a
+  new theme without being touched. The two listing tests stay explicit on
+  purpose: their subject is the order. Check the frame, not just the snapshot,
+  by looking for each slot's `r;g;b` in a pty capture — `background` and often
+  `muted` are legitimately absent, which the existing themes confirm.
 - Adding a palette slot is six edits in `src/theme/palette.rs` — the struct,
   `slot()`, `Default`, `PaletteFile`, the `slots()` array *and its length*, and
   `set()` — and `every_slot_reads_back_what_was_written_to_it` catches a missed
@@ -460,12 +476,16 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   skips OSC entirely, so it cannot see this.
 - `cargo build` in this working tree can report the binary `Fresh` while
   `target/debug/vademecum` is a day old, so a pty smoke test silently runs the
-  previous build. **Build into a scratch `CARGO_TARGET_DIR`** — that is the only
-  remedy that works. Touching `src/main.rs` does not, and neither does deleting
-  `target/debug/vademecum`: cargo puts the same stale file back, mtime and all.
-  `cargo test` uses that copy too (`Command::cargo_bin`, `tests/common/mod.rs`),
-  so the whole integration suite, snapshots included, can pass against a build
-  from yesterday. Checking `strings` for a string only the new code has works
+  previous build. Two remedies work: `rm -rf target/debug/.fingerprint/vademecum-*`
+  makes the next `cargo build` rebuild the binary in place, which is what
+  `cargo test` needs, and a scratch `CARGO_TARGET_DIR` gives a manual run a
+  binary that is certainly current. Touching `src/main.rs` does neither, and
+  neither does deleting `target/debug/vademecum`: cargo puts the same stale file
+  back, mtime and all. `cargo test` uses that copy too (`Command::cargo_bin`,
+  `tests/common/mod.rs`), so the whole integration suite, snapshots included,
+  can pass against a build from yesterday — **or fail against it on a `main`
+  that is green**, which is how this last surfaced: `--list-themes` was missing
+  a theme the source had had for a day. Checking `strings` for a string only the new code has works
   only if the string really is new: a hex colour picked out of a theme file is a
   bad probe, because the same value usually sits in another slot.
 - The reducer must not write to the terminal, or nothing about copying is
