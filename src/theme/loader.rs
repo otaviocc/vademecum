@@ -302,6 +302,10 @@ mod tests {
         theme(source)
     }
 
+    fn concrete_built_ins() -> Vec<(&'static str, Theme)> {
+        BUILT_IN.iter().filter(|(name, _)| *name != "ansi").map(|(name, source)| (*name, theme(source))).collect()
+    }
+
     fn derived(dir: &Path, source: &str) -> Theme {
         from_source("child.toml", source, Some(dir)).expect("the theme loads").0
     }
@@ -487,8 +491,7 @@ mod tests {
 
     #[test]
     fn a_theme_with_a_real_subtle_can_have_its_code_background() {
-        for name in ["handbook", "catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
-            let concrete = built_in(name);
+        for (name, concrete) in concrete_built_ins() {
             for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
                 assert_eq!(concrete.style(element).bg, Some(concrete.palette.subtle), "{name} {element:?}");
             }
@@ -522,8 +525,7 @@ mod tests {
 
     #[test]
     fn a_theme_that_bands_its_code_still_shows_the_cursor_line_over_it() {
-        for name in ["handbook", "catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
-            let concrete = built_in(name);
+        for (name, concrete) in concrete_built_ins() {
             assert_ne!(concrete.palette.cursor, concrete.palette.subtle, "{name} cursor is the code band");
             assert_ne!(
                 concrete.style(Element::CursorLine).bg,
