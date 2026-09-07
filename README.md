@@ -96,23 +96,33 @@ link without a restart.
 
 ## Theming
 
-Five themes ship in the binary:
+Thirteen themes ship in the binary, listed in the order `--list-themes` prints
+them: the default first, the merge base second, then the rest alphabetically.
 
 | Name | Appearance |
 | --- | --- |
 | `handbook` (default) | your terminal's own background, with colours of its own on top |
 | `ansi` | inherits your terminal's own 16 colours |
+| `catppuccin-latte` | light, after [Catppuccin](https://github.com/catppuccin/catppuccin) |
+| `catppuccin-mocha` | dark, after [Catppuccin](https://github.com/catppuccin/catppuccin) |
+| `gruvbox-dark` | dark, after [gruvbox](https://github.com/morhetz/gruvbox) |
+| `gruvbox-light` | light, after [gruvbox](https://github.com/morhetz/gruvbox) |
 | `kanagawa-dragon` | dark, after [kanagawa.nvim](https://github.com/rebelot/kanagawa.nvim) |
-| `catppuccin-mocha` | dark |
-| `catppuccin-latte` | light |
+| `nord` | dark, after [Nord](https://www.nordtheme.com) |
+| `solarized-dark` | dark, after [Solarized](https://ethanschoonover.com/solarized/) |
+| `solarized-light` | light, after [Solarized](https://ethanschoonover.com/solarized/) |
+| `tokyo-night` | dark, after [Tokyo Night](https://github.com/folke/tokyonight.nvim) |
+| `tokyo-night-day` | light, after [Tokyo Night](https://github.com/folke/tokyonight.nvim) |
+| `vesper` | dark, near-monochrome, after [Vesper](https://github.com/raunofreiberg/vesper) |
 
 `handbook` leaves the background and the body text to your terminal — a reader
 who has not chosen a theme has already chosen those — and names a colour for
 everything else, because the sixteen ANSI colours cannot promise what matters:
 `dark_gray` is bright black, which most schemes make a *mid* grey, so under
 `ansi` the cursor line is a heavy washed-out bar. It is tuned against a dark
-terminal; on a light one, `catppuccin-latte` is the better start. `ansi` remains
-the only theme that asserts nothing at all.
+terminal; on a light one, pick one of the four light themes, which name a
+background of their own rather than borrowing yours. `ansi` remains the only
+theme that asserts nothing at all.
 
 ```sh
 vademecum --theme catppuccin-mocha README.md
