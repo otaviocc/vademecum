@@ -134,11 +134,32 @@ two-line file is a valid theme:
 accent = "#89b4fa"
 ```
 
-Those defaults are `ansi`'s, not `handbook`'s: a partial file merges over the
-terminal's own sixteen colours, whichever theme happens to be shipped as the
-default. So the two-line file above is `ansi` with a different accent. To start
-from `handbook` or one of the others, copy its `[palette]` out of
-[`themes/`](themes) and edit that.
+Those defaults are `ansi`'s, not `handbook`'s: a file that names no base merges
+over the terminal's own sixteen colours, whichever theme happens to be shipped
+as the default. So the two-line file above is `ansi` with a different accent.
+
+To start from something else, name it as your **base**:
+
+```toml
+base = "catppuccin-mocha"
+
+[palette]
+accent = "#89b4fa"
+```
+
+Everything you leave out then comes from that theme rather than from `ansi`, all
+the way down a chain if the base names a base of its own. A base can be any
+built-in or any theme in your `themes/` directory, and the nearer file always
+wins. So making a built-in your default is one line in
+`~/.config/vademecum/theme.toml`:
+
+```toml
+base = "handbook"
+```
+
+`--theme` and `--config` still beat that file, as before. One thing a base
+cannot do is name the built-in it shadows: a `themes/handbook.toml` containing
+`base = "handbook"` means itself, and is reported as a loop — rename the file.
 
 A colour is an 8-bit index (`208`), hex (`"#89b4fa"`), `"reset"` for the
 terminal's own, or one of the 16 ANSI names: `black`, `red`, `green`, `yellow`,
@@ -164,8 +185,8 @@ Every element derives from the palette:
 | `highlight` | `blue` | links, headings 3–6 |
 | `notice` | `magenta` | wikilinks, transient messages, current match |
 
-`cursor` falls back to `subtle` when a theme names one and not the other, so a
-theme file written while the two were a single slot still looks the way it did.
+`cursor` falls back to `subtle` when no theme in the chain names one, so a theme
+file written while the two were a single slot still looks the way it did.
 
 Individual elements can be overridden too:
 
