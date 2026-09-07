@@ -355,9 +355,18 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   fence costs 120µs and a third 50µs — and it is fancy-regex compiling that
   syntax's patterns, not anything vademecum does. So the cost of opening a
   document scales with the number of **distinct languages** in it, not with its
-  length: one fixture (140 lines, nine languages) takes 277ms to lay out the
-  first time and 147µs the second, while 200 copies of it (28,199 lines) take
-  13.8ms once the patterns are compiled. See #83.
+  length: `tests/fixtures/elements.md` (140 lines, six highlighted languages)
+  opens in 150ms end to end, while 200 copies of it — 28,199 lines — lay out in
+  13.8ms once the patterns are compiled. Ordinary documents are not affected:
+  this repo's README (toml and sh) and AGENTS.md (sh) both open in 20ms. See #83.
+- **Do not time `layout::render` through the tests' `detached()` helper.** It
+  roots the vault at `.`, and `walk` skips only dot-directories, so resolving the
+  first wikilink walks the entire crate — `target/` included — for about 110ms on
+  this machine. An earlier version of the note above reported 277ms to lay the
+  fixture out and blamed syntax highlighting for all of it; 110ms of that was the
+  test harness indexing the build directory. Time the binary instead
+  (`/usr/bin/time -p ./target/release/vademecum --plain …`), or use a fixture
+  with no links in it.
 - `entry.file_type()` does **not** follow symlinks and `std::fs::metadata` does.
   That one substitution is the whole of "follow symlinked directories" — and it
   needs a `visited` set of *canonical* directory paths, or a vault linking back
