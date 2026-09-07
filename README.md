@@ -87,11 +87,20 @@ forces that even on a terminal.
 | `y` / `Y` | Copy the cursor line / the focused link's target |
 | `h` / `Backspace`, `l` | History back / forward |
 | `/`, then `n` / `N` | Search, next / previous match |
+| `t` | Table of contents |
 | `?` | Help |
 | `Esc` | Close the overlay, or clear the search |
 | `q`, `Ctrl-C` | Quit |
 | Left click | Follow the link under the pointer, on release |
 | Left drag | Select text, and copy it when the button is let go |
+
+`t` opens the document's headings in a scrollable list, indented by level, with
+a `›` marking the selection. It opens on the section being read. The reading
+keys all work in it — `j` / `k`, the arrows, `d` / `u`, `Space` / `b`, `g` / `G`,
+and the wheel — and `Enter` or a left click jumps to the selected heading, which
+lands on the first line of the viewport with the cursor on it. `t`, `q` or `Esc`
+closes the list without moving. A jump is recorded in the history, so `h` returns
+to where you were reading.
 
 Copying uses the platform's own clipboard tool when one is on `PATH` —
 `pbcopy` on macOS, `wl-copy` under Wayland, `xclip` or `xsel` under X11,
