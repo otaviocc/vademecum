@@ -141,7 +141,8 @@ Every element derives from the palette:
 | `foreground` | `reset` | body text, code |
 | `muted` | `dark_gray` | rules, table borders |
 | `muted_text` | `gray` | hints, quotes, images, footnotes, HTML |
-| `subtle` | `dark_gray` | the cursor line |
+| `subtle` | `dark_gray` | the code band, in themes that ask for one |
+| `cursor` | `dark_gray` | the cursor line |
 | `selection_background` / `selection_foreground` | `blue` / `white` | the focused link, copied text |
 | `error` | `red` | broken links, error messages |
 | `success` | `green` | completed task boxes |
