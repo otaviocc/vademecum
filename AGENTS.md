@@ -268,6 +268,20 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   only for whole frames. Assert on the buffer read back as text
   (`buffer[(x, y)].symbol()`), not on `insta`: a second snapshot tree under
   `src/` is churn the view tests do not need.
+- The draw path was measured for #75 and does not need optimising; do not
+  re-litigate it. Release build, 200x50 terminal, a 28,199-line document:
+  `terminal.draw` averages **120µs** a frame (p99 142µs) while scrolling, against
+  a ~16ms notch budget. Two thirds of that is ratatui's diff and flush —
+  painting into a bare `Buffer` is 38µs — so it is not ours to optimise. A
+  standing query with 34,000 matches adds 4µs and a drag across the whole
+  viewport adds 11µs, which is what `RenderedLine::text()` costs; it is not on
+  the ordinary scrolling path at all, because `view::highlight` and
+  `App::selected` both return before calling it. And the event loop's `try_recv`
+  drain really does coalesce: 300 wheel notches piped into a pty come out as one
+  frame, with the run taking the same 0.02s as quitting immediately. The
+  O(document) costs all sit in the reducer, where a reader pays them once per
+  action: the plain mirror for search is 1.4ms and `search::find` 2.5ms over
+  28,199 lines, so a `SearchConfirm` is ~3.9ms and a `SearchStep` 42ns.
 - `Buffer::set_stringn(x, y, s, max, style) -> (u16, u16)` is the right
   primitive for painting a `StyledSpan`: it clips to the area, skips control
   characters and advances by display columns. Watch for it returning the same
@@ -332,9 +346,18 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
 - `SyntaxSetBuilder::build` relinks contexts across all ~200 bundled
   definitions, so adding one syntax costs about as much as adding twenty:
   ~8ms to load syntect's dump, ~93ms to take it apart and put it back adding
-  nothing. That is why `build.rs` bakes the pack. Loading the baked one is ~1ms;
-  the first paint of a given language then costs a few ms more while its
-  patterns compile, which is the engine's cost and not the packaging's.
+  nothing. That is why `build.rs` bakes the pack. Loading the baked one is ~1ms
+  (measured 1.5-1.8ms), which is the packaging's whole cost.
+  The **first** paint of a given language is much dearer than "a few ms", and
+  that was measured for #75 on this machine, release build: rust 30ms,
+  typescript **89ms**, python 15ms, ruby 10ms, swift 10ms, kotlin 8ms, go 8ms,
+  toml 2ms, json 0.5ms. It is once per language per process — a second rust
+  fence costs 120µs and a third 50µs — and it is fancy-regex compiling that
+  syntax's patterns, not anything vademecum does. So the cost of opening a
+  document scales with the number of **distinct languages** in it, not with its
+  length: one fixture (140 lines, nine languages) takes 277ms to lay out the
+  first time and 147µs the second, while 200 copies of it (28,199 lines) take
+  13.8ms once the patterns are compiled. See #83.
 - `entry.file_type()` does **not** follow symlinks and `std::fs::metadata` does.
   That one substitution is the whole of "follow symlinked directories" — and it
   needs a `visited` set of *canonical* directory paths, or a vault linking back
