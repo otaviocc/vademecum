@@ -204,6 +204,14 @@ pub struct ElementFile {
     pub unknown: std::collections::BTreeMap<String, toml::Value>,
 }
 
+impl ElementFile {
+    pub fn merge(self, base: Self) -> Self {
+        let mut unknown = base.unknown;
+        unknown.extend(self.unknown);
+        Self { fg: self.fg.or(base.fg), bg: self.bg.or(base.bg), modifiers: self.modifiers.or(base.modifiers), unknown }
+    }
+}
+
 pub fn modifier(name: &str) -> Option<Modifier> {
     Some(match name {
         "bold" => Modifier::BOLD,
@@ -219,6 +227,23 @@ pub fn modifier(name: &str) -> Option<Modifier> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_element_field_merges_independently_of_the_others() {
+        let base: ElementFile = toml::from_str("fg = \"red\"\nmodifiers = [\"bold\"]\n").expect("a base element");
+        let child: ElementFile = toml::from_str("bg = \"blue\"\n").expect("a child element");
+
+        let merged = child.merge(base);
+        assert_eq!(merged.fg, Some(ColorSpec::Name(String::from("red"))), "the base's foreground was dropped");
+        assert_eq!(merged.bg, Some(ColorSpec::Name(String::from("blue"))));
+        assert_eq!(merged.modifiers.as_deref(), Some(["bold".to_string()].as_slice()), "the base's modifiers were dropped");
+
+        let base: ElementFile = toml::from_str("fg = \"red\"\n").expect("a base element");
+        let child: ElementFile = toml::from_str("fg = \"green\"\nmodifiers = []\n").expect("a child element");
+        let merged = child.merge(base);
+        assert_eq!(merged.fg, Some(ColorSpec::Name(String::from("green"))), "the child does not win its own field");
+        assert_eq!(merged.modifiers, Some(Vec::new()), "an empty list must survive as a way to clear them");
+    }
 
     #[test]
     fn every_element_has_a_key_that_finds_it_again() {

@@ -111,6 +111,29 @@ impl PaletteFile {
         ]
     }
 
+    pub fn merge(self, base: Self) -> Self {
+        let mut unknown = base.unknown;
+        unknown.extend(self.unknown);
+        Self {
+            background: self.background.or(base.background),
+            foreground: self.foreground.or(base.foreground),
+            muted: self.muted.or(base.muted),
+            muted_text: self.muted_text.or(base.muted_text),
+            subtle: self.subtle.or(base.subtle),
+            cursor: self.cursor.or(base.cursor),
+            selection_background: self.selection_background.or(base.selection_background),
+            selection_foreground: self.selection_foreground.or(base.selection_foreground),
+            error: self.error.or(base.error),
+            success: self.success.or(base.success),
+            warning: self.warning.or(base.warning),
+            accent: self.accent.or(base.accent),
+            chrome: self.chrome.or(base.chrome),
+            highlight: self.highlight.or(base.highlight),
+            notice: self.notice.or(base.notice),
+            unknown,
+        }
+    }
+
     pub fn set(palette: &mut Palette, name: &str, color: Color) {
         match name {
             "background" => palette.background = color,
@@ -150,6 +173,28 @@ mod tests {
         assert_eq!(palette.slot("accent"), Some(Color::Cyan));
         assert_eq!(palette.slot("selection_foreground"), Some(Color::White));
         assert_eq!(palette.slot("nonesuch"), None);
+    }
+
+    #[test]
+    fn every_slot_merges_from_the_child_and_no_other_slot_moves() {
+        let names: Vec<&str> = PaletteFile::default().slots().iter().map(|(name, _)| *name).collect();
+        let every = names.iter().map(|name| format!("{name} = 1\n")).collect::<String>();
+
+        for name in &names {
+            let base: PaletteFile = toml::from_str(&every).expect("a palette naming every slot");
+            let child: PaletteFile = toml::from_str(&format!("{name} = 208\n")).expect("a palette naming one slot");
+
+            let mut palette = Palette::default();
+            for (slot, spec) in child.merge(base).slots() {
+                let color = spec.expect("the merge kept every slot").resolve().expect("a color");
+                PaletteFile::set(&mut palette, slot, color);
+            }
+
+            assert_eq!(palette.slot(name), Some(Color::Indexed(208)), "{name} did not come from the child");
+            for other in names.iter().filter(|other| *other != name) {
+                assert_eq!(palette.slot(other), Some(Color::Indexed(1)), "{other} moved when {name} was merged");
+            }
+        }
     }
 
     #[test]
