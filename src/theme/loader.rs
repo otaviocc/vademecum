@@ -811,11 +811,12 @@ colour = "red""#,
     #[test]
     fn a_warning_in_the_base_is_reported_once_and_names_the_base_file() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let base = write(dir.path(), "themes/noisy.toml", "colour = \"red\"\n");
+        write(dir.path(), "themes/noisy.toml", "colour = \"red\"\n");
 
         let warnings = derived_warnings(dir.path(), "base = \"noisy\"\n");
         assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(warnings[0].contains(&base.display().to_string()), "the child was blamed: {warnings:?}");
+        assert!(warnings[0].contains("noisy.toml"), "the child was blamed: {warnings:?}");
+        assert!(!warnings[0].contains("child.toml"), "the child was blamed: {warnings:?}");
         assert!(warnings[0].contains("colour"), "{warnings:?}");
     }
 
