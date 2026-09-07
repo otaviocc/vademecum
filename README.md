@@ -152,6 +152,9 @@ Every element derives from the palette:
 | `highlight` | `blue` | links, headings 3–6 |
 | `notice` | `magenta` | wikilinks, transient messages, current match |
 
+`cursor` falls back to `subtle` when a theme names one and not the other, so a
+theme file written while the two were a single slot still looks the way it did.
+
 Individual elements can be overridden too:
 
 ```toml

@@ -170,6 +170,9 @@ impl ThemeFile {
             })?;
             PaletteFile::set(&mut palette, slot, color);
         }
+        if self.palette.cursor.is_none() && self.palette.subtle.is_some() {
+            palette.cursor = palette.subtle;
+        }
         Ok(palette)
     }
 }
@@ -290,6 +293,19 @@ mod tests {
 
         assert_eq!(ansi.style(Element::CursorLine).bg, Some(ansi.palette.cursor));
         assert_ne!(ansi.style(Element::CursorLine).bg, ansi.style(Element::CodeBlock).bg);
+    }
+
+    #[test]
+    fn a_file_that_names_subtle_and_not_cursor_keeps_the_cursor_on_the_band() {
+        let inherited = theme("[palette]\nsubtle = \"#101010\"\n");
+        assert_eq!(inherited.palette.cursor, Color::Rgb(16, 16, 16), "a theme written before the two slots split moved");
+        assert_eq!(inherited.style(Element::CursorLine).bg, Some(Color::Rgb(16, 16, 16)));
+
+        let separate = theme("[palette]\nsubtle = \"#101010\"\ncursor = \"#202020\"\n");
+        assert_eq!(separate.palette.cursor, Color::Rgb(32, 32, 32), "a theme that names both must keep them apart");
+
+        let neither = theme("name = \"mine\"\n");
+        assert_eq!(neither.palette.cursor, Palette::default().cursor);
     }
 
     #[test]
