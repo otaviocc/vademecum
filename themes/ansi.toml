@@ -1,4 +1,6 @@
-# The default theme, and the base every partial theme file merges over.
+# The base every partial theme file merges over. `handbook` is what a reader
+# gets by default; this is what they get by asking for it, and what a file
+# that names only an accent inherits the rest of.
 #
 # Nothing here asserts a color the terminal has not already chosen: the 16 ANSI
 # names are whatever the reader's scheme says they are, and `reset` is the

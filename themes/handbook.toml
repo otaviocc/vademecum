@@ -30,7 +30,7 @@ highlight            = "#86a9e0"
 notice               = "#b79ad4"
 
 # `subtle` is a real near-background tint rather than ANSI bright black, so code
-# gets its band; the defaults leave it off for `ansi`'s sake.
+# gets its band; the element defaults leave it off for `ansi`'s sake.
 #
 # `code_block` names a foreground as well, which the other elements do not need:
 # it is the colour of a fence no syntax was found for, and `reset` there would

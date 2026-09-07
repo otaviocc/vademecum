@@ -26,7 +26,8 @@ highlight            = "#8ba4b0"   # dragonBlue2
 notice               = "#8992a7"   # dragonViolet, upstream's color for refs
 
 # This palette's `subtle` is a real near-background tint rather than ANSI bright
-# black, so code gets its band back; the default leaves it off for `ansi`'s sake.
+# black, so code gets its band back; the element defaults leave it off for
+# `ansi`'s sake.
 [elements.inline_code]
 bg = "subtle"
 
