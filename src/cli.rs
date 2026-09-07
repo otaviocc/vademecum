@@ -16,7 +16,7 @@ pub struct Cli {
     #[arg(long, value_name = "WHEN", value_enum, default_value_t = ColorChoice::Auto, help = "ANSI colors in stdout mode")]
     pub color: ColorChoice,
 
-    #[arg(long, value_name = "N", help = "Wrap width. Defaults to min(terminal width, 100)")]
+    #[arg(long, value_name = "N", help = "Wrap width. Defaults to min(terminal width - 2, 100)")]
     pub width: Option<u16>,
 
     #[arg(long, value_name = "NAME", help = "Built-in or user theme by name")]
