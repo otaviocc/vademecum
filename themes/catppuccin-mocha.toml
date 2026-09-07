@@ -8,6 +8,7 @@ foreground           = "#cdd6f4"   # text
 muted                = "#45475a"   # surface1
 muted_text           = "#7f849c"   # overlay1
 subtle               = "#313244"   # surface0
+cursor               = "#45475a"   # surface1, a step lighter than the code band
 selection_background = "#585b70"   # surface2
 selection_foreground = "#cdd6f4"   # text
 error                = "#f38ba8"   # red

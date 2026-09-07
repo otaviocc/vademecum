@@ -14,6 +14,7 @@ foreground           = "#c5c9c5"   # dragonWhite
 muted                = "#625e5a"   # dragonBlack6, the warm grey of borders
 muted_text           = "#737c73"   # dragonAsh, the comment color
 subtle               = "#282727"   # dragonBlack4
+cursor               = "#393836"   # dragonBlack5, a step lighter than the code band
 selection_background = "#223249"   # waveBlue1, Dragon's own bg_visual
 selection_foreground = "#c5c9c5"   # dragonWhite
 error                = "#c34043"   # autumnRed

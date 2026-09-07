@@ -54,7 +54,7 @@ mod tests {
         assert_eq!(theme.style(Element::Heading1).fg, Some(theme.palette.accent));
         assert!(theme.style(Element::Heading1).add_modifier.contains(Modifier::BOLD));
         assert_eq!(theme.style(Element::InlineCode).bg, None);
-        assert_eq!(theme.style(Element::CursorLine).bg, Some(theme.palette.subtle));
+        assert_eq!(theme.style(Element::CursorLine).bg, Some(theme.palette.cursor));
     }
 
     #[test]

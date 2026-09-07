@@ -187,7 +187,7 @@ pub fn default_style(element: Element, palette: &Palette) -> Style {
         Element::Status => style.fg(palette.foreground),
         Element::StatusNotice => style.fg(palette.notice),
         Element::StatusError => style.fg(palette.error).add_modifier(Modifier::BOLD),
-        Element::CursorLine => style.bg(palette.subtle),
+        Element::CursorLine => style.bg(palette.cursor),
         Element::SearchMatch => style.fg(Color::Black).bg(palette.warning),
         Element::SearchCurrent => style.fg(Color::Black).bg(palette.notice).add_modifier(Modifier::BOLD),
         Element::Selection => style.fg(palette.selection_foreground).bg(palette.selection_background),

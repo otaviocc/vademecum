@@ -220,6 +220,11 @@ mod tests {
         from_source("test.toml", source).expect("the theme loads").0
     }
 
+    fn built_in(name: &str) -> Theme {
+        let source = BUILT_IN.iter().find(|(built_in, _)| *built_in == name).expect("a built-in by that name").1;
+        theme(source)
+    }
+
     fn warnings(source: &str) -> Vec<String> {
         from_source("test.toml", source).expect("the theme loads").1
     }
@@ -268,29 +273,44 @@ mod tests {
     #[test]
     fn a_theme_with_a_real_subtle_can_have_its_code_background() {
         for name in ["catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
-            let source = BUILT_IN.iter().find(|(built_in, _)| *built_in == name).expect("a built-in").1;
-            let built_in = theme(source);
+            let concrete = built_in(name);
             for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
-                assert_eq!(built_in.style(element).bg, Some(built_in.palette.subtle), "{name} {element:?}");
+                assert_eq!(concrete.style(element).bg, Some(concrete.palette.subtle), "{name} {element:?}");
             }
         }
     }
 
     #[test]
     fn the_ansi_theme_gives_code_no_background() {
-        let ansi = theme(BUILT_IN[0].1);
+        let ansi = built_in("ansi");
         for element in [Element::InlineCode, Element::CodeBlock, Element::CodeBlockLang] {
             assert_eq!(ansi.style(element).bg, None, "{element:?} still paints a background");
             assert!(ansi.style(element).fg.is_some(), "{element:?} has to say something, having no background");
         }
 
-        assert_eq!(ansi.style(Element::CursorLine).bg, Some(ansi.palette.subtle));
+        assert_eq!(ansi.style(Element::CursorLine).bg, Some(ansi.palette.cursor));
         assert_ne!(ansi.style(Element::CursorLine).bg, ansi.style(Element::CodeBlock).bg);
     }
 
     #[test]
+    fn a_theme_that_bands_its_code_still_shows_the_cursor_line_over_it() {
+        for name in ["catppuccin-mocha", "catppuccin-latte", "kanagawa-dragon"] {
+            let concrete = built_in(name);
+            assert_ne!(concrete.palette.cursor, concrete.palette.subtle, "{name} cursor is the code band");
+            assert_ne!(
+                concrete.style(Element::CursorLine).bg,
+                concrete.style(Element::CodeBlock).bg,
+                "{name} loses the cursor line inside a code block"
+            );
+        }
+
+        let ansi = built_in("ansi");
+        assert_eq!(ansi.palette.cursor, ansi.palette.subtle, "ansi has 16 colors and one grey to spend");
+    }
+
+    #[test]
     fn the_ansi_search_highlights_name_a_foreground_that_reads() {
-        let ansi = theme(BUILT_IN[0].1);
+        let ansi = built_in("ansi");
         for element in [Element::SearchMatch, Element::SearchCurrent] {
             assert_eq!(ansi.style(element).fg, Some(Color::Black), "{element:?}");
             assert_ne!(ansi.style(element).fg, Some(ansi.palette.background), "{element:?} inverts against nothing");
