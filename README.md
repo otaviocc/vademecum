@@ -96,17 +96,23 @@ link without a restart.
 
 ## Theming
 
-Four themes ship in the binary:
+Five themes ship in the binary:
 
 | Name | Appearance |
 | --- | --- |
-| `ansi` (default) | inherits your terminal's own 16 colours |
+| `handbook` (default) | your terminal's own background, with colours of its own on top |
+| `ansi` | inherits your terminal's own 16 colours |
 | `kanagawa-dragon` | dark, after [kanagawa.nvim](https://github.com/rebelot/kanagawa.nvim) |
 | `catppuccin-mocha` | dark |
 | `catppuccin-latte` | light |
 
-`ansi` is the default because a reader who has not chosen a theme has already
-chosen one — their terminal's.
+`handbook` leaves the background and the body text to your terminal — a reader
+who has not chosen a theme has already chosen those — and names a colour for
+everything else, because the sixteen ANSI colours cannot promise what matters:
+`dark_gray` is bright black, which most schemes make a *mid* grey, so under
+`ansi` the cursor line is a heavy washed-out bar. It is tuned against a dark
+terminal; on a light one, `catppuccin-latte` is the better start. `ansi` remains
+the only theme that asserts nothing at all.
 
 ```sh
 vademecum --theme catppuccin-mocha README.md
@@ -127,6 +133,12 @@ two-line file is a valid theme:
 [palette]
 accent = "#89b4fa"
 ```
+
+Those defaults are `ansi`'s, not `handbook`'s: a partial file merges over the
+terminal's own sixteen colours, whichever theme happens to be shipped as the
+default. So the two-line file above is `ansi` with a different accent. To start
+from `handbook` or one of the others, copy its `[palette]` out of
+[`themes/`](themes) and edit that.
 
 A colour is an 8-bit index (`208`), hex (`"#89b4fa"`), `"reset"` for the
 terminal's own, or one of the 16 ANSI names: `black`, `red`, `green`, `yellow`,
