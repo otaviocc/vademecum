@@ -27,50 +27,50 @@ expression: output
  Code
 
                                                                            rust
- fn main() {
-     println!("syntect highlighting arrives in milestone 3");
- }
+  fn main() {
+      println!("syntect highlighting arrives in milestone 3");
+  }
 
 
 
- An unlabelled fence.
- A line long enough that it has to be truncated rather than wrapped, because co…
+  An unlabelled fence.
+  A line long enough that it has to be truncated rather than wrapped, because …
 
 
                                                                    notalanguage
- A fence tagged with a language nothing knows.
+  A fence tagged with a language nothing knows.
 
 
 
- #!/usr/bin/env python3
- print("a shebang names the language when the fence tag does not")
+  #!/usr/bin/env python3
+  print("a shebang names the language when the fence tag does not")
 
 
  The four languages syntect's default set leaves out, which syntaxes/ supplies.
 
                                                                           swift
- let greeting: String = "hi"
- func greet() { print(greeting) }
+  let greeting: String = "hi"
+  func greet() { print(greeting) }
 
 
                                                                          kotlin
- fun greet() {
-     val greeting: String = "hi"
-     println(greeting)
- }
+  fun greet() {
+      val greeting: String = "hi"
+      println(greeting)
+  }
 
 
                                                                            toml
- [package]
- name = "vademecum"
- edition = "2024"
+  [package]
+  name = "vademecum"
+  edition = "2024"
 
 
                                                                      typescript
- const greeting: string = "hi";
- function greet(): void {
-     console.log(greeting);
- }
+  const greeting: string = "hi";
+  function greet(): void {
+      console.log(greeting);
+  }
 
 
  Quotes

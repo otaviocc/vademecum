@@ -47,6 +47,7 @@ pub struct RenderedLine {
     pub links: Vec<LinkRef>,
     pub anchor: Option<String>,
     pub source_line: usize,
+    pub inset: usize,
 }
 
 impl RenderedLine {
@@ -108,6 +109,9 @@ impl RenderedLine {
     }
 
     pub fn prefix(&mut self, span: StyledSpan) {
+        if self.inset > 0 {
+            self.inset += span.width();
+        }
         self.spans.insert(0, span);
         for link in &mut self.links {
             link.span_range = link.span_range.start + 1..link.span_range.end + 1;
@@ -129,6 +133,7 @@ mod tests {
             }],
             anchor: None,
             source_line: 7,
+            ..RenderedLine::default()
         }
     }
 
@@ -240,6 +245,23 @@ mod tests {
         line.prefix(StyledSpan::new("┃ ", Style::default()));
         assert_eq!(line.text(), "┃ hello world");
         assert_eq!(line.links[0].span_range, 2..3);
+    }
+
+    #[test]
+    fn prefixing_pushes_the_inset_along_with_the_text() {
+        let mut padded = line();
+        padded.inset = 1;
+        padded.prefix(StyledSpan::new("┃ ", Style::default()));
+        assert_eq!(padded.inset, 3, "the inset no longer points at the text it was measuring");
+        let text = padded.text();
+        assert_eq!(&text[padded.byte_at(padded.inset)..], "ello world");
+    }
+
+    #[test]
+    fn prefixing_a_line_without_an_inset_leaves_it_without_one() {
+        let mut plain = line();
+        plain.prefix(StyledSpan::new("┃ ", Style::default()));
+        assert_eq!(plain.inset, 0, "a line with no chrome of its own gained some");
     }
 
     #[test]

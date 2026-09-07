@@ -12,6 +12,7 @@ use crate::render::line::{self, LinkRef, RenderedLine, StyledSpan};
 use crate::theme::{Element, Theme};
 
 pub const GUTTER: usize = 1;
+const CODE_PAD: usize = 1;
 const DEFAULT_WIDTH: usize = 100;
 const TERMINAL_MARGIN: usize = 2;
 const BULLETS: [&str; 3] = ["•", "◦", "▪"];
@@ -45,6 +46,7 @@ pub fn render(blocks: &[SourceBlock], ctx: &Ctx<'_>, width: usize) -> Vec<Render
     for line in &mut lines {
         if !line.is_blank() {
             line.prefix(gutter.clone());
+            line.inset = line.inset.max(GUTTER);
         }
         clamp_to_width(line, width);
     }
@@ -203,15 +205,27 @@ fn code_to_lines(lang: Option<&str>, text: &str, ctx: &Ctx<'_>, width: usize, so
     }
 
     lines.push(styled_line(" ".repeat(width), block, source_line));
+
+    let pad = code_pad(width);
+    for line in &mut lines {
+        line.inset = pad;
+    }
     lines
 }
 
-fn code_line(code: &[StyledSpan], block: Style, width: usize, source_line: usize) -> RenderedLine {
-    let total: usize = code.iter().map(StyledSpan::width).sum();
-    let cut = total > width;
-    let budget = if cut { width.saturating_sub(1) } else { width };
+fn code_pad(width: usize) -> usize {
+    if width > 2 * CODE_PAD + 1 { CODE_PAD } else { 0 }
+}
 
-    let mut spans: Vec<StyledSpan> = Vec::with_capacity(code.len() + 1);
+fn code_line(code: &[StyledSpan], block: Style, width: usize, source_line: usize) -> RenderedLine {
+    let pad = code_pad(width);
+    let room = width - 2 * pad;
+    let total: usize = code.iter().map(StyledSpan::width).sum();
+    let cut = total > room;
+    let budget = if cut { room - 1 } else { room };
+
+    let mut spans: Vec<StyledSpan> = Vec::with_capacity(code.len() + 2);
+    spans.push(StyledSpan::new(" ".repeat(pad), block));
     let mut used = 0;
     for span in code {
         if used >= budget {
@@ -232,23 +246,24 @@ fn code_line(code: &[StyledSpan], block: Style, width: usize, source_line: usize
         spans.push(StyledSpan::new("…", style));
         used += 1;
     }
-    spans.push(StyledSpan::new(" ".repeat(width.saturating_sub(used)), block));
+    spans.push(StyledSpan::new(" ".repeat(width - pad - used), block));
 
     RenderedLine { spans: line::merge(spans), source_line, ..RenderedLine::default() }
 }
 
 fn fence_line(lang: Option<&str>, ctx: &Ctx<'_>, width: usize, source_line: usize) -> RenderedLine {
     let block = ctx.theme.style(Element::CodeBlock);
-    let Some(lang) = lang.filter(|lang| lang.width() < width) else {
+    let pad = code_pad(width);
+    let Some(lang) = lang.filter(|lang| lang.width() + pad <= width) else {
         return styled_line(" ".repeat(width), block, source_line);
     };
 
-    let padding = width - lang.width() - 1;
+    let padding = width - lang.width() - pad;
     RenderedLine {
         spans: vec![
             StyledSpan::new(" ".repeat(padding), block),
             StyledSpan::new(lang, ctx.theme.style(Element::CodeBlockLang)),
-            StyledSpan::new(" ", block),
+            StyledSpan::new(" ".repeat(pad), block),
         ],
         source_line,
         ..RenderedLine::default()
@@ -805,7 +820,7 @@ mod tests {
     #[test]
     fn code_blocks_truncate_rather_than_wrap() {
         let rendered = bare("```\nthis line is far too long\n```\n", 10);
-        assert_eq!(rendered[1], "this line…");
+        assert_eq!(rendered[1], " this li… ", "the pad costs two of the ten columns");
     }
 
     #[test]
@@ -819,7 +834,7 @@ mod tests {
             12,
             0,
         );
-        assert_eq!(rendered[1].text(), "fn main() {…");
+        assert_eq!(rendered[1].text(), " fn main()… ");
         assert!(rendered.iter().all(|line| line.width() == 12), "{rendered:?}");
         assert!(rendered[1].spans.len() > 1, "the line was not highlighted: {:?}", rendered[1]);
     }
@@ -828,7 +843,7 @@ mod tests {
     fn a_cut_that_lands_inside_a_wide_character_stops_there() {
         let theme = Theme::default();
         let links = detached();
-        for width in 4..14 {
+        for width in 1..14 {
             let rendered = blocks_to_lines(
                 &parse("```rust\nx = \"日本語\";\n```\n"),
                 &Ctx::new(&theme, &links),
@@ -836,10 +851,12 @@ mod tests {
                 width,
                 0,
             );
-            let line = rendered[1].text();
+            let line = &rendered[1];
+            let text = line.text();
             let source = "x = \"日本語\";";
-            let kept = line.trim_end().trim_end_matches('…');
-            assert!(source.starts_with(kept), "{line:?} is not a prefix of {source:?} at width {width}");
+            let kept = text[line.byte_at(line.inset)..].trim_end().trim_end_matches('…');
+            assert!(source.starts_with(kept), "{text:?} is not a prefix of {source:?} at width {width}");
+            assert_eq!(line.width(), width, "{text:?} is not {width} columns wide");
         }
     }
 
@@ -867,16 +884,65 @@ mod tests {
     fn a_fence_line_carries_the_language_right_aligned() {
         let rendered = bare("```rust\nfn main() {}\n```\n", 20);
         assert_eq!(rendered[0], "               rust ");
-        assert_eq!(rendered[1], "fn main() {}        ");
+        assert_eq!(rendered[1], " fn main() {}       ");
     }
 
     #[test]
     fn code_lines_are_padded_so_the_background_is_a_rectangle() {
         let theme = Theme::default();
         let links = detached();
-        let rendered =
-            blocks_to_lines(&parse("```\nab\n```\n"), &Ctx::new(&theme, &links), theme.style(Element::Paragraph), 8, 0);
-        assert!(rendered.iter().all(|line| line.width() == 8), "{rendered:?}");
+        for width in 1..=8 {
+            let rendered =
+                blocks_to_lines(&parse("```\nab\n```\n"), &Ctx::new(&theme, &links), theme.style(Element::Paragraph), width, 0);
+            assert!(rendered.iter().all(|line| line.width() == width), "at width {width}: {rendered:?}");
+        }
+    }
+
+    #[test]
+    fn a_code_row_keeps_a_column_of_background_on_each_side() {
+        let theme = Theme::default();
+        let links = detached();
+        let rendered = blocks_to_lines(
+            &parse("```rust\n    let x = 1;\n```\n"),
+            &Ctx::new(&theme, &links),
+            theme.style(Element::Paragraph),
+            20,
+            0,
+        );
+
+        for line in &rendered {
+            let text = line.text();
+            assert!(text.starts_with(' '), "{text:?} starts hard against the edge");
+            assert!(text.ends_with(' '), "{text:?} ends hard against the edge");
+        }
+
+        let code = &rendered[1];
+        let text = code.text();
+        assert_eq!(&text[code.byte_at(code.inset)..].trim_end(), &"    let x = 1;", "the indentation is part of the code");
+    }
+
+    #[test]
+    fn a_code_block_too_narrow_to_pad_drops_the_padding() {
+        let theme = Theme::default();
+        let links = detached();
+        for (width, expected) in [(1, "…"), (2, "a…"), (3, "ab…"), (4, " a… "), (5, " ab… ")] {
+            let rendered = blocks_to_lines(
+                &parse("```\nabcdef\n```\n"),
+                &Ctx::new(&theme, &links),
+                theme.style(Element::Paragraph),
+                width,
+                0,
+            );
+            assert!(rendered.iter().all(|line| line.width() == width), "at width {width}: {rendered:?}");
+            assert_eq!(rendered[1].text(), expected, "at width {width}");
+            assert_eq!(rendered[1].inset, code_pad(width), "at width {width}");
+        }
+    }
+
+    #[test]
+    fn a_language_tag_that_no_longer_fits_leaves_the_fence_blank() {
+        assert_eq!(bare("```rust\nx\n```\n", 5)[0], "rust ");
+        assert_eq!(bare("```rust\nx\n```\n", 4)[0], "    ");
     }
 
     #[test]
