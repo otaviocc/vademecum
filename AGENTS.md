@@ -494,11 +494,20 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   <old-branch> -- <paths>` to take the final file state, remove what belonged to
   the dropped PR, and commit it as the intended history. Commits that are
   genuinely independent (the layer above) still rebase cleanly with `--onto`.
-- Adding an action to `moves_cursor` in `src/ui/app.rs` opts it into `reveal()`,
-  which pulls the viewport onto the cursor. That is wrong for any action that
-  can be a **no-op**: a click that lands on nothing would drag the view back to
-  the cursor and destroy the place the wheel exists to preserve. Only actions
-  that always move the cursor belong in that set.
+- `apply`'s epilogue in `src/ui/app.rs` picks **one** of two opposite clamps per
+  action, and which one is the whole design. `reveal()` moves the viewport onto
+  the cursor; `snap()` moves the cursor onto the viewport. `Action::Scroll` gets
+  `snap` — it must not join `moves_cursor`, because `reveal` after a notch would
+  drag the view back and undo the scroll. `Action::Resize` gets `reveal` without
+  joining that set either: a window manager tiling the terminal is not a
+  navigation intent, so the view moves to the reader's line rather than the
+  reverse. Everything in `moves_cursor` gets `reveal`, and only actions that
+  **always** move the cursor belong there — a click that lands on nothing would
+  otherwise drag the view somewhere the reader did not ask for.
+  Both clamps run **after** `bound()`, never inside a handler: `bound` is what
+  finally lowers `top`, so a clamp computed before it uses a `top` that then
+  changes. In a document shorter than the viewport that is the difference
+  between a no-op and silently moving the reading position.
 - A smoke test whose fixture is edited by a background `( sleep N; ... ) &`
   proves nothing unless N is past the keystrokes: an edit that lands *before*
   the navigation is already in the file when it opens, and the run looks like a

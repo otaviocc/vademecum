@@ -231,12 +231,19 @@ escape: Apple Terminal and GNOME Terminal ignore it entirely, tmux wants
 native tool, which does not care. If the copy fails outright the statusbar says
 so rather than claiming success.
 
-The wheel scrolls three lines a notch. Dragging selects the text as it is
-painted — wrapped where the page wrapped, without the gutter or the colours —
-and letting go copies it. Capturing the mouse takes your terminal's own
-selection away, so `--no-mouse` turns it off and hands it back; most terminals
-also let you hold `Shift` while dragging to select through a capturing
-program.
+The wheel scrolls three lines a notch and brings the reading position with it:
+the cursor line is pulled to the nearest line still on screen, the top row when
+you scroll down and the bottom row when you scroll up. So `j` after a scroll
+carries on from where you are looking, `Tab` and `Enter` act on a line you can
+see, and the statusbar's `line X/Y` is never describing something off screen.
+Scrolling away and back does not restore the line you started on — the cursor
+came along.
+
+Dragging selects the text as it is painted — wrapped where the page wrapped,
+without the gutter or the colours — and letting go copies it. Capturing the
+mouse takes your terminal's own selection away, so `--no-mouse` turns it off and
+hands it back; most terminals also let you hold `Shift` while dragging to select
+through a capturing program.
 
 ## Flags
 

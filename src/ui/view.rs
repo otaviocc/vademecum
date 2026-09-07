@@ -307,6 +307,18 @@ mod tests {
     }
 
     #[test]
+    fn the_statusbar_follows_the_wheel() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        let total = app.lines.len();
+
+        app.apply(Action::Scroll(3));
+        let buffer = frame(&app, size);
+        assert_eq!(row(&buffer, 11), format!("x.md · line 4/{total} · {}%", app.percent()));
+        assert_eq!(app.cursor, 3, "the wheel took the reading position the statusbar reports");
+    }
+
+    #[test]
     fn the_content_starts_at_the_top_of_the_document_and_scrolls_with_the_cursor() {
         let size = Size::new(60, 12);
         let mut app = app(&body(), size);

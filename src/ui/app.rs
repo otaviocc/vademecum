@@ -183,8 +183,11 @@ impl App {
         }
 
         self.bound();
-        if moves_cursor {
-            self.reveal();
+        match action {
+            Action::Scroll(_) => self.snap(),
+            Action::Resize(_) => self.reveal(),
+            _ if moves_cursor => self.reveal(),
+            _ => {}
         }
     }
 
@@ -406,8 +409,6 @@ impl App {
         let height = self.viewport_height();
         let last = self.lines.len().saturating_sub(1);
 
-        self.cursor = self.cursor.clamp(self.top, self.top + height - 1).min(last);
-
         match motion {
             Motion::Line(delta) => self.cursor = offset(self.cursor, delta),
             Motion::HalfPage(delta) => self.jump(delta * (height / 2).max(1) as isize),
@@ -606,6 +607,17 @@ impl App {
         self.top = self.top.min(self.cursor);
         self.top = self.top.max(self.cursor.saturating_sub(height - 1));
     }
+
+    fn snap(&mut self) {
+        let height = self.viewport_height();
+        let last = self.lines.len().saturating_sub(1);
+
+        let snapped = self.cursor.clamp(self.top, (self.top + height - 1).min(last));
+        if snapped != self.cursor {
+            self.cursor = snapped;
+            self.focus = 0;
+        }
+    }
 }
 
 fn complaint() -> Option<Status> {
@@ -720,26 +732,108 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_away_and_back_puts_the_reader_exactly_where_they_were() {
+    fn the_wheel_takes_the_cursor_with_it_rather_than_leaving_it_behind() {
         let mut app = paged();
         app.apply(Action::Move(Motion::Line(1)));
-        let cursor = app.cursor;
 
         for _ in 0..10 {
             app.apply(Action::Scroll(3));
         }
-        assert_eq!(app.top, 30);
-        assert_eq!(app.cursor, cursor, "the wheel moves the viewport and nothing else");
+        assert_eq!((app.top, app.cursor), (30, 30), "scrolling down leaves the cursor on the first visible row");
 
         for _ in 0..10 {
             app.apply(Action::Scroll(-3));
         }
-        assert_eq!(app.top, 0);
-        assert_eq!(app.cursor, cursor, "so coming back restores the place, rather than guessing at it");
+        assert_eq!((app.top, app.cursor), (0, 9), "and scrolling up, on the last one");
     }
 
     #[test]
-    fn the_wheel_leaves_the_cursor_alone_at_both_ends_of_the_document() {
+    fn a_wheel_notch_pulls_the_cursor_to_the_nearest_line_it_can_still_see() {
+        let mut app = paged();
+        app.apply(Action::Scroll(3));
+        assert_eq!((app.top, app.cursor), (3, 3), "the cursor was above the view, so it came to the first row");
+
+        app.apply(Action::Move(Motion::Page(1)));
+        assert_eq!(app.cursor, app.top, "the page put the cursor on the first row");
+
+        app.apply(Action::Scroll(-3));
+        assert_eq!(app.cursor, 12, "a notch that leaves the cursor visible does not move it");
+
+        app.apply(Action::Scroll(-30));
+        assert_eq!(app.top, 0);
+        assert_eq!(app.cursor, app.viewport_height() - 1, "the cursor was below the view, so it came to the last row");
+    }
+
+    #[test]
+    fn the_wheel_moves_nothing_in_a_document_shorter_than_the_screen() {
+        let mut app = app(&numbered(3), 14);
+        assert!(app.lines.len() < app.viewport_height());
+
+        for delta in [3, -3, 30, -30] {
+            app.apply(Action::Scroll(delta));
+            assert_eq!((app.top, app.cursor), (0, 0), "a notch of {delta} moved something");
+        }
+    }
+
+    #[test]
+    fn the_cursor_is_never_off_the_screen_whatever_the_reader_does() {
+        let (dir, mut app) = on_disk(&numbered(40));
+        let actions = [
+            Action::Scroll(3),
+            Action::Scroll(-3),
+            Action::Scroll(1000),
+            Action::Scroll(-1000),
+            Action::Move(Motion::Line(1)),
+            Action::Move(Motion::Line(-1)),
+            Action::Move(Motion::HalfPage(1)),
+            Action::Move(Motion::Page(1)),
+            Action::Move(Motion::Bottom),
+            Action::Move(Motion::Top),
+            Action::Resize(Size::new(60, 40)),
+            Action::Resize(Size::new(60, 6)),
+            Action::Reload,
+            Action::Focus { forward: true },
+        ];
+
+        for action in actions {
+            app.apply(action);
+            let visible = app.top..app.top + app.viewport_height();
+            assert!(visible.contains(&app.cursor), "{action:?} left the cursor at {} outside {visible:?}", app.cursor);
+        }
+
+        click(&mut app, 0, CONTENT_TOP + 1);
+        let visible = app.top..app.top + app.viewport_height();
+        assert!(visible.contains(&app.cursor), "a click left the cursor outside {visible:?}");
+        drop(dir);
+    }
+
+    #[test]
+    fn a_shrinking_terminal_keeps_the_reader_on_their_line_and_on_the_screen() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::Page(1)));
+        app.apply(Action::Move(Motion::Line(5)));
+        let source_line = app.lines[app.cursor].source_line;
+
+        app.apply(Action::Resize(Size::new(60, 6)));
+
+        assert_eq!(app.lines[app.cursor].source_line, source_line, "the reader was moved off their line");
+        let visible = app.top..app.top + app.viewport_height();
+        assert!(visible.contains(&app.cursor), "the cursor is outside {visible:?}");
+    }
+
+    #[test]
+    fn a_query_confirmed_after_a_scroll_seeks_from_the_line_on_screen() {
+        let mut app = app(&numbered(40), 14);
+        app.apply(Action::Scroll(20));
+        let from = app.cursor;
+
+        search_for(&mut app, "LINE");
+
+        assert!(app.cursor >= from, "the search went backwards, from a line the reader had left");
+    }
+
+    #[test]
+    fn the_wheel_changes_nothing_when_the_view_is_already_at_either_end() {
         let mut app = paged();
         let (top, cursor) = (app.top, app.cursor);
         for _ in 0..5 {
@@ -748,29 +842,27 @@ mod tests {
         assert_eq!((app.top, app.cursor), (top, cursor), "the view is already at the head");
 
         app.apply(Action::Move(Motion::Bottom));
-        app.cursor = app.top;
         let (top, cursor) = (app.top, app.cursor);
         for _ in 0..5 {
             app.apply(Action::Scroll(3));
         }
-        assert_eq!(app.top, top, "the view is already at the foot");
-        assert_eq!(app.cursor, cursor, "and the cursor was never the wheel's to move");
+        assert_eq!((app.top, app.cursor), (top, cursor), "the view is already at the foot");
     }
 
     #[test]
-    fn a_motion_key_starts_from_the_line_the_reader_can_see() {
+    fn a_motion_key_carries_on_from_where_the_wheel_left_the_cursor() {
         let mut app = paged();
         app.apply(Action::Scroll(30));
-        assert_eq!((app.top, app.cursor), (30, 0), "the cursor is off the top of the screen");
+        assert_eq!((app.top, app.cursor), (30, 30), "the wheel already put the cursor on screen");
 
         app.apply(Action::Move(Motion::Line(1)));
-        assert_eq!(app.cursor, 31, "snapped to the first visible line, then moved");
+        assert_eq!(app.cursor, 31, "moved on from the line the reader can see");
         assert_eq!(app.top, 30, "and the viewport the reader chose is left alone");
 
         app.apply(Action::Scroll(-30));
-        assert_eq!((app.top, app.cursor), (0, 31));
+        assert_eq!((app.top, app.cursor), (0, 9), "scrolling back put it on the last visible row");
         app.apply(Action::Move(Motion::Line(-1)));
-        assert_eq!(app.cursor, 8, "snapped to the last visible line of a ten-row viewport, then moved");
+        assert_eq!(app.cursor, 8, "moved on from there");
         assert_eq!(app.top, 0);
     }
 
@@ -1644,11 +1736,12 @@ mod tests {
         let (cursor, focus) = (app.cursor, app.focus);
 
         app.apply(Action::Scroll(1));
-        assert_eq!((app.cursor, app.focus), (cursor, focus), "the reader's link survives a scroll past it");
+        assert_eq!(app.cursor, cursor, "a notch this small left the cursor visible, so it did not move");
+        assert_eq!(app.focus, focus, "and the reader's chosen link stood");
     }
 
     #[test]
-    fn scrolling_the_focused_link_off_the_screen_and_back_keeps_it_focused() {
+    fn a_wheel_notch_that_moves_the_cursor_drops_the_focus_with_it() {
         let mut app = inside_vault("[[note]] and [[missing]]\n\n".to_string().repeat(30).as_str());
         let line = app.lines.iter().position(|line| line.links.len() > 1).expect("a line with several links");
         app.cursor = line;
@@ -1657,10 +1750,11 @@ mod tests {
 
         let away = app.viewport_height() as isize * 2;
         app.apply(Action::Scroll(away));
-        assert_eq!((app.cursor, app.focus), (line, 1), "the wheel moved the view, not the reader");
+        assert_eq!(app.cursor, app.top, "the wheel carried the cursor to the top of the new view");
+        assert_eq!(app.focus, 0, "a link chosen on the line left behind cannot still be chosen");
 
-        app.apply(Action::Scroll(-away));
-        assert_eq!((app.cursor, app.focus), (line, 1), "and back again, with the chosen link still chosen");
+        let links = app.lines[app.cursor].links.len();
+        assert_eq!(app.link_progress(), (links > 0).then_some((1, links)), "the statusbar counts the new line's links");
     }
 
     #[test]
