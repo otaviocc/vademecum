@@ -3,6 +3,7 @@
 pub mod app;
 pub mod clipboard;
 pub mod input;
+pub mod outline;
 pub mod search;
 pub mod view;
 

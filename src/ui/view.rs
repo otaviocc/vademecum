@@ -11,12 +11,15 @@ use crate::render::line::RenderedLine;
 use crate::theme::Element;
 use crate::ui::app::{App, Mode, Status};
 
-const HINTS: &str = "? help  / search  ⇥ link  ⏎ follow  h/l back/fwd  q quit";
+const HINTS: &str = "? help  t contents  / search  ⇥ link  ⏎ follow  h/l back/fwd  q quit";
 const TITLE_PREFIX: &str = " vademecum · ";
 const HINT_GAP: usize = 2;
 const HELP_WIDTH: (u32, u32) = (3, 5);
 const HELP_FLOOR: (u32, u32) = (4, 10);
 const HELP_CEILING: (u32, u32) = (9, 10);
+const CHEVRON: &str = "›";
+const CHEVRON_COLUMN: u16 = 2;
+const TOC_INDENT: usize = 2;
 
 const HELP: &[(&str, &str)] = &[
     ("j / k, ↓ / ↑", "Move cursor line down / up"),
@@ -30,6 +33,7 @@ const HELP: &[(&str, &str)] = &[
     ("h / Backspace, l", "History back, forward"),
     ("/", "Search (Enter confirms, Esc cancels)"),
     ("n / N", "Next / previous match"),
+    ("t", "Table of contents (j/k moves, Enter or a click jumps, t closes)"),
     ("?", "Help overlay"),
     ("Esc", "Close overlay, clear search highlight"),
     ("q, Ctrl-C", "Quit"),
@@ -58,8 +62,10 @@ impl Widget for Screen<'_> {
         rule(bottom_rule, buf, hint);
         statusbar(status_row, buf, self.app);
 
-        if self.app.mode == Mode::Help {
-            help(area, buf, self.app);
+        match self.app.mode {
+            Mode::Help => help(area, buf, self.app),
+            Mode::Toc => toc(area, buf, self.app),
+            _ => {}
         }
     }
 }
@@ -161,6 +167,10 @@ fn highlight(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize, line
 fn statusbar(area: Rect, buf: &mut Buffer, app: &App) {
     let (text, element) = match (app.mode, &app.status) {
         (Mode::Search, _) => (format!("/{}", app.search.input), Element::Status),
+        (Mode::Toc, _) => {
+            let total = app.outline.entries.len();
+            (format!("contents · {}/{}", (app.outline.selected + 1).min(total), total), Element::Status)
+        }
         (_, Status::Error(error)) => (error.clone(), Element::StatusError),
         (_, Status::Notice(notice)) => (notice.clone(), Element::StatusNotice),
         (_, Status::Idle) => {
@@ -199,6 +209,51 @@ fn help(area: Rect, buf: &mut Buffer, app: &App) {
             buf.set_stringn(x, y, action, (inner.right() - x) as usize, app.theme.style(Element::Hint));
         }
     }
+}
+
+fn toc(area: Rect, buf: &mut Buffer, app: &App) {
+    let popup = toc_area(area, app.outline.entries.len());
+    if popup.height == 0 || popup.width == 0 {
+        return;
+    }
+    Clear.render(popup, buf);
+
+    let border = Style::default().fg(app.theme.palette.accent);
+    let block = Block::bordered().title(" Contents ").style(app.theme.style(Element::HelpWindow)).border_style(border);
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+
+    let outline = &app.outline;
+    for (row, entry) in outline.entries.iter().skip(outline.top).take(inner.height as usize).enumerate() {
+        let y = inner.y + row as u16;
+        let picked = outline.top + row == outline.selected;
+        if picked {
+            buf.set_style(Rect::new(inner.x, y, inner.width, 1), app.theme.style(Element::CursorLine));
+        }
+
+        let marker = if picked { CHEVRON } else { " " };
+        buf.set_stringn(inner.x, y, marker, inner.width as usize, app.theme.style(Element::Hint));
+
+        let indent = usize::from(entry.level.saturating_sub(1)) * TOC_INDENT;
+        let x = inner.x + CHEVRON_COLUMN + indent as u16;
+        if x < inner.right() {
+            buf.set_stringn(x, y, &entry.text, (inner.right() - x) as usize, app.theme.style(Element::HeaderTitle));
+        }
+    }
+}
+
+pub(crate) fn toc_inner(area: Rect, entries: usize) -> Rect {
+    Block::bordered().inner(toc_area(area, entries))
+}
+
+fn toc_area(area: Rect, entries: usize) -> Rect {
+    let share = |whole: u16, (numerator, denominator): (u32, u32)| (u32::from(whole) * numerator / denominator) as u16;
+
+    let width = share(area.width, HELP_WIDTH).min(area.width);
+    let wanted = u16::try_from(entries).unwrap_or(u16::MAX).saturating_add(2);
+    let height = wanted.clamp(share(area.height, HELP_FLOOR), share(area.height, HELP_CEILING)).min(area.height);
+
+    Rect { x: area.x + (area.width - width) / 2, y: area.y + (area.height - height) / 2, width, height }
 }
 
 fn help_area(area: Rect) -> Rect {
@@ -476,8 +531,8 @@ mod tests {
         let popup = help_area(area);
         assert_eq!(popup.width, 60);
         assert_eq!(popup.x, 20, "centred");
-        assert_eq!(popup.height, 18);
-        assert_eq!(popup.y, 11, "centred");
+        assert_eq!(popup.height, 19);
+        assert_eq!(popup.y, 10, "centred");
     }
 
     #[test]
@@ -509,6 +564,127 @@ mod tests {
             let popup = help_area(Rect::new(0, 0, 4, height));
             assert!(popup.bottom() <= height, "{popup:?} escapes a {height}-row terminal");
         }
+    }
+
+    fn sections() -> String {
+        (1..=12).map(|n| format!("## Section {n}\n\n{}", "filler\n\n".repeat(2))).collect()
+    }
+
+    #[test]
+    fn the_contents_overlay_lists_the_headings_and_marks_the_selected_one() {
+        let size = Size::new(100, 24);
+        let mut app = app(&sections(), size);
+        app.apply(Action::ToggleToc);
+
+        let buffer = frame(&app, size);
+        let text: String = (0..size.height).map(|y| row(&buffer, y)).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("Contents"), "{text}");
+        assert!(text.contains("Section 1"), "{text}");
+        assert!(text.contains(CHEVRON), "{text}");
+    }
+
+    #[test]
+    fn the_chevron_and_the_highlight_are_on_the_selected_row_and_move_with_it() {
+        let size = Size::new(100, 24);
+        let mut app = app(&sections(), size);
+        app.apply(Action::ToggleToc);
+
+        let inner = toc_inner(Rect::new(0, 0, size.width, size.height), app.outline.entries.len());
+        let picked = app.theme.style(Element::CursorLine).bg.expect("a background");
+
+        let buffer = frame(&app, size);
+        assert_eq!(buffer[(inner.x, inner.y)].symbol(), CHEVRON);
+        assert_eq!(buffer[(inner.x, inner.y)].bg, picked);
+        assert_ne!(buffer[(inner.x, inner.y + 1)].bg, picked);
+
+        app.apply(Action::TocMove(Motion::Line(1)));
+        let buffer = frame(&app, size);
+        assert_eq!(buffer[(inner.x, inner.y + 1)].symbol(), CHEVRON);
+        assert_eq!(buffer[(inner.x, inner.y + 1)].bg, picked);
+        assert_ne!(buffer[(inner.x, inner.y)].bg, picked);
+    }
+
+    #[test]
+    fn a_deeper_heading_is_indented_under_a_shallower_one() {
+        let size = Size::new(100, 24);
+        let mut app = app("# One\n\n### Three\n", size);
+        app.apply(Action::ToggleToc);
+
+        let inner = toc_inner(Rect::new(0, 0, size.width, size.height), app.outline.entries.len());
+        let buffer = frame(&app, size);
+        let at = |y: u16| row(&buffer, y);
+
+        let column = |y: u16, needle: &str| {
+            let line = at(y);
+            line[..line.find(needle).expect(needle)].chars().count()
+        };
+
+        let shallow = column(inner.y, "One");
+        let deep = column(inner.y + 1, "Three");
+        assert_eq!(deep - shallow, 2 * TOC_INDENT, "two levels deeper is two indents in");
+    }
+
+    #[test]
+    fn the_listing_scrolls_rather_than_dropping_the_headings_past_the_box() {
+        let size = Size::new(100, 12);
+        let mut app = app(&sections(), size);
+        app.apply(Action::ToggleToc);
+        app.apply(Action::TocMove(Motion::Bottom));
+
+        let inner = toc_inner(Rect::new(0, 0, size.width, size.height), app.outline.entries.len());
+        let buffer = frame(&app, size);
+        let listing: Vec<String> = (inner.y..inner.bottom())
+            .map(|y| row(&buffer, y).chars().skip(inner.x as usize).take(inner.width as usize).collect())
+            .collect();
+
+        assert!(listing.last().expect("a row").contains("Section 12"), "the last heading is in view: {listing:?}");
+        assert!(!listing.iter().any(|row| row.contains("Section 1 ")), "and the first has scrolled out: {listing:?}");
+    }
+
+    #[test]
+    fn the_statusbar_counts_the_headings_while_the_listing_is_open() {
+        let size = Size::new(60, 24);
+        let mut app = app(&sections(), size);
+        app.apply(Action::ToggleToc);
+        app.apply(Action::TocMove(Motion::Line(2)));
+
+        let buffer = frame(&app, size);
+        assert!(row(&buffer, size.height - 1).starts_with("contents · 3/12"), "{:?}", row(&buffer, size.height - 1));
+    }
+
+    #[test]
+    fn the_contents_overlay_takes_three_fifths_of_the_width_and_sits_in_the_middle() {
+        let popup = toc_area(Rect::new(0, 0, 100, 40), 17);
+        assert_eq!(popup.width, 60);
+        assert_eq!(popup.x, 20, "centred");
+        assert_eq!(popup.height, 19);
+        assert_eq!(popup.y, 10, "centred");
+    }
+
+    #[test]
+    fn a_terminal_too_short_for_the_chrome_draws_the_listing_it_can_and_does_not_panic() {
+        for height in 0..=6 {
+            for width in [0, 1, 2, 3, 60] {
+                let size = Size::new(width, height);
+                let mut app = app(&sections(), size);
+                app.apply(Action::ToggleToc);
+                frame(&app, size);
+            }
+        }
+    }
+
+    #[test]
+    fn the_contents_overlay_draws_nothing_rather_than_outside_itself_when_there_is_no_room() {
+        for height in 0..=2 {
+            let popup = toc_area(Rect::new(0, 0, 4, height), 12);
+            assert!(popup.bottom() <= height, "{popup:?} escapes a {height}-row terminal");
+        }
+    }
+
+    #[test]
+    fn a_document_with_more_headings_than_a_u16_does_not_overflow_the_box() {
+        let popup = toc_area(Rect::new(0, 0, 300, 30000), usize::MAX);
+        assert!(popup.height <= 30000);
     }
 
     #[test]
@@ -649,7 +825,7 @@ mod tests {
 
     #[test]
     fn the_help_overlay_lists_every_binding_the_readme_names() {
-        for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "h / Backspace, l", "Left drag"] {
+        for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "h / Backspace, l", "t", "Left drag"] {
             assert!(HELP.iter().any(|(row, _)| *row == key), "{key} is not in the help table");
         }
     }
