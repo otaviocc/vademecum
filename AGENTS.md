@@ -429,6 +429,20 @@ review the `insta` snapshot diff deliberately; never `--accept` blindly).
   **default branch**. A release workflow therefore cannot be rehearsed from its
   own PR: merge it first — which is safe, since it answers only to tags and
   manual runs — then dispatch from `main`.
+- A version number in an issue is not a fix; `runs.using` in the action's own
+  `action.yml` at that tag is. #91 prescribed `@v5` for the Node 20 deprecation,
+  but only `checkout@v5` is `node24` — `upload-artifact@v5` and
+  `download-artifact@v5` still declare `node20`, and `download-artifact` needed
+  `@v8`. Read it before believing a bump:
+  `gh api "repos/actions/<a>/contents/action.yml?ref=<tag>" --jq .content | base64 -d | grep using`.
+  Quote that URL in zsh, or the `?` globs and the call fails as "no matches".
+  `upload-artifact` and `download-artifact` move **together**: the upload major
+  that adds unzipped uploads and the download major that stops assuming a zip
+  are a matched pair, and only the latter runs in the tag-only `github release`
+  job, so a PR cannot prove it — the next real tag does.
+  The proof is zero annotations, not a green run: the jobs were always green,
+  since GitHub was force-running Node 24 anyway. Count them per job with
+  `gh api repos/OWNER/REPO/check-runs/<id>/annotations --jq length`.
 - GitHub skips any job whose `needs` were skipped. Gating a job on
   `github.event_name == 'push'` to make it tag-only will silently skip the whole
   chain behind it and report the run as successful. Put the condition on the
