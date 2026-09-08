@@ -114,10 +114,17 @@ jobs:
         run: |
           set -euo pipefail
           staging="vademecum-${{ needs.verify.outputs.version }}-${{ matrix.name }}"
-          mkdir -p "dist/$staging"
+          mkdir -p "dist/$staging/completions"
           cp "target/${{ matrix.target }}/release/vademecum" "dist/$staging/"
           cp README.md LICENSE "dist/$staging/"
           chmod +x "dist/$staging/vademecum"
+          # Every matrix entry builds natively, so the binary just built can
+          # describe itself. See README -> Shell completions.
+          binary="dist/$staging/vademecum"
+          "$binary" --man > "dist/$staging/vademecum.1"
+          for shell in bash zsh fish; do
+            "$binary" --completions "$shell" > "dist/$staging/completions/vademecum.$shell"
+          done
           tar -czf "dist/$staging.tar.gz" -C dist "$staging"
 
       - name: Archive (zip)
@@ -125,9 +132,13 @@ jobs:
         shell: pwsh
         run: |
           $staging = "vademecum-${{ needs.verify.outputs.version }}-${{ matrix.name }}"
-          New-Item -ItemType Directory -Path "dist/$staging" -Force | Out-Null
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Path "dist/$staging/completions" -Force | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/vademecum.exe" "dist/$staging/"
           Copy-Item README.md, LICENSE "dist/$staging/"
+          $binary = "dist/$staging/vademecum.exe"
+          & $binary --man | Out-File -Encoding utf8 "dist/$staging/vademecum.1"
+          & $binary --completions powershell | Out-File -Encoding utf8 "dist/$staging/completions/vademecum.ps1"
           Compress-Archive -Path "dist/$staging" -DestinationPath "dist/$staging.zip"
 
       - uses: actions/upload-artifact@v4
@@ -195,9 +206,10 @@ jobs:
           cargo install vademecum --locked
           \`\`\`
 
-          Or take one of the archives below — each holds the binary, the README
-          and the licence. The macOS archive is a universal binary, so there is
-          nothing to choose between Intel and Apple silicon.
+          Or take one of the archives below — each holds the binary, the README,
+          the licence, a man page and shell completions. The macOS archive is a
+          universal binary, so there is nothing to choose between Intel and
+          Apple silicon.
 
           | Platform | Archive |
           | --- | --- |

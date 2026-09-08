@@ -48,6 +48,21 @@ and put the binary on your `PATH`.
 
 The macOS build is a universal binary, so there is nothing to choose between.
 
+### Shell completions and a man page
+
+The binary describes itself, so this works however you installed it:
+
+```sh
+vademecum --completions zsh  > ~/.zfunc/_vademecum          # or bash, fish, powershell, elvish
+vademecum --man              > ~/.local/share/man/man1/vademecum.1
+```
+
+The prebuilt archives already carry both — `vademecum.1` and a `completions/`
+directory — so there is nothing to generate if you took one of those.
+
+Both flags are hidden from `--help`, which is about reading Markdown rather than
+packaging.
+
 ### From source
 
 ```sh
