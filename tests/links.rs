@@ -41,6 +41,28 @@ fn kind<'a>(report: &'a str, destination: &str) -> &'a str {
     entry(report, destination).0
 }
 
+fn outside_a_vault(files: &[&str]) -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("a temporary directory");
+    for file in files {
+        let path = root.path().join(file);
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("a directory");
+        std::fs::write(&path, "[[beside]]\n[[buried]]\n[[deep/buried]]\n").expect("a file");
+    }
+    root
+}
+
+#[test]
+fn outside_a_vault_only_the_documents_own_folder_is_searched() {
+    let root = outside_a_vault(&["note.md", "beside.md", "deep/buried.md"]);
+    let note = root.path().join("note.md");
+
+    let report = resolve_from(&root.path().to_string_lossy(), &[&note.to_string_lossy()]);
+
+    assert_ne!(target(&report, "beside"), "(broken)", "a note beside the document must resolve:\n{report}");
+    assert_eq!(target(&report, "buried"), "(broken)", "a subdirectory must not be searched:\n{report}");
+    assert_ne!(target(&report, "deep/buried"), "(broken)", "a relative target must resolve:\n{report}");
+}
+
 #[test]
 fn a_percent_encoded_destination_resolves_to_the_file_it_names() {
     let report = resolve(&["tests/fixtures/vault/index.md"]);

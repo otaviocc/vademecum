@@ -234,9 +234,20 @@ everything up to the publish.
 - A raw string in a test containing a hex colour needs `r##"…"##`: `"#` closes
   `r#"…"#`, so `accent = "#ff0000"` ends the literal early and the error points
   at the Rust rather than the string.
-- Do **not** time `layout::render` through the layout tests' `detached()`
-  helper: it roots the vault at `.`, so resolving the first wikilink walks the
-  whole crate, `target/` included (~110ms here). Time the binary instead.
+- The layout tests' `detached()` helper roots the vault at `.`, which used to
+  mean a missing wikilink walked the whole crate, `target/` included (~110ms).
+  Since #103 a document outside a vault indexes only its own directory, so that
+  is one `read_dir` of the crate root and the footgun is gone. Timing through
+  `detached()` is still worth avoiding on principle, but it no longer lies by
+  two orders of magnitude.
+- **A vault is opt-in, and the tests must say which they are.** `folder()` in
+  `src/markdown/links.rs` builds a directory, `vault()` builds one with
+  `.obsidian/` in it. Before #103 there was only `vault()` and it created the
+  marker *only if a test listed it* — so fourteen tests named for vault
+  behaviour (symlinks, ambiguity, the dedupe, the whole invalidate cycle) were
+  quietly leaning on the unbounded fallback and stopped testing their own names
+  the moment it was bounded. Reach for `folder()` only when the point is the
+  outside-a-vault rule.
 
 ## 8. Smoke-testing the TUI
 

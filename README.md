@@ -226,22 +226,33 @@ Images and footnote references are not links: they are rendered as text, so
 
 ### How a target is found
 
-A target is looked for beside the current document first, then anywhere under
-the **vault root**. The root is the nearest ancestor directory containing
-`.obsidian/`; `--root <dir>` names one instead, and with neither the root is
-simply the document's own directory.
+A target is looked for beside the current document first, and then how much
+further vademecum looks depends on whether you are **in a vault**.
 
-The vault index holds `.md` files only, keyed by filename without the
-extension and matched case-insensitively — so `[[Note]]` finds `note.md`, and
+You are in a vault when some ancestor directory holds `.obsidian/`, or when you
+say so with `--root <dir>`. That directory is the root, and a target is looked
+for anywhere beneath it.
+
+Outside a vault, nothing is searched: a target resolves beside the document, or
+relative to it, and otherwise renders as broken. `[[note]]` finds `note.md` in
+the same folder and `[[sub/deep]]` finds `sub/deep.md`, but `[[deep]]` does not
+go looking in `sub/`. This is deliberate — reading a note in your home
+directory should not index your home directory — and `--root` is how you ask
+for more.
+
+The index holds `.md` files only, keyed by filename without the extension and
+matched case-insensitively — so `[[Note]]` finds `note.md`, and
 `[[diagram.png]]` will not resolve however the file is spelled. A target
-written with an extension is tried as written before `.md` is appended.
-Hidden directories are skipped; symlinked ones are followed, so a shared folder
-linked into your notes works, and a file reachable under two names counts once.
+written with an extension is tried as written before `.md` is appended. In a
+vault, hidden directories are skipped; symlinked ones are followed, so a shared
+folder linked into your notes works, and a file reachable under two names counts
+once.
 
 Two different files of the same name are reported as ambiguous rather than
-guessed at, and a link that resolves to nothing renders struck through. A
-`--root` that does not exist, or that is a file, is an error before anything is
-rendered.
+guessed at — which in practice only happens in a vault, since outside one there
+is a single folder to be ambiguous within. A link that resolves to nothing
+renders struck through. A `--root` that does not exist, or that is a file, is an
+error before anything is rendered.
 
 The vault in this repository has one of each case:
 
@@ -298,7 +309,8 @@ on the line you were reading. Edit in one window, read in the other.
 It watches the file's *directory* rather than the file, because editors save by
 renaming a new file into place — so a document you delete and restore comes back
 on its own, and a note you create elsewhere in the vault stops being a broken
-link without a restart.
+link without a restart (in a vault; outside one, only the document's own folder
+is ever consulted).
 
 ## Themes
 

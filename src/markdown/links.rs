@@ -172,17 +172,27 @@ pub enum ResolveError {
 
 type Index = HashMap<String, Vec<PathBuf>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Tree,
+    Directory,
+}
+
 #[derive(Debug)]
 pub struct Vault {
     root: PathBuf,
+    scope: Scope,
     index: RwLock<Option<Arc<Index>>>,
     stale: AtomicBool,
 }
 
 impl Vault {
     pub fn discover(explicit: Option<&Path>, base_dir: &Path) -> Self {
-        let root = explicit.map(Path::to_path_buf).unwrap_or_else(|| marked_root(base_dir));
-        Self { root, index: RwLock::new(None), stale: AtomicBool::new(false) }
+        let (root, scope) = match explicit {
+            Some(root) => (root.to_path_buf(), Scope::Tree),
+            None => marked_root(base_dir),
+        };
+        Self { root, scope, index: RwLock::new(None), stale: AtomicBool::new(false) }
     }
 
     pub fn invalidate(&self) {
@@ -241,7 +251,7 @@ impl Vault {
 
     fn rebuild(&self) -> Arc<Index> {
         let mut index = Index::new();
-        walk(&self.root, &mut index, &mut HashSet::new());
+        walk(&self.root, self.scope, &mut index, &mut HashSet::new());
         for paths in index.values_mut() {
             paths.sort();
             let mut seen = HashSet::new();
@@ -255,23 +265,23 @@ impl Vault {
     }
 }
 
-fn marked_root(base_dir: &Path) -> PathBuf {
+fn marked_root(base_dir: &Path) -> (PathBuf, Scope) {
     let absolute = match base_dir.is_absolute() {
         true => normalize(base_dir),
         false => match std::env::current_dir() {
             Ok(working) => normalize(&working.join(base_dir)),
-            Err(_) => return base_dir.to_path_buf(),
+            Err(_) => return (base_dir.to_path_buf(), Scope::Directory),
         },
     };
 
     let Some(depth) = absolute.ancestors().position(|dir| dir.join(".obsidian").is_dir()) else {
-        return base_dir.to_path_buf();
+        return (base_dir.to_path_buf(), Scope::Directory);
     };
     let mut root = base_dir.to_path_buf();
     for _ in 0..depth {
         root.push("..");
     }
-    normalize(&root)
+    (normalize(&root), Scope::Tree)
 }
 
 fn local_candidates(path: &Path) -> Vec<PathBuf> {
@@ -308,7 +318,7 @@ fn percent_decode(destination: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
-fn walk(dir: &Path, index: &mut HashMap<String, Vec<PathBuf>>, visited: &mut HashSet<PathBuf>) {
+fn walk(dir: &Path, scope: Scope, index: &mut HashMap<String, Vec<PathBuf>>, visited: &mut HashSet<PathBuf>) {
     let Ok(real) = dir.canonicalize() else { return };
     if !visited.insert(real) {
         return;
@@ -326,7 +336,9 @@ fn walk(dir: &Path, index: &mut HashMap<String, Vec<PathBuf>>, visited: &mut Has
         let path = entry.path();
         let Ok(kind) = std::fs::metadata(&path) else { continue };
         if kind.is_dir() {
-            walk(&path, index, visited);
+            if scope == Scope::Tree {
+                walk(&path, scope, index, visited);
+            }
         } else if kind.is_file()
             && path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
             && let Some(stem) = path.file_stem()
@@ -423,6 +435,12 @@ mod tests {
     }
 
     fn vault(paths: &[&str]) -> tempfile::TempDir {
+        let root = folder(paths);
+        std::fs::create_dir_all(root.path().join(".obsidian")).expect("the vault marker");
+        root
+    }
+
+    fn folder(paths: &[&str]) -> tempfile::TempDir {
         let root = tempfile::tempdir().expect("a temporary directory");
         for path in paths {
             let full = root.path().join(path);
@@ -684,10 +702,70 @@ mod tests {
     }
 
     #[test]
-    fn without_a_marker_the_vault_is_the_document_s_own_directory() {
-        let root = vault(&["index.md", "deep/here.md"]);
-        assert_eq!(wiki_link(root.path(), "deep/here.md", "index"), Err(ResolveError::NotFound("index".into())));
+    fn outside_a_vault_a_name_beside_the_document_resolves() {
+        let root = folder(&["index.md", "note.md"]);
+        let path = root.path();
+        assert_eq!(wiki_link(path, "index.md", "note"), Ok(Target::File(path.join("note.md"))));
     }
+
+    #[test]
+    fn outside_a_vault_a_name_is_still_matched_without_regard_to_case() {
+        let root = folder(&["index.md", "Note.md"]);
+        let path = root.path();
+        let Ok(Target::File(found)) = wiki_link(path, "index.md", "note") else {
+            panic!("[[note]] did not find Note.md beside the document");
+        };
+        assert_eq!(
+            found.canonicalize().expect("the target exists"),
+            path.join("Note.md").canonicalize().expect("the fixture exists"),
+            "a case-insensitive filesystem reports the spelling that was asked for, so compare the files"
+        );
+    }
+
+    #[test]
+    fn outside_a_vault_a_relative_target_resolves_against_the_document() {
+        let root = folder(&["index.md", "deep/down/target.md"]);
+        let path = root.path();
+        assert_eq!(wiki_link(path, "index.md", "deep/down/target"), Ok(Target::File(path.join("deep/down/target.md"))));
+    }
+
+    #[test]
+    fn outside_a_vault_a_name_in_a_subdirectory_is_not_searched_for() {
+        let root = folder(&["index.md", "deep/target.md"]);
+        assert_eq!(wiki_link(root.path(), "index.md", "target"), Err(ResolveError::NotFound("target".into())));
+    }
+
+    #[test]
+    fn outside_a_vault_a_subdirectory_is_never_read() {
+        let root = folder(&["index.md"]);
+        let unreadable = root.path().join("locked");
+        std::fs::create_dir(&unreadable).expect("a directory");
+        std::fs::write(unreadable.join("target.md"), "# heading\n").expect("a file");
+        deny(&unreadable);
+
+        let answer = wiki_link(root.path(), "index.md", "target");
+
+        allow(&unreadable);
+        assert_eq!(answer, Err(ResolveError::NotFound("target".into())), "the walk descended into a directory it must not read");
+    }
+
+    #[cfg(unix)]
+    fn deny(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).expect("permissions");
+    }
+
+    #[cfg(unix)]
+    fn allow(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).expect("permissions");
+    }
+
+    #[cfg(not(unix))]
+    fn deny(_dir: &Path) {}
+
+    #[cfg(not(unix))]
+    fn allow(_dir: &Path) {}
 
     #[test]
     fn an_explicit_root_is_taken_over_the_marker() {
