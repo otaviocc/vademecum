@@ -27,6 +27,11 @@ pub enum Action {
     Resize(Size),
     ToggleHelp,
     ToggleToc,
+    ToggleProperties,
+    PropertiesMove(Motion),
+    PropertiesScroll(isize),
+    PropertiesClick { row: u16 },
+    PropertiesYank,
     TocMove(Motion),
     TocScroll(isize),
     TocSelect,
@@ -64,6 +69,7 @@ fn key_action(key: KeyEvent, mode: Mode) -> Option<Action> {
         Mode::Browse => browse(key),
         Mode::Search => typing(key),
         Mode::Toc => contents(key),
+        Mode::Properties => sheet(key),
         Mode::Help => overlay(key),
     }
 }
@@ -102,6 +108,7 @@ fn browse(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('N') => Some(Action::SearchStep { forward: false }),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         KeyCode::Char('t') => Some(Action::ToggleToc),
+        KeyCode::Char('p') => Some(Action::ToggleProperties),
         KeyCode::Esc => Some(Action::Dismiss),
         KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
@@ -148,6 +155,33 @@ fn contents(key: KeyEvent) -> Option<Action> {
     }
 }
 
+fn sheet(key: KeyEvent) -> Option<Action> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match key.code {
+            KeyCode::Char('d') => Some(Action::PropertiesMove(Motion::HalfPage(1))),
+            KeyCode::Char('u') => Some(Action::PropertiesMove(Motion::HalfPage(-1))),
+            _ => None,
+        };
+    }
+    if key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER) {
+        return None;
+    }
+
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Some(Action::PropertiesMove(Motion::Line(1))),
+        KeyCode::Char('k') | KeyCode::Up => Some(Action::PropertiesMove(Motion::Line(-1))),
+        KeyCode::Char('d') => Some(Action::PropertiesMove(Motion::HalfPage(1))),
+        KeyCode::Char('u') => Some(Action::PropertiesMove(Motion::HalfPage(-1))),
+        KeyCode::Char(' ') | KeyCode::PageDown => Some(Action::PropertiesMove(Motion::Page(1))),
+        KeyCode::Char('b') | KeyCode::PageUp => Some(Action::PropertiesMove(Motion::Page(-1))),
+        KeyCode::Char('g') | KeyCode::Home => Some(Action::PropertiesMove(Motion::Top)),
+        KeyCode::Char('G') | KeyCode::End => Some(Action::PropertiesMove(Motion::Bottom)),
+        KeyCode::Char('y') => Some(Action::PropertiesYank),
+        KeyCode::Char('p') | KeyCode::Char('q') | KeyCode::Esc => Some(Action::ToggleProperties),
+        _ => None,
+    }
+}
+
 fn overlay(key: KeyEvent) -> Option<Action> {
     if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
         return None;
@@ -159,6 +193,14 @@ fn overlay(key: KeyEvent) -> Option<Action> {
 }
 
 fn mouse_action(mouse: MouseEvent, mode: Mode) -> Option<Action> {
+    if mode == Mode::Properties {
+        return match mouse.kind {
+            MouseEventKind::ScrollDown => Some(Action::PropertiesScroll(WHEEL_LINES)),
+            MouseEventKind::ScrollUp => Some(Action::PropertiesScroll(-WHEEL_LINES)),
+            MouseEventKind::Up(MouseButton::Left) => Some(Action::PropertiesClick { row: mouse.row }),
+            _ => None,
+        };
+    }
     if mode == Mode::Toc {
         return match mouse.kind {
             MouseEventKind::ScrollDown => Some(Action::TocScroll(WHEEL_LINES)),
@@ -324,7 +366,7 @@ mod tests {
 
     #[test]
     fn a_resize_reaches_the_pager_in_every_mode() {
-        for mode in [Mode::Browse, Mode::Search, Mode::Toc, Mode::Help] {
+        for mode in [Mode::Browse, Mode::Search, Mode::Toc, Mode::Properties, Mode::Help] {
             assert_eq!(action(&Event::Resize(80, 24), mode), Some(Action::Resize(Size::new(80, 24))), "{mode:?}");
         }
     }
@@ -387,9 +429,61 @@ mod tests {
 
     #[test]
     fn ctrl_c_quits_from_anywhere() {
-        for mode in [Mode::Browse, Mode::Search, Mode::Toc, Mode::Help] {
+        for mode in [Mode::Browse, Mode::Search, Mode::Toc, Mode::Properties, Mode::Help] {
             assert_eq!(action(&control('c'), mode), Some(Action::Quit), "{mode:?}");
         }
+    }
+
+    #[test]
+    fn the_properties_window_answers_to_the_keys_that_walk_it() {
+        let cases = [
+            (press(KeyCode::Char('j')), Action::PropertiesMove(Motion::Line(1))),
+            (press(KeyCode::Down), Action::PropertiesMove(Motion::Line(1))),
+            (press(KeyCode::Char('k')), Action::PropertiesMove(Motion::Line(-1))),
+            (press(KeyCode::Up), Action::PropertiesMove(Motion::Line(-1))),
+            (press(KeyCode::Char('d')), Action::PropertiesMove(Motion::HalfPage(1))),
+            (control('d'), Action::PropertiesMove(Motion::HalfPage(1))),
+            (press(KeyCode::Char('u')), Action::PropertiesMove(Motion::HalfPage(-1))),
+            (press(KeyCode::Char(' ')), Action::PropertiesMove(Motion::Page(1))),
+            (press(KeyCode::Char('b')), Action::PropertiesMove(Motion::Page(-1))),
+            (press(KeyCode::Char('g')), Action::PropertiesMove(Motion::Top)),
+            (press(KeyCode::Char('G')), Action::PropertiesMove(Motion::Bottom)),
+            (press(KeyCode::Char('y')), Action::PropertiesYank),
+            (press(KeyCode::Char('p')), Action::ToggleProperties),
+            (press(KeyCode::Char('q')), Action::ToggleProperties),
+            (press(KeyCode::Esc), Action::ToggleProperties),
+        ];
+        for (event, expected) in cases {
+            assert_eq!(action(&event, Mode::Properties), Some(expected), "{event:?}");
+        }
+    }
+
+    #[test]
+    fn the_properties_window_answers_to_nothing_that_would_move_the_document() {
+        for code in [KeyCode::Char('o'), KeyCode::Char('h'), KeyCode::Char('/'), KeyCode::Tab, KeyCode::Enter] {
+            assert_eq!(action(&press(code), Mode::Properties), None, "{code:?}");
+        }
+    }
+
+    #[test]
+    fn the_wheel_and_a_click_walk_the_properties_window_rather_than_the_document() {
+        assert_eq!(action(&wheel(MouseEventKind::ScrollDown), Mode::Properties), Some(Action::PropertiesScroll(WHEEL_LINES)));
+        assert_eq!(action(&wheel(MouseEventKind::ScrollUp), Mode::Properties), Some(Action::PropertiesScroll(-WHEEL_LINES)));
+        let release = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 4,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(action(&release, Mode::Properties), Some(Action::PropertiesClick { row: 7 }));
+    }
+
+    #[test]
+    fn p_opens_the_properties_while_browsing_and_is_text_while_typing() {
+        assert_eq!(browsing(&press(KeyCode::Char('p'))), Some(Action::ToggleProperties));
+        assert_eq!(action(&press(KeyCode::Char('p')), Mode::Search), Some(Action::SearchType('p')));
+        assert_eq!(action(&press(KeyCode::Char('p')), Mode::Toc), None);
+        assert_eq!(action(&press(KeyCode::Char('p')), Mode::Help), None);
     }
 
     #[test]

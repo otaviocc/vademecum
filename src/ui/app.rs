@@ -15,6 +15,7 @@ use crate::theme::Theme;
 use crate::ui::Options;
 use crate::ui::input::{Action, Motion};
 use crate::ui::outline::{self, Outline};
+use crate::ui::properties::Properties;
 use crate::ui::search::{self, Search};
 use crate::ui::view;
 
@@ -28,6 +29,7 @@ pub enum Mode {
     Browse,
     Search,
     Toc,
+    Properties,
     Help,
 }
 
@@ -90,6 +92,7 @@ pub struct App {
     pub status: Status,
     pub search: Search,
     pub outline: Outline,
+    pub properties: Properties,
     plain: Option<Vec<String>>,
     pub title: String,
     pub file: String,
@@ -111,6 +114,7 @@ impl App {
         let width = layout::wrap_width(width_override, Some(area.width));
         let lines = layout::render(&blocks, &Ctx::new(&theme, &links), width);
         let outline = Outline { entries: outline::build(&blocks, &lines), selected: 0, top: 0 };
+        let properties = Properties::of(&links.document);
         let status = complaint().unwrap_or_default();
 
         Self {
@@ -128,6 +132,7 @@ impl App {
             status,
             search: Search::default(),
             outline,
+            properties,
             plain: None,
             title,
             file,
@@ -172,6 +177,11 @@ impl App {
             Action::Reload => self.reload(),
             Action::ToggleHelp => self.mode = if self.mode == Mode::Help { Mode::Browse } else { Mode::Help },
             Action::ToggleToc => self.toggle_toc(),
+            Action::ToggleProperties => self.toggle_properties(),
+            Action::PropertiesMove(motion) => self.properties.move_by(motion, self.properties_height()),
+            Action::PropertiesScroll(delta) => self.properties.scroll(delta, self.properties_height()),
+            Action::PropertiesClick { row } => self.pick_property(row),
+            Action::PropertiesYank => self.yank_property(),
             Action::TocMove(motion) => self.outline.move_by(motion, self.toc_height()),
             Action::TocScroll(delta) => self.outline.scroll(delta, self.toc_height()),
             Action::TocSelect => self.pick_heading(None),
@@ -356,6 +366,7 @@ impl App {
         self.outline.entries = outline::build(&self.blocks, &self.lines);
         self.outline.selected = 0;
         self.outline.top = 0;
+        self.properties = Properties::of(&self.links.document);
     }
 
     fn toc_view(&self) -> Rect {
@@ -370,6 +381,50 @@ impl App {
     fn toc_row(&self, row: u16) -> Option<usize> {
         let inner = self.toc_view();
         (row >= inner.y && row < inner.bottom()).then(|| usize::from(row - inner.y))
+    }
+
+    fn properties_view(&self) -> Rect {
+        let area = Rect::new(0, 0, self.area.width, self.area.height);
+        view::properties_inner(area, self.properties.rows.len())
+    }
+
+    pub fn properties_height(&self) -> usize {
+        usize::from(self.properties_view().height).max(1)
+    }
+
+    fn properties_row(&self, row: u16) -> Option<usize> {
+        let inner = self.properties_view();
+        (row >= inner.y && row < inner.bottom()).then(|| usize::from(row - inner.y))
+    }
+
+    fn toggle_properties(&mut self) {
+        if self.mode == Mode::Properties {
+            self.mode = Mode::Browse;
+            return;
+        }
+        if self.properties.is_empty() {
+            self.status = Status::Notice(String::from("no properties in this document"));
+            return;
+        }
+        self.mode = Mode::Properties;
+    }
+
+    fn pick_property(&mut self, row: u16) {
+        let Some(row) = self.properties_row(row) else {
+            self.mode = Mode::Browse;
+            return;
+        };
+        self.properties.pick(row);
+    }
+
+    fn yank_property(&mut self) {
+        let Some(row) = self.properties.selected() else { return };
+        let (key, value) = (row.key.clone(), row.value.clone());
+        let notice = match key.is_empty() {
+            true => String::from("Copied the line"),
+            false => format!("Copied {key}"),
+        };
+        self.copy(value, notice);
     }
 
     fn toggle_toc(&mut self) {
@@ -729,6 +784,101 @@ mod tests {
     fn app(source: &str, height: u16) -> App {
         let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), source.to_string());
         App::new(document, Theme::default(), &Options { width: Some(40), ..Options::default() }, Size::new(60, height))
+    }
+
+    fn noted(height: u16) -> App {
+        let source = format!("---\ntitle: Notes\ntags: [inbox]\ncreated: today\n---\n\n# Heading\n\n{}", numbered(40));
+        app(&source, height)
+    }
+
+    #[test]
+    fn the_properties_window_toggles_and_leaves_the_document_alone() {
+        let mut app = noted(20);
+        let lines = app.lines.clone();
+        let (cursor, top) = (app.cursor, app.top);
+
+        app.apply(Action::ToggleProperties);
+        assert_eq!(app.mode, Mode::Properties);
+        assert_eq!(app.properties.rows.len(), 3);
+        assert_eq!(app.lines, lines, "the document is not re-laid-out");
+        assert_eq!((app.cursor, app.top), (cursor, top), "and the reading position does not move");
+
+        app.apply(Action::ToggleProperties);
+        assert_eq!(app.mode, Mode::Browse);
+    }
+
+    #[test]
+    fn a_document_without_properties_says_so_rather_than_opening_an_empty_window() {
+        let mut app = app("# Heading\n\nbody\n", 20);
+
+        app.apply(Action::ToggleProperties);
+
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.status, Status::Notice(String::from("no properties in this document")));
+    }
+
+    #[test]
+    fn the_window_walks_its_rows_and_yanks_the_selected_value() {
+        let mut app = noted(20);
+        app.apply(Action::ToggleProperties);
+        app.apply(Action::PropertiesMove(Motion::Line(1)));
+
+        app.apply(Action::PropertiesYank);
+
+        assert_eq!(app.take_copy().as_deref(), Some("inbox"));
+        assert_eq!(app.status, Status::Notice(String::from("Copied tags")));
+    }
+
+    #[test]
+    fn yanking_a_verbatim_row_copies_the_line_it_could_not_read() {
+        let mut app = app("---\nthis is not a pair\n---\n\nbody\n", 20);
+        app.apply(Action::ToggleProperties);
+
+        app.apply(Action::PropertiesYank);
+
+        assert_eq!(app.take_copy().as_deref(), Some("this is not a pair"));
+    }
+
+    #[test]
+    fn a_click_in_the_window_selects_that_row_and_a_click_outside_closes_it() {
+        let mut app = noted(20);
+        app.apply(Action::ToggleProperties);
+        let inner = view::properties_inner(Rect::new(0, 0, 60, 20), app.properties.rows.len());
+
+        app.apply(Action::PropertiesClick { row: inner.y + 2 });
+        assert_eq!(app.mode, Mode::Properties);
+        assert_eq!(app.properties.selected, 2);
+
+        app.apply(Action::PropertiesClick { row: inner.bottom() });
+        assert_eq!(app.mode, Mode::Browse, "a click outside the box closes the window");
+    }
+
+    #[test]
+    fn the_properties_follow_the_document_across_a_reload() {
+        let (dir, mut app) = on_disk("---\ntitle: Notes\ntags: [inbox]\n---\n\nbody\n");
+        assert_eq!(app.properties.rows.len(), 2);
+
+        rewrite(&dir, "---\nonly: one\n---\n\nbody\n");
+        app.apply(Action::Reload);
+
+        assert_eq!(app.properties.rows.len(), 1, "the window reads the document that is there now");
+        assert_eq!(app.properties.selected().map(|row| row.key.as_str()), Some("only"));
+    }
+
+    #[test]
+    fn the_properties_follow_the_document_across_a_link() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("other.md"), "---\nonly: one\n---\n\nbody\n").expect("write");
+        let source = "---\ntitle: Notes\ntags: [inbox]\n---\n\n[other](other.md)\n";
+        std::fs::write(dir.path().join("note.md"), source).expect("write");
+        let document = Document::load(&dir.path().join("note.md")).expect("load");
+        let mut app = App::new(document, Theme::default(), &Options { width: Some(40), ..Options::default() }, Size::new(60, 14));
+        assert_eq!(app.properties.rows.len(), 2);
+
+        app.apply(Action::Focus { forward: true });
+        app.apply(Action::Follow);
+
+        assert_eq!(app.properties.rows.len(), 1, "{:?}", app.status);
     }
 
     fn paged() -> App {

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::markdown::ast::{Block, SourceBlock, plain_text};
 use crate::render::line::RenderedLine;
 use crate::ui::input::Motion;
+use crate::ui::listing;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -67,35 +68,18 @@ impl Outline {
     }
 
     pub fn move_by(&mut self, motion: Motion, height: usize) {
-        let last = self.last();
-        let height = height.max(1) as isize;
-        self.selected = match motion {
-            Motion::Line(delta) => self.step(delta),
-            Motion::HalfPage(delta) => self.step(delta * (height / 2).max(1)),
-            Motion::Page(delta) => self.step(delta * height),
-            Motion::Top => 0,
-            Motion::Bottom => last,
-        };
-        self.reveal(height as usize);
+        self.selected = listing::target(motion, self.selected, self.last(), height);
+        self.reveal(height);
     }
 
     pub fn scroll(&mut self, delta: isize, height: usize) {
-        let ceiling = self.last().saturating_sub(height.max(1) - 1);
-        self.top = self.top.saturating_add_signed(delta).min(ceiling);
-        self.snap(height);
+        self.top = listing::scrolled(self.top, delta, self.last(), height);
+        self.selected = listing::snapped(self.selected, self.top, self.last(), height);
     }
 
     pub fn pick(&mut self, row: usize) -> Option<&Entry> {
-        let index = self.top.checked_add(row)?;
-        if index > self.last() {
-            return None;
-        }
-        self.selected = index;
-        self.entries.get(index)
-    }
-
-    fn step(&self, delta: isize) -> usize {
-        self.selected.saturating_add_signed(delta).min(self.last())
+        self.selected = listing::picked(self.top, row, self.last())?;
+        self.entries.get(self.selected)
     }
 
     fn last(&self) -> usize {
@@ -103,14 +87,7 @@ impl Outline {
     }
 
     fn reveal(&mut self, height: usize) {
-        let height = height.max(1);
-        self.top = self.top.min(self.selected);
-        self.top = self.top.max(self.selected.saturating_sub(height - 1));
-    }
-
-    fn snap(&mut self, height: usize) {
-        let height = height.max(1);
-        self.selected = self.selected.clamp(self.top, (self.top + height - 1).min(self.last()));
+        self.top = listing::revealed(self.top, self.selected, height);
     }
 }
 

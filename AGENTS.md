@@ -46,6 +46,11 @@ Document (src/document.rs, file or stdin)
   per burst, and calls `drain_copy` after every **wake**.
 - `App` never writes to the terminal. A copy is left in `App::take_copy` for the
   loop to hand to `ui::clipboard`; that is what makes copying testable.
+- The pager's windows (contents, properties, help) share two things a fourth one
+  must reuse rather than copy: `ui::listing` holds selection, revealing,
+  snapping, wheel-scrolling and row hit-testing as pure functions over
+  `(selected, top, last, height)`, and `view::centred` sizes and centres the
+  popup. Both exist because the second copy was about to be written.
 - Themes are three layers in `src/theme/`: `palette` (named colour slots),
   `elements` (per-element styles), `loader` (built-ins, user file, merging).
 - `build.rs` bakes `syntaxes/*.sublime-syntax` plus syntect's defaults into a
@@ -157,6 +162,12 @@ everything up to the publish.
   demonstrates the case.
 - Every new construct, flag, or theme element needs a unit test, an entry in
   `tests/fixtures/elements.md` if it is renderable, and a snapshot update.
+- **Optional content belongs in a window, not in the document.** Anything
+  rendered into `lines` has a height, so showing or hiding it moves the body,
+  moves the reading position, and has to be reconciled with `bound`/`reveal`/
+  `snap` — #98 was built that way first and had to be rewritten. A window costs
+  none of that, leaves `render::layout` untouched (so the stdout path and its
+  snapshots cannot move), and the machinery above is already there.
 - Dependencies: add one only when it earns its place, and say why in the commit
   body.
 - UI conventions (header, hairline rules, statusbar priority, help popup)
@@ -199,6 +210,14 @@ everything up to the publish.
 - An integration assertion cannot look for a phrase that spans several styles:
   once a line is highlighted, `fn main()` has escapes inside it. Anchor on a
   substring inside one span, such as a string literal.
+- **A pager test whose fixture is shorter than the viewport cannot catch a
+  clamping bug.** `bound()` lowers `top` to 0 in a document that fits on screen,
+  so a fault that leaves the viewport pointing somewhere it should not be is
+  silently corrected. #98's first design shipped one that a reader found and CI
+  could not: the pty fixture (`tests/fixtures/frontmatter.md`, 8 lines) fits on
+  screen, and the reducer test moved into the body first, so neither exercised
+  the top of a long document — where every reader starts. Use `numbered(40)` and
+  assert from line 0 whenever a change moves `top` or `cursor`.
 - Process-global state (the highlight cache, the warning list) makes tests race
   under `cargo test`'s parallelism. **Readers** must take the lock too: a test
   asserting `Arc::ptr_eq` across two calls raced with the test that fills the

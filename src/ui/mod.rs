@@ -3,7 +3,9 @@
 pub mod app;
 pub mod clipboard;
 pub mod input;
+pub mod listing;
 pub mod outline;
+pub mod properties;
 pub mod search;
 pub mod tty;
 pub mod view;
