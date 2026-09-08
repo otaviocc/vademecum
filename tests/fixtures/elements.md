@@ -77,6 +77,23 @@ function greet(): void {
 >
 > > A nested quote, with **strong** and a [link](https://example.com) inside it.
 
+## Callouts
+
+> [!NOTE]
+> A callout, with the type as its header and the gutter in the type's colour.
+
+> [!WARNING] Check your backups
+> A callout whose author gave it a title.
+
+> [!tip]-
+> A fold marker is accepted and ignored; the callout always renders open.
+
+> [!custom]
+> An unrecognised type is still a callout, and keeps the quote gutter's colour.
+
+> > [!question] Nested?
+> > A callout inside a quote.
+
 ## Lists
 
 - A bullet item

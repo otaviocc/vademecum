@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::markdown::ast::{Alignment, Block, Inline, ListItem, SourceBlock, plain_text};
@@ -16,6 +16,8 @@ const CODE_PAD: usize = 1;
 const DEFAULT_WIDTH: usize = 100;
 const TERMINAL_MARGIN: usize = 2;
 const BULLETS: [&str; 3] = ["•", "◦", "▪"];
+const QUOTE_GUTTER: &str = "┃ ";
+const CALLOUT_SEPARATOR: &str = " · ";
 
 pub fn wrap_width(explicit: Option<u16>, columns: Option<u16>) -> usize {
     if let Some(width) = explicit {
@@ -106,7 +108,7 @@ fn block_to_lines(block: &SourceBlock, ctx: &Ctx<'_>, base: Style, width: usize,
             }
             lines
         }
-        Block::Quote(blocks) => quote_to_lines(blocks, ctx, base, width, depth),
+        Block::Quote(blocks) => quote_to_lines(blocks, ctx, base, width, depth, line),
         Block::List { ordered, items } => list_to_lines(*ordered, items, ctx, base, width, depth),
         Block::CodeBlock { lang, text } => code_to_lines(lang.as_deref(), text, ctx, width, line),
         Block::Table { header, rows, alignments } => table_to_lines(header, rows, alignments, ctx, width, line),
@@ -118,15 +120,164 @@ fn block_to_lines(block: &SourceBlock, ctx: &Ctx<'_>, base: Style, width: usize,
     }
 }
 
-fn quote_to_lines(blocks: &[SourceBlock], ctx: &Ctx<'_>, base: Style, width: usize, depth: usize) -> Vec<RenderedLine> {
-    let gutter = StyledSpan::new("┃ ", Style::default().fg(ctx.theme.palette.muted));
-    let quoted = base.patch(ctx.theme.style(Element::Quote));
+fn quote_to_lines(
+    blocks: &[SourceBlock],
+    ctx: &Ctx<'_>,
+    base: Style,
+    width: usize,
+    depth: usize,
+    source_line: usize,
+) -> Vec<RenderedLine> {
+    let mut blocks = blocks.to_vec();
+    let callout = strip_callout(&mut blocks);
+    let bar = match &callout {
+        Some(callout) => callout_style(callout.kind, ctx),
+        None => ctx.theme.style(Element::QuoteGutter),
+    };
 
-    let mut lines = blocks_to_lines(blocks, ctx, quoted, width.saturating_sub(gutter.width()).max(1), depth);
+    let gutter = StyledSpan::new(QUOTE_GUTTER, bar);
+    let quoted = base.patch(ctx.theme.style(Element::Quote));
+    let inner = width.saturating_sub(gutter.width()).max(1);
+
+    let mut lines = Vec::new();
+    if let Some(callout) = &callout {
+        lines.extend(wrap_inlines(&callout.header(), ctx, bar, inner, source_line));
+    }
+    lines.extend(blocks_to_lines(&blocks, ctx, quoted, inner, depth));
+
     for line in &mut lines {
         line.prefix(gutter.clone());
     }
     lines
+}
+
+fn callout_style(kind: Option<&str>, ctx: &Ctx<'_>) -> Style {
+    let style = ctx.theme.style(Element::Callout);
+    if style.fg.is_some() {
+        return style;
+    }
+    match kind.map(|kind| callout_color(kind, ctx)) {
+        Some(color) => style.fg(color),
+        None => style.patch(ctx.theme.style(Element::QuoteGutter)),
+    }
+}
+
+fn callout_color(kind: &str, ctx: &Ctx<'_>) -> Color {
+    let palette = &ctx.theme.palette;
+    match kind {
+        "note" | "info" => palette.highlight,
+        "tip" | "hint" | "success" | "check" | "done" => palette.success,
+        "important" | "todo" => palette.notice,
+        "question" | "help" | "faq" | "warning" | "attention" => palette.warning,
+        "failure" | "fail" | "missing" | "caution" | "danger" | "error" | "bug" => palette.error,
+        "example" | "abstract" | "summary" | "tldr" => palette.accent,
+        "quote" | "cite" => palette.muted_text,
+        _ => palette.muted_text,
+    }
+}
+
+struct Callout {
+    label: String,
+    kind: Option<&'static str>,
+    title: Vec<Inline>,
+}
+
+impl Callout {
+    fn header(&self) -> Vec<Inline> {
+        let mut header = vec![Inline::Text(self.label.to_uppercase())];
+        if !self.title.is_empty() {
+            header.push(Inline::Text(String::from(CALLOUT_SEPARATOR)));
+            header.extend(self.title.iter().cloned());
+        }
+        header
+    }
+}
+
+const CALLOUT_KINDS: [&str; 27] = [
+    "note",
+    "info",
+    "tip",
+    "hint",
+    "success",
+    "check",
+    "done",
+    "important",
+    "todo",
+    "question",
+    "help",
+    "faq",
+    "warning",
+    "attention",
+    "failure",
+    "fail",
+    "missing",
+    "caution",
+    "danger",
+    "error",
+    "bug",
+    "example",
+    "abstract",
+    "summary",
+    "tldr",
+    "quote",
+    "cite",
+];
+
+fn strip_callout(blocks: &mut Vec<SourceBlock>) -> Option<Callout> {
+    let Some(SourceBlock { block: Block::Paragraph(inlines), .. }) = blocks.first_mut() else {
+        return None;
+    };
+
+    let label = marker_label(inlines)?;
+    let lowered = label.to_lowercase();
+    let kind = CALLOUT_KINDS.into_iter().find(|known| *known == lowered);
+
+    inlines.drain(..3);
+    strip_fold_marker(inlines);
+    let end = inlines.iter().position(|inline| matches!(inline, Inline::SoftBreak | Inline::HardBreak));
+    let title: Vec<Inline> = match end {
+        Some(end) => inlines.drain(..=end).take(end).collect(),
+        None => std::mem::take(inlines),
+    };
+    let title = trimmed_title(title);
+
+    if inlines.is_empty() {
+        blocks.remove(0);
+    }
+    Some(Callout { label, kind, title })
+}
+
+fn marker_label(inlines: &[Inline]) -> Option<String> {
+    let [Inline::Text(open), Inline::Text(bang), Inline::Text(close), ..] = inlines else {
+        return None;
+    };
+    if open != "[" || !close.starts_with(']') || !matches!(close.trim_start_matches(']'), "" | "-" | "+") {
+        return None;
+    }
+    let label = bang.strip_prefix('!')?;
+    let named = !label.is_empty() && label.chars().all(|character| character.is_alphanumeric() || character == '-');
+    named.then(|| label.to_string())
+}
+
+fn strip_fold_marker(inlines: &mut Vec<Inline>) {
+    let Some(Inline::Text(text)) = inlines.first_mut() else { return };
+    if text.starts_with(['-', '+']) {
+        text.remove(0);
+    }
+    if text.is_empty() {
+        inlines.remove(0);
+    }
+}
+
+fn trimmed_title(mut title: Vec<Inline>) -> Vec<Inline> {
+    if let Some(Inline::Text(first)) = title.first_mut() {
+        let trimmed = first.trim_start().to_string();
+        *first = trimmed;
+        if first.is_empty() {
+            title.remove(0);
+        }
+    }
+    title
 }
 
 fn list_to_lines(
@@ -800,6 +951,96 @@ mod tests {
     #[test]
     fn quotes_get_a_gutter_per_level() {
         assert_eq!(bare("> a\n>\n> > b\n", 20), ["┃ a", "┃ ", "┃ ┃ b"]);
+    }
+
+    #[test]
+    fn a_callout_marker_becomes_a_header_and_leaves_the_body_alone() {
+        assert_eq!(bare("> [!NOTE]\n> Body text.\n", 30), ["┃ NOTE", "┃ Body text."]);
+    }
+
+    #[test]
+    fn a_title_on_the_marker_line_follows_the_kind() {
+        assert_eq!(bare("> [!WARNING] Check the backups\n> Body.\n", 40), ["┃ WARNING · Check the backups", "┃ Body."]);
+    }
+
+    #[test]
+    fn a_fold_marker_is_accepted_and_ignored_rather_than_shown() {
+        assert_eq!(bare("> [!tip]-\n> Folded.\n", 30), ["┃ TIP", "┃ Folded."]);
+        assert_eq!(bare("> [!tip]+ With a title\n> Body.\n", 30), ["┃ TIP · With a title", "┃ Body."]);
+    }
+
+    #[test]
+    fn an_unknown_kind_is_still_a_callout() {
+        assert_eq!(bare("> [!custom]\n> Body.\n", 30), ["┃ CUSTOM", "┃ Body."]);
+    }
+
+    #[test]
+    fn a_callout_with_nothing_after_the_marker_is_just_a_header() {
+        assert_eq!(bare("> [!NOTE]\n", 30), ["┃ NOTE"]);
+    }
+
+    #[test]
+    fn a_plain_quote_is_untouched_by_the_callout_branch() {
+        assert_eq!(bare("> A plain quote.\n", 30), ["┃ A plain quote."]);
+        assert_eq!(bare("> [not a callout]\n", 30), ["┃ [not a callout]"]);
+        assert_eq!(bare("> [!two words]\n", 30), ["┃ [!two words]"]);
+    }
+
+    #[test]
+    fn a_callout_nests_like_any_other_quote() {
+        assert_eq!(bare("> > [!tip]\n> > Nested.\n", 30), ["┃ ┃ TIP", "┃ ┃ Nested."]);
+    }
+
+    #[test]
+    fn a_known_kind_colours_the_gutter_and_the_header() {
+        let theme = Theme::default();
+        let links = detached();
+        let rendered =
+            blocks_to_lines(&parse("> [!WARNING] Careful\n"), &Ctx::new(&theme, &links), theme.style(Element::Paragraph), 40, 0);
+
+        let colors: Vec<_> = rendered[0].spans.iter().map(|span| span.style.fg).collect();
+        assert!(colors.iter().all(|fg| *fg == Some(theme.palette.warning)), "{colors:?}");
+    }
+
+    #[test]
+    fn an_unknown_kind_keeps_the_quote_gutter_colour() {
+        let theme = Theme::default();
+        let links = detached();
+        let rendered =
+            blocks_to_lines(&parse("> [!custom]\n"), &Ctx::new(&theme, &links), theme.style(Element::Paragraph), 40, 0);
+
+        assert_eq!(rendered[0].spans[0].style.fg, Some(theme.palette.muted), "the bar says the kind is unknown");
+    }
+
+    #[test]
+    fn a_callout_title_keeps_its_own_markup() {
+        let theme = Theme::default();
+        let links = detached();
+        let rendered = blocks_to_lines(
+            &parse("> [!note] With **strong**\n"),
+            &Ctx::new(&theme, &links),
+            theme.style(Element::Paragraph),
+            40,
+            0,
+        );
+
+        let bold = rendered[0].spans.iter().any(|span| span.style.add_modifier.contains(ratatui::style::Modifier::BOLD));
+        assert!(bold, "{:?}", rendered[0].text());
+    }
+
+    #[test]
+    fn a_callout_header_wraps_rather_than_running_past_the_width() {
+        for width in 3..30 {
+            for line in blocks_to_lines(
+                &parse("> [!WARNING] A title long enough to need wrapping\n> Body.\n"),
+                &Ctx::new(&Theme::default(), &detached()),
+                Style::default(),
+                width,
+                0,
+            ) {
+                assert!(line.width() <= width, "at {width}: {:?}", line.text());
+            }
+        }
     }
 
     #[test]

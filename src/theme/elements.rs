@@ -48,10 +48,12 @@ pub enum Element {
     SearchCurrent,
     Selection,
     HelpWindow,
+    Callout,
+    QuoteGutter,
 }
 
 impl Element {
-    pub const ALL: [Element; 39] = [
+    pub const ALL: [Element; 41] = [
         Element::Paragraph,
         Element::Heading1,
         Element::Heading2,
@@ -91,6 +93,8 @@ impl Element {
         Element::SearchCurrent,
         Element::Selection,
         Element::HelpWindow,
+        Element::Callout,
+        Element::QuoteGutter,
     ];
 
     pub fn key(self) -> &'static str {
@@ -134,6 +138,8 @@ impl Element {
             Element::SearchCurrent => "search_current",
             Element::Selection => "selection",
             Element::HelpWindow => "help_window",
+            Element::Callout => "callout",
+            Element::QuoteGutter => "quote_gutter",
         }
     }
 
@@ -167,6 +173,8 @@ pub fn default_style(element: Element, palette: &Palette) -> Style {
         Element::CodeBlock => style.fg(palette.foreground),
         Element::CodeBlockLang => style.fg(palette.muted_text),
         Element::Quote => style.fg(palette.muted_text).add_modifier(Modifier::ITALIC),
+        Element::QuoteGutter => style.fg(palette.muted),
+        Element::Callout => style.add_modifier(Modifier::BOLD),
         Element::ListBullet | Element::ListNumber => style.fg(palette.accent),
         Element::TaskDone => style.fg(palette.success),
         Element::TaskTodo => style.fg(palette.muted_text),
