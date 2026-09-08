@@ -20,6 +20,7 @@ const HELP_CEILING: (u32, u32) = (9, 10);
 const CHEVRON: &str = "›";
 const CHEVRON_COLUMN: u16 = 2;
 const TOC_INDENT: usize = 2;
+const PROPERTIES_GAP: u16 = 2;
 
 const HELP: &[(&str, &str)] = &[
     ("j / k, ↓ / ↑", "Move cursor line down / up"),
@@ -34,6 +35,7 @@ const HELP: &[(&str, &str)] = &[
     ("/", "Search (Enter confirms, Esc cancels)"),
     ("n / N", "Next / previous match"),
     ("t", "Table of contents (j/k moves, Enter or a click jumps, t closes)"),
+    ("p", "Properties (j/k moves, y copies the value, p closes)"),
     ("?", "Help overlay"),
     ("Esc", "Close overlay, clear search highlight"),
     ("q, Ctrl-C", "Quit"),
@@ -65,6 +67,7 @@ impl Widget for Screen<'_> {
         match self.app.mode {
             Mode::Help => help(area, buf, self.app),
             Mode::Toc => toc(area, buf, self.app),
+            Mode::Properties => properties(area, buf, self.app),
             _ => {}
         }
     }
@@ -171,6 +174,11 @@ fn statusbar(area: Rect, buf: &mut Buffer, app: &App) {
             let total = app.outline.entries.len();
             (format!("contents · {}/{}", (app.outline.selected + 1).min(total), total), Element::Status)
         }
+        (Mode::Properties, Status::Notice(notice)) => (notice.clone(), Element::StatusNotice),
+        (Mode::Properties, _) => {
+            let total = app.properties.rows.len();
+            (format!("properties · {}/{}", (app.properties.selected + 1).min(total), total), Element::Status)
+        }
         (_, Status::Error(error)) => (error.clone(), Element::StatusError),
         (_, Status::Notice(notice)) => (notice.clone(), Element::StatusNotice),
         (_, Status::Idle) => {
@@ -246,24 +254,66 @@ pub(crate) fn toc_inner(area: Rect, entries: usize) -> Rect {
     Block::bordered().inner(toc_area(area, entries))
 }
 
-fn toc_area(area: Rect, entries: usize) -> Rect {
+pub(crate) fn properties_inner(area: Rect, rows: usize) -> Rect {
+    Block::bordered().inner(properties_area(area, rows))
+}
+
+fn properties(area: Rect, buf: &mut Buffer, app: &App) {
+    let popup = properties_area(area, app.properties.rows.len());
+    if popup.height == 0 || popup.width == 0 {
+        return;
+    }
+    Clear.render(popup, buf);
+
+    let border = Style::default().fg(app.theme.palette.accent);
+    let block = Block::bordered().title(" Properties ").style(app.theme.style(Element::HelpWindow)).border_style(border);
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+
+    let sheet = &app.properties;
+    let column = u16::try_from(sheet.key_width()).unwrap_or(u16::MAX);
+    for (row, entry) in sheet.rows.iter().skip(sheet.top).take(inner.height as usize).enumerate() {
+        let y = inner.y + row as u16;
+        let picked = sheet.top + row == sheet.selected;
+        if picked {
+            buf.set_style(Rect::new(inner.x, y, inner.width, 1), app.theme.style(Element::CursorLine));
+        }
+
+        let marker = if picked { CHEVRON } else { " " };
+        buf.set_stringn(inner.x, y, marker, inner.width as usize, app.theme.style(Element::Hint));
+
+        let key = inner.x + CHEVRON_COLUMN;
+        if key < inner.right() {
+            buf.set_stringn(key, y, &entry.key, (inner.right() - key) as usize, app.theme.style(Element::TableHeader));
+        }
+
+        let value = key.saturating_add(column).saturating_add(PROPERTIES_GAP);
+        if value < inner.right() {
+            buf.set_stringn(value, y, &entry.value, (inner.right() - value) as usize, app.theme.style(Element::Paragraph));
+        }
+    }
+}
+
+fn centred(area: Rect, rows: usize) -> Rect {
     let share = |whole: u16, (numerator, denominator): (u32, u32)| (u32::from(whole) * numerator / denominator) as u16;
 
     let width = share(area.width, HELP_WIDTH).min(area.width);
-    let wanted = u16::try_from(entries).unwrap_or(u16::MAX).saturating_add(2);
+    let wanted = u16::try_from(rows).unwrap_or(u16::MAX).saturating_add(2);
     let height = wanted.clamp(share(area.height, HELP_FLOOR), share(area.height, HELP_CEILING)).min(area.height);
 
     Rect { x: area.x + (area.width - width) / 2, y: area.y + (area.height - height) / 2, width, height }
 }
 
+fn toc_area(area: Rect, entries: usize) -> Rect {
+    centred(area, entries)
+}
+
+fn properties_area(area: Rect, rows: usize) -> Rect {
+    centred(area, rows)
+}
+
 fn help_area(area: Rect) -> Rect {
-    let share = |whole: u16, (numerator, denominator): (u32, u32)| (u32::from(whole) * numerator / denominator) as u16;
-
-    let width = share(area.width, HELP_WIDTH).min(area.width);
-    let wanted = HELP.len() as u16 + 2;
-    let height = wanted.clamp(share(area.height, HELP_FLOOR), share(area.height, HELP_CEILING)).min(area.height);
-
-    Rect { x: area.x + (area.width - width) / 2, y: area.y + (area.height - height) / 2, width, height }
+    centred(area, HELP.len())
 }
 
 #[cfg(test)]
@@ -531,7 +581,7 @@ mod tests {
         let popup = help_area(area);
         assert_eq!(popup.width, 60);
         assert_eq!(popup.x, 20, "centred");
-        assert_eq!(popup.height, 19);
+        assert_eq!(popup.height, 20);
         assert_eq!(popup.y, 10, "centred");
     }
 
@@ -823,9 +873,82 @@ mod tests {
         assert_eq!(buffer[(0, status)].fg, app.theme.style(Element::StatusError).fg.expect("a foreground"));
     }
 
+    fn with_properties(size: Size) -> App {
+        let source = "---\ntitle: Notes\ntags: [inbox, ideas]\ncreated: today\n---\n\n# Heading\n\nbody\n";
+        let mut app = app(source, size);
+        app.apply(Action::ToggleProperties);
+        app
+    }
+
+    #[test]
+    fn the_properties_window_lists_the_keys_and_values_in_columns() {
+        let size = Size::new(100, 24);
+        let app = with_properties(size);
+        let buffer = frame(&app, size);
+        let inner = properties_inner(Rect::new(0, 0, size.width, size.height), app.properties.rows.len());
+
+        let first = row(&buffer, inner.y);
+        assert!(first.contains("title"), "{first:?}");
+        assert!(first.contains("Notes"), "{first:?}");
+
+        let column_of = |line: &str, needle: &str| {
+            let at = line.find(needle).unwrap_or_else(|| panic!("{needle:?} is not in {line:?}"));
+            line[..at].width()
+        };
+        let second = row(&buffer, inner.y + 1);
+        assert_eq!(column_of(&second, "inbox"), column_of(&first, "Notes"), "the values line up in a column");
+        assert!(column_of(&second, "tags") < column_of(&second, "inbox"));
+    }
+
+    #[test]
+    fn the_property_chevron_and_highlight_move_with_the_selection() {
+        let size = Size::new(100, 24);
+        let mut app = with_properties(size);
+        let inner = properties_inner(Rect::new(0, 0, size.width, size.height), app.properties.rows.len());
+
+        let buffer = frame(&app, size);
+        assert_eq!(buffer[(inner.x, inner.y)].symbol(), CHEVRON);
+        let highlighted = buffer[(inner.x, inner.y)].bg;
+
+        app.apply(Action::PropertiesMove(Motion::Line(1)));
+        let buffer = frame(&app, size);
+        assert_eq!(buffer[(inner.x, inner.y)].symbol(), " ");
+        assert_eq!(buffer[(inner.x, inner.y + 1)].symbol(), CHEVRON);
+        assert_eq!(buffer[(inner.x, inner.y + 1)].bg, highlighted);
+    }
+
+    #[test]
+    fn the_statusbar_counts_the_properties_while_the_window_is_open() {
+        let size = Size::new(100, 24);
+        let mut app = with_properties(size);
+        assert!(row(&frame(&app, size), size.height - 1).contains("properties · 1/3"));
+
+        app.apply(Action::PropertiesMove(Motion::Bottom));
+        assert!(row(&frame(&app, size), size.height - 1).contains("properties · 3/3"));
+    }
+
+    #[test]
+    fn a_yank_notice_beats_the_property_count_so_the_reader_sees_it() {
+        let size = Size::new(100, 24);
+        let mut app = with_properties(size);
+        app.apply(Action::PropertiesYank);
+        assert!(row(&frame(&app, size), size.height - 1).contains("Copied title"));
+    }
+
+    #[test]
+    fn a_terminal_too_short_for_the_properties_window_draws_what_it_can_and_does_not_panic() {
+        for height in 0..=8 {
+            for width in [0, 1, 8, 40] {
+                let size = Size::new(width, height);
+                let app = with_properties(size);
+                frame(&app, size);
+            }
+        }
+    }
+
     #[test]
     fn the_help_overlay_lists_every_binding_the_readme_names() {
-        for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "h / Backspace, l", "t", "Left drag"] {
+        for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "h / Backspace, l", "t", "p", "Left drag"] {
             assert!(HELP.iter().any(|(row, _)| *row == key), "{key} is not in the help table");
         }
     }
