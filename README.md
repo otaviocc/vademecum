@@ -166,6 +166,43 @@ but deeply structured frontmatter is flattened, not rendered faithfully.
 Piped output has no windows, so it omits properties entirely, exactly as it
 always has.
 
+## Callouts
+
+A block quote whose first line is a type marker is rendered as a callout: the
+marker becomes a header and the bar takes the type's colour.
+
+```
+┃ NOTE
+┃ Callouts are rendered like this, with the gutter carrying the type's colour.
+
+┃ WARNING · Check your backups
+┃ The author's own title, after the type.
+```
+
+Any `[!word]` is recognised, so the marker never leaks into the text. These
+types get a colour of their own; anything else is still a callout, and keeps the
+ordinary quote bar to say the type was not one vademecum knows:
+
+| Colour | Types |
+| --- | --- |
+| `highlight` | `note`, `info` |
+| `success` | `tip`, `hint`, `success`, `check`, `done` |
+| `notice` | `important`, `todo` |
+| `warning` | `question`, `help`, `faq`, `warning`, `attention` |
+| `error` | `failure`, `fail`, `missing`, `caution`, `danger`, `error`, `bug` |
+| `accent` | `example`, `abstract`, `summary`, `tldr` |
+| `muted_text` | `quote`, `cite` |
+
+The type is matched without regard to case, a title after the marker is shown
+after the type, and the title keeps whatever markup it was written with.
+Obsidian's `+` and `-` fold suffixes are accepted and **ignored** — a callout
+always renders open.
+
+Two theme elements drive this: `callout`, which is the header and the bar, and
+`quote_gutter`, which is the bar of an ordinary quote. Give `callout` a
+foreground of your own and it wins over the per-type colours, which is how you
+flatten every callout to one colour.
+
 ## Following links
 
 ### Between your notes
@@ -357,17 +394,17 @@ Every element derives from the palette:
 | `background` | `reset` | help popup |
 | `foreground` | `reset` | body text, code |
 | `muted` | `dark_gray` | rules, table borders |
-| `muted_text` | `gray` | hints, quotes, images, footnotes, HTML |
+| `muted_text` | `gray` | hints, quotes, images, footnotes, HTML, unrecognised callouts |
 | `subtle` | `dark_gray` | the code band, in themes that ask for one |
 | `cursor` | `dark_gray` | the cursor line |
 | `selection_background` / `selection_foreground` | `blue` / `white` | the focused link, copied text |
-| `error` | `red` | broken links, error messages |
-| `success` | `green` | completed task boxes |
-| `warning` | `yellow` | inline code, search matches |
-| `accent` | `cyan` | headings 1–2, list bullets, popup border |
+| `error` | `red` | broken links, error messages, `caution`/`danger`/`failure`/`bug` callouts |
+| `success` | `green` | completed task boxes, `tip`/`success` callouts |
+| `warning` | `yellow` | inline code, search matches, `warning`/`question` callouts |
+| `accent` | `cyan` | headings 1–2, list bullets, popup border, `example`/`abstract` callouts |
 | `chrome` | `cyan` | the header title |
-| `highlight` | `blue` | external links, headings 3–6 |
-| `notice` | `magenta` | wikilinks and local links, transient messages, current match |
+| `highlight` | `blue` | external links, headings 3–6, `note`/`info` callouts |
+| `notice` | `magenta` | wikilinks and local links, transient messages, current match, `important` callouts |
 
 A palette slot takes a colour, never another slot's name. `cursor` falls back to
 `subtle` when no theme in the chain names one, so a theme file written while the
@@ -390,7 +427,8 @@ bg = "subtle"     # `none` removes a background; `reset` paints the terminal's
 The element names are `paragraph`, `heading1`–`heading6`, `emphasis`, `strong`,
 `strikethrough`, `inline_code`, `code_block`, `code_block_lang`, `quote`,
 `list_bullet`, `list_number`, `task_done`, `task_todo`, `link`, `wikilink`,
-`link_focused`, `link_unfocused`, `link_broken`, `image`, `footnote`, `html`, `table_header`,
+`link_focused`, `link_unfocused`, `link_broken`, `image`, `footnote`, `html`, `callout`,
+`quote_gutter`, `table_header`,
 `table_border`, `hr`, `header_title`, `hint`, `status`, `status_notice`,
 `status_error`, `cursor_line`, `search_match`, `search_current`, `selection`
 and `help_window`. Each takes `fg`, `bg` and `modifiers`, and each falls back
