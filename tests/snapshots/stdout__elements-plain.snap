@@ -80,6 +80,23 @@ expression: output
  ┃
  ┃ ┃ A nested quote, with strong and a link inside it.
 
+ Callouts
+
+ ┃ NOTE
+ ┃ A callout, with the type as its header and the gutter in the type's colour.
+
+ ┃ WARNING · Check your backups
+ ┃ A callout whose author gave it a title.
+
+ ┃ TIP
+ ┃ A fold marker is accepted and ignored; the callout always renders open.
+
+ ┃ CUSTOM
+ ┃ An unrecognised type is still a callout, and keeps the quote gutter's colour.
+
+ ┃ ┃ QUESTION · Nested?
+ ┃ ┃ A callout inside a quote.
+
  Lists
 
  • A bullet item

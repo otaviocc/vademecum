@@ -80,6 +80,23 @@ expression: "themed(\"gruvbox-dark\")"
  [0;38;2;102;92;84m┃ [0m
  [0;38;2;102;92;84m┃ [0;38;2;102;92;84m┃ [0;38;2;168;153;132;3mA nested quote, with [0;38;2;168;153;132;1;3mstrong[0;38;2;168;153;132;3m and a ]8;;https://example.com\[0;38;2;131;165;152;3;4mlink]8;;\[0;38;2;168;153;132;3m inside it.[0m
 
+ [0;38;2;250;189;47;1mCallouts[0m
+
+ [0;38;2;131;165;152;1m┃ [0;38;2;131;165;152;1mNOTE[0m
+ [0;38;2;131;165;152;1m┃ [0;38;2;168;153;132;3mA callout, with the type as its header and the gutter in the type's colour.[0m
+
+ [0;38;2;250;189;47;1m┃ [0;38;2;250;189;47;1mWARNING · Check your backups[0m
+ [0;38;2;250;189;47;1m┃ [0;38;2;168;153;132;3mA callout whose author gave it a title.[0m
+
+ [0;38;2;184;187;38;1m┃ [0;38;2;184;187;38;1mTIP[0m
+ [0;38;2;184;187;38;1m┃ [0;38;2;168;153;132;3mA fold marker is accepted and ignored; the callout always renders open.[0m
+
+ [0;38;2;102;92;84;1m┃ [0;38;2;102;92;84;1mCUSTOM[0m
+ [0;38;2;102;92;84;1m┃ [0;38;2;168;153;132;3mAn unrecognised type is still a callout, and keeps the quote gutter's colour.[0m
+
+ [0;38;2;102;92;84m┃ [0;38;2;250;189;47;1m┃ [0;38;2;250;189;47;1mQUESTION · Nested?[0m
+ [0;38;2;102;92;84m┃ [0;38;2;250;189;47;1m┃ [0;38;2;168;153;132;3mA callout inside a quote.[0m
+
  [0;38;2;250;189;47;1mLists[0m
 
  [0;38;2;250;189;47m• [0;38;2;235;219;178mA bullet item[0m

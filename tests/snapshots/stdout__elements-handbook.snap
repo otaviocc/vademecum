@@ -80,6 +80,23 @@ expression: output
  [0;38;2;75;82;99m┃ [0m
  [0;38;2;75;82;99m┃ [0;38;2;75;82;99m┃ [0;38;2;139;147;163;3mA nested quote, with [0;38;2;139;147;163;1;3mstrong[0;38;2;139;147;163;3m and a ]8;;https://example.com\[0;38;2;134;169;224;3;4mlink]8;;\[0;38;2;139;147;163;3m inside it.[0m
 
+ [0;38;2;127;182;204;1mCallouts[0m
+
+ [0;38;2;134;169;224;1m┃ [0;38;2;134;169;224;1mNOTE[0m
+ [0;38;2;134;169;224;1m┃ [0;38;2;139;147;163;3mA callout, with the type as its header and the gutter in the type's colour.[0m
+
+ [0;38;2;223;181;113;1m┃ [0;38;2;223;181;113;1mWARNING · Check your backups[0m
+ [0;38;2;223;181;113;1m┃ [0;38;2;139;147;163;3mA callout whose author gave it a title.[0m
+
+ [0;38;2;157;196;138;1m┃ [0;38;2;157;196;138;1mTIP[0m
+ [0;38;2;157;196;138;1m┃ [0;38;2;139;147;163;3mA fold marker is accepted and ignored; the callout always renders open.[0m
+
+ [0;38;2;75;82;99;1m┃ [0;38;2;75;82;99;1mCUSTOM[0m
+ [0;38;2;75;82;99;1m┃ [0;38;2;139;147;163;3mAn unrecognised type is still a callout, and keeps the quote gutter's colour.[0m
+
+ [0;38;2;75;82;99m┃ [0;38;2;223;181;113;1m┃ [0;38;2;223;181;113;1mQUESTION · Nested?[0m
+ [0;38;2;75;82;99m┃ [0;38;2;223;181;113;1m┃ [0;38;2;139;147;163;3mA callout inside a quote.[0m
+
  [0;38;2;127;182;204;1mLists[0m
 
  [0;38;2;127;182;204m• [0;39mA bullet item[0m
