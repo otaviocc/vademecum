@@ -1,12 +1,15 @@
 # Bundled syntax definitions
 
-The `.sublime-syntax` files in this directory are third-party work, vendored so
-that a vademecum binary is a complete install. They are compiled into the syntax
-set at build time by `build.rs`; see README.md → Syntax highlighting.
+The `.sublime-syntax` files in this directory fill the gaps in the set syntect
+bundles, so that a vademecum binary is a complete install. They are compiled
+into the syntax set at build time by `build.rs`; see README.md → Syntax
+highlighting.
 
-Every file is redistributed under a licence that permits it, and every licence
-here is compatible with vademecum's own MIT licence. Each entry names the
-upstream commit the file was taken at, so it can be checked or updated.
+Most are third-party work. Every one of those is redistributed under a licence
+that permits it, and every licence here is compatible with vademecum's own MIT
+licence; each entry names the upstream commit the file was taken at, so it can
+be checked or updated. `Mermaid.sublime-syntax` is ours, written for this
+repository and covered by vademecum's own licence.
 
 | File | Upstream | Commit | Licence |
 | --- | --- | --- | --- |
@@ -14,6 +17,7 @@ upstream commit the file was taken at, so it can be checked or updated.
 | `Kotlin.sublime-syntax` | [guille/sublime-kotlin](https://github.com/guille/sublime-kotlin) | `c353694169c0` | Unlicense (public domain) |
 | `TOML.sublime-syntax` | [sublimehq/Packages](https://github.com/sublimehq/Packages) | `f29821e2f98f` | Sublime HQ Packages licence (below) |
 | `TypeScript.sublime-syntax` | [sharkdp/bat](https://github.com/sharkdp/bat) | `d7b651942287` | Apache-2.0 |
+| `Mermaid.sublime-syntax` | written for vademecum | — | MIT (this repository) |
 
 ## Notes on individual files
 
@@ -37,6 +41,22 @@ So the rule for a replacement is both: it has to load under `fancy-regex`, *and*
 it has to colour a keyword-only sample. The test in `src/render/code.rs` uses
 samples with no string or number literal in them for exactly that reason — a
 sample containing `"hi"` passes on the strength of the one string.
+
+**Mermaid.** Written here rather than vendored. The grammar is small enough to
+own — diagram declarations, directions, structural keywords, edges, node and
+edge labels, quoted strings, comments and `%%{ … }%%` directives — and writing
+it is the only way to guarantee up front the two things this directory exists to
+enforce: every pattern is `fancy-regex`-clean by construction, and the keyword
+scopes are actually there. Owning it also avoids a licence question for a file
+that would otherwise be vendored for a few hundred bytes of grammar.
+
+One deliberate scope choice: edges (`-->`, `-.->`, `==>`) are
+`keyword.operator`, which is what they are, and which `base16-ocean.dark` leaves
+uncoloured. Node identifiers carry `variable.other` instead, so a diagram still
+reads as five colours — declaration, direction, node, label, comment — with the
+arrows as plain connectors between coloured nodes. Scoping arrows as
+`keyword.control` would colour them, at the cost of making them the same colour
+as `flowchart` and `subgraph`.
 
 **TypeScript.** Taken from `bat`, which converted it by hand from
 [Microsoft/TypeScript-Sublime-Plugin](https://github.com/Microsoft/TypeScript-Sublime-Plugin)

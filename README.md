@@ -491,8 +491,8 @@ syntax_theme = "base16-ocean.dark"
 `vademecum --list-syntax-themes` prints the names it will accept. A name it does
 not recognise falls back to `base16-ocean.dark` and says so once.
 
-Sublime Text's default languages are bundled, plus Swift, TypeScript, Kotlin and
-TOML. Origins and licences for the added ones are in
+Sublime Text's default languages are bundled, plus Swift, TypeScript, Kotlin,
+TOML and Mermaid. Origins and licences for the added ones are in
 [`syntaxes/LICENSES.md`](syntaxes/LICENSES.md).
 
 ## Flags
