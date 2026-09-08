@@ -221,6 +221,38 @@ fn nothing_is_wider_than_the_requested_width() {
 }
 
 #[test]
+fn every_shell_gets_a_completion_script_that_names_the_binary() {
+    for shell in ["bash", "zsh", "fish", "powershell", "elvish"] {
+        let script = run(&["--completions", shell]);
+        assert!(!script.trim().is_empty(), "{shell} produced nothing");
+        assert!(script.contains("vademecum"), "{shell} does not name the binary");
+    }
+}
+
+#[test]
+fn the_zsh_completion_offers_the_flags_the_readme_documents() {
+    let script = run(&["--completions", "zsh"]);
+    for flag in ["--theme", "--watch", "--resolve-links", "--no-mouse"] {
+        assert!(script.contains(flag), "{flag} is not in the completion script");
+    }
+}
+
+#[test]
+fn the_man_page_is_roff_that_names_the_program_and_its_flags() {
+    let page = run(&["--man"]);
+    assert!(page.contains(".TH vademecum 1"), "no roff title line: {page}");
+    assert!(page.contains("\\-\\-resolve\\-links"), "the flags are missing from the man page");
+}
+
+#[test]
+fn the_generator_flags_are_hidden_from_help() {
+    let help = run(&["--help"]);
+    assert!(!help.contains("--completions"), "--completions leaked into the help");
+    assert!(!help.contains("--man"), "--man leaked into the help");
+    assert!(help.contains("--list-themes"), "the ordinary flags are still listed");
+}
+
+#[test]
 fn frontmatter_is_hidden() {
     let output = run(&["--color", "never", "--width", "80", "tests/fixtures/frontmatter.md"]);
     assert!(!output.contains("tags:"), "frontmatter leaked into the output: {output}");

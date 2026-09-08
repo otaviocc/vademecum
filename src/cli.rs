@@ -2,12 +2,13 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, ValueEnum};
+use clap::{Parser, ValueEnum, ValueHint};
+use clap_complete::Shell;
 
 #[derive(Debug, Parser)]
 #[command(name = "vademecum", version, about, long_about = None)]
 pub struct Cli {
-    #[arg(help = "Markdown file to open, or `-` to read from stdin")]
+    #[arg(value_hint = ValueHint::FilePath, help = "Markdown file to open, or `-` to read from stdin")]
     pub path: Option<PathBuf>,
 
     #[arg(long, help = "Write styled output to stdout even when stdout is a TTY")]
@@ -22,10 +23,10 @@ pub struct Cli {
     #[arg(long, value_name = "NAME", help = "Built-in or user theme by name")]
     pub theme: Option<String>,
 
-    #[arg(long, value_name = "FILE", help = "Explicit theme file, overriding `--theme`")]
+    #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, help = "Explicit theme file, overriding `--theme`")]
     pub config: Option<PathBuf>,
 
-    #[arg(long, value_name = "DIR", help = "Vault root for wikilink resolution")]
+    #[arg(long, value_name = "DIR", value_hint = ValueHint::DirPath, help = "Vault root for wikilink resolution")]
     pub root: Option<PathBuf>,
 
     #[arg(long, help = "Re-render when the file changes on disk")]
@@ -42,6 +43,12 @@ pub struct Cli {
 
     #[arg(long, help = "Print each link and its resolved path, then exit")]
     pub resolve_links: bool,
+
+    #[arg(long, value_name = "SHELL", hide = true, help = "Print a shell completion script and exit")]
+    pub completions: Option<Shell>,
+
+    #[arg(long, hide = true, help = "Print the man page as roff and exit")]
+    pub man: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

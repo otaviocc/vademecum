@@ -11,7 +11,8 @@ use std::io::{BufWriter, IsTerminal, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::Shell;
 use unicode_width::UnicodeWidthStr;
 
 use crate::cli::{Cli, ColorChoice};
@@ -29,6 +30,12 @@ fn main() -> Result<()> {
     }
     if cli.list_syntax_themes {
         return finished(list(&stdout, &render::code::available()));
+    }
+    if let Some(shell) = cli.completions {
+        return finished(completions(&stdout, shell));
+    }
+    if cli.man {
+        return finished(man(&stdout));
     }
 
     check_root(cli.root.as_deref())?;
@@ -67,6 +74,25 @@ fn main() -> Result<()> {
 fn list(stdout: &std::io::Stdout, names: &[String]) -> std::io::Result<()> {
     let mut out = BufWriter::new(stdout.lock());
     names.iter().try_for_each(|name| writeln!(out, "{name}")).and_then(|()| out.flush())
+}
+
+fn completions(stdout: &std::io::Stdout, shell: Shell) -> std::io::Result<()> {
+    let mut command = Cli::command();
+    let name = command.get_name().to_string();
+    let mut script = Vec::new();
+    clap_complete::generate(shell, &mut command, name, &mut script);
+    write_out(stdout, &script)
+}
+
+fn man(stdout: &std::io::Stdout) -> std::io::Result<()> {
+    let mut roff = Vec::new();
+    clap_mangen::Man::new(Cli::command()).render(&mut roff)?;
+    write_out(stdout, &roff)
+}
+
+fn write_out(stdout: &std::io::Stdout, bytes: &[u8]) -> std::io::Result<()> {
+    let mut out = BufWriter::new(stdout.lock());
+    out.write_all(bytes).and_then(|()| out.flush())
 }
 
 fn report_links(stdout: &std::io::Stdout, links: &[LinkKind], context: &Links) -> std::io::Result<()> {
