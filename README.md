@@ -88,6 +88,7 @@ forces that even on a terminal.
 | `h` / `Backspace`, `l` | History back / forward |
 | `/`, then `n` / `N` | Search, next / previous match |
 | `t` | Table of contents |
+| `p` | Properties |
 | `?` | Help |
 | `Esc` | Close the overlay, or clear the search |
 | `q`, `Ctrl-C` | Quit |
@@ -124,6 +125,46 @@ without the gutter or the colours — and letting go copies it. Capturing the
 mouse takes your terminal's own selection away, so `--no-mouse` turns it off and
 hands it back; most terminals also let you hold `Shift` while dragging to select
 through a capturing program.
+
+## Properties
+
+A note that opens with YAML or TOML frontmatter has its keys and values read out
+of the block. `p` shows them in a window over the document, the way `t` shows the
+headings:
+
+```
+┌ Properties ───────────────────────────────┐
+│› title    Long Note                       │
+│  tags     inbox, ideas                    │
+│  created  2026-09-08                      │
+└───────────────────────────────────────────┘
+```
+
+The reading keys walk it — `j` / `k`, the arrows, `d` / `u`, `Space` / `b`,
+`g` / `G`, and the wheel — a click selects a row, and `y` copies the selected
+value, which is the quickest way to get a tag or a date out of a note. `p`, `q`
+or `Esc` closes it, and a click outside the box does too. The document behind is
+never touched: opening the window moves nothing and scrolls nothing.
+
+The frontmatter itself is **not** rendered as part of the document, so it does
+not appear in the body, `/` does not search it, and `y` outside the window does
+not copy it. The window is where it lives. The `title` key becomes the pager's
+header title, which is why a note can be called something other than its
+filename.
+
+`---` and `+++` both open a block, closed by `---`, `...` or `+++`, and only on
+the file's first line — a `---` further down is a horizontal rule, as it should
+be.
+
+Values are read without a YAML parser, which is a deliberate limit: keys are
+split on the first `:` or `=`, one layer of quotes comes off, `[a, b]` loses its
+brackets, and a list or a map written across several indented lines folds into
+one row (`tags    inbox, ideas`). A line that fits none of that is shown as it
+was written rather than dropped, so nothing in your frontmatter can go missing —
+but deeply structured frontmatter is flattened, not rendered faithfully.
+
+Piped output has no windows, so it omits properties entirely, exactly as it
+always has.
 
 ## Following links
 
