@@ -70,6 +70,16 @@ function greet(): void {
 }
 ```
 
+```mermaid
+flowchart TD
+    Start([Begin]) --> Check{Ready?}
+    Check -->|yes| Go[Go on]
+    subgraph Group
+        Go --> Stop((Halt))
+    end
+    %% a comment
+```
+
 ## Quotes
 
 > A block quote, long enough to wrap inside its own gutter so the continuation

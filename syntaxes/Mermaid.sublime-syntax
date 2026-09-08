@@ -1,0 +1,140 @@
+%YAML 1.2
+---
+# https://mermaid.js.org/intro/syntax-reference.html
+# http://www.sublimetext.com/docs/syntax.html
+name: Mermaid
+scope: source.mermaid
+version: 2
+
+file_extensions:
+  - mmd
+  - mermaid
+
+variables:
+  diagram: |-
+    (?x: block-beta | classDiagram(?:-v2)? | erDiagram | flowchart | gantt | gitGraph | graph | journey
+       | mindmap | packet-beta | pie | quadrantChart | requirementDiagram | sankey-beta
+       | sequenceDiagram | stateDiagram(?:-v2)? | timeline | xychart-beta
+       | C4Context | C4Container | C4Component | C4Dynamic | C4Deployment )
+  direction: (?:TB|TD|BT|RL|LR)
+  keyword: |-
+    (?x: accDescr | accTitle | activate | actor | alt | and | autonumber | break | callback | checkout
+       | class | classDef | click | commit | critical | cssClass | deactivate | direction | else | end
+       | link | linkStyle | loop | merge | note | opt | option | par | participant | rect | section
+       | state | style | subgraph | title )
+  entity: (?:requirement|element|functionalRequirement|performanceRequirement|designConstraint)
+
+contexts:
+  main:
+    - include: comments
+    - include: directives
+    - include: declarations
+    - include: keywords
+    - include: arrows
+    - include: labels
+    - include: strings
+    - include: numbers
+    - include: identifiers
+
+###[ COMMENTS AND DIRECTIVES ]#################################################
+
+  comments:
+    - match: '%%(?!\{)'
+      scope: punctuation.definition.comment.mermaid
+      push:
+        - meta_scope: comment.line.percentage.mermaid
+        - match: $\n?
+          pop: true
+
+  directives:
+    - match: '%%\{'
+      scope: punctuation.section.block.begin.mermaid
+      push:
+        - meta_scope: meta.annotation.mermaid
+        - match: '\}%%'
+          scope: punctuation.section.block.end.mermaid
+          pop: true
+        - include: strings
+        - include: numbers
+
+###[ DECLARATIONS AND KEYWORDS ]###############################################
+
+  declarations:
+    - match: '^\s*({{diagram}})\b'
+      captures:
+        1: keyword.declaration.diagram.mermaid
+    - match: '\b({{direction}})\b(?=\s|;|$)'
+      captures:
+        1: constant.language.direction.mermaid
+
+  keywords:
+    - match: '\b({{keyword}})\b'
+      captures:
+        1: keyword.control.mermaid
+    - match: '\b({{entity}})\b'
+      captures:
+        1: storage.type.mermaid
+
+###[ EDGES ]###################################################################
+
+  arrows:
+    - match: '(?:<\|?--\|?>|--\|>|<\|--|\.\.\|>|<\|\.\.)'
+      scope: keyword.operator.class.mermaid
+    - match: '(?:-{2,3}>|={2,3}>|-\.->|-\.-|<-{2,3}|<={2,3}|--[xo]|[xo]--[xo]|<<-{2,3}>>)'
+      scope: keyword.operator.arrow.mermaid
+    - match: '(?:-{2,3}|={2,3}|\.{2,3}|~{2,3}|\|{2})'
+      scope: keyword.operator.link.mermaid
+    - match: '(?:\|\||\}o|o\{|\}\||\|\{)(?:\.\.|--)(?:\|\||o\{|\}o|\|\{|\|\})'
+      scope: keyword.operator.cardinality.mermaid
+
+###[ NODES ]###################################################################
+
+  labels:
+    - match: '\|'
+      scope: punctuation.definition.annotation.mermaid
+      push:
+        - meta_scope: string.unquoted.label.mermaid
+        - match: '\|'
+          scope: punctuation.definition.annotation.mermaid
+          pop: true
+        - match: $\n?
+          pop: true
+    - match: '\[\[|\[\(|\(\(|\(\[|\{\{|\[\/|\[\\'
+      scope: punctuation.section.brackets.begin.mermaid
+      push: node
+    - match: '[\[({>]'
+      scope: punctuation.section.brackets.begin.mermaid
+      push: node
+
+  node:
+    - meta_scope: string.unquoted.node.mermaid
+    - match: '\]\]|\)\]|\)\)|\]\)|\}\}|\/\]|\\\]'
+      scope: punctuation.section.brackets.end.mermaid
+      pop: true
+    - match: '[\])}]'
+      scope: punctuation.section.brackets.end.mermaid
+      pop: true
+    - match: $\n?
+      pop: true
+    - include: strings
+
+###[ LITERALS ]################################################################
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.mermaid
+      push:
+        - meta_scope: string.quoted.double.mermaid
+        - match: '"'
+          scope: punctuation.definition.string.end.mermaid
+          pop: true
+        - match: $\n?
+          pop: true
+
+  numbers:
+    - match: '\b\d+(?:\.\d+)?\b'
+      scope: constant.numeric.mermaid
+
+  identifiers:
+    - match: '\b[A-Za-z_][A-Za-z0-9_-]*\b'
+      scope: variable.other.node.mermaid

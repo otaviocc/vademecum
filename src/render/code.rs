@@ -228,6 +228,16 @@ mod tests {
     }
 
     #[test]
+    fn mermaid_colours_keywords_rather_than_leaning_on_a_string_or_a_number() {
+        let source = "flowchart TD\n    Start --> Stop\n    subgraph One\n    end\n";
+        assert!(!source.contains('"'), "the sample must carry no string literal");
+        assert!(!source.contains(|c: char| c.is_ascii_digit()), "and no number, or one literal carries the test");
+
+        let lines = highlight(Some("mermaid"), source, Some("base16-ocean.dark"));
+        assert!(distinct(&foregrounds(&lines)) > 2, "the diagram keyword, the arrow and the body share a colour: {lines:?}");
+    }
+
+    #[test]
     fn an_unknown_language_gets_one_style() {
         let lines = highlight(Some("notalanguage"), "fn main() {}\nlet x = 1;\n", Some("base16-ocean.dark"));
         assert!(foregrounds(&lines).is_empty(), "an unhighlighted block took a color from the .tmTheme: {lines:?}");
@@ -379,6 +389,7 @@ mod tests {
             ("kotlin", "import java.util.Date\nclass Greeter {\n    fun greet(): Boolean { return true }\n}\n"),
             ("toml", "[package]\nedition = 2024\n"),
             ("typescript", "import fs from 'node:fs';\nclass Greeter {\n    greet(): boolean { return true }\n}\n"),
+            ("mermaid", "flowchart TD\n    Start --> Stop\n    subgraph One\n    end\n"),
         ];
         for (lang, code) in samples {
             let lines = highlight(Some(lang), code, None);
@@ -389,9 +400,15 @@ mod tests {
     #[test]
     fn the_bundled_languages_answer_to_their_usual_fence_tags() {
         let syntaxes = syntax_set();
-        for (tag, expected) in
-            [("swift", "Swift"), ("kotlin", "Kotlin"), ("toml", "TOML"), ("ts", "TypeScript"), ("typescript", "TypeScript")]
-        {
+        for (tag, expected) in [
+            ("swift", "Swift"),
+            ("kotlin", "Kotlin"),
+            ("toml", "TOML"),
+            ("ts", "TypeScript"),
+            ("typescript", "TypeScript"),
+            ("mermaid", "Mermaid"),
+            ("mmd", "Mermaid"),
+        ] {
             let syntax = syntax_for(syntaxes, Some(tag), "");
             assert_eq!(syntax.name, expected, "the tag {tag:?} found {:?}", syntax.name);
         }
