@@ -5,13 +5,14 @@ pub mod clipboard;
 pub mod input;
 pub mod outline;
 pub mod search;
+pub mod tty;
 pub mod view;
 
 use std::io;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
@@ -25,7 +26,7 @@ use crate::watch;
 enum Wake {
     Input(event::Event),
     Changed(watch::Change),
-    InputLost,
+    InputLost(String),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -44,6 +45,8 @@ pub fn run(document: Document, theme: Theme, options: Options) -> Result<()> {
     let (tx, rx) = mpsc::channel();
 
     let mut watcher = start_watching(&options, document.path.as_deref(), &tx)?;
+
+    tty::adopt_controlling_terminal()?;
 
     let mut terminal = ratatui::try_init().context("cannot open the terminal")?;
     spawn_input(tx);
@@ -70,9 +73,9 @@ fn event_loop(
         terminal.draw(|frame| view::draw(frame, app)).context("cannot draw")?;
 
         let Ok(wake) = rx.recv() else { return Ok(()) };
-        handle(app, wake, watcher);
+        handle(app, wake, watcher)?;
         while let Ok(wake) = rx.try_recv() {
-            handle(app, wake, watcher);
+            handle(app, wake, watcher)?;
         }
 
         if app.quit {
@@ -83,7 +86,7 @@ fn event_loop(
     }
 }
 
-fn handle(app: &mut App, wake: Wake, watcher: &mut Option<watch::Watcher>) {
+fn handle(app: &mut App, wake: Wake, watcher: &mut Option<watch::Watcher>) -> Result<()> {
     match wake {
         Wake::Input(event) => apply(app, &event),
         Wake::Changed(change) => {
@@ -91,9 +94,10 @@ fn handle(app: &mut App, wake: Wake, watcher: &mut Option<watch::Watcher>) {
                 app.apply(Action::Reload);
             }
         }
-        Wake::InputLost => app.quit = true,
+        Wake::InputLost(error) => bail!("cannot read keyboard input: {error}"),
     }
     drain_copy(app);
+    Ok(())
 }
 
 fn drain_copy(app: &mut App) {
@@ -130,12 +134,18 @@ fn apply(app: &mut App, event: &event::Event) {
 
 fn spawn_input(tx: Sender<Wake>) {
     std::thread::spawn(move || {
-        while let Ok(event) = event::read() {
+        loop {
+            let event = match event::read() {
+                Ok(event) => event,
+                Err(error) => {
+                    let _ = tx.send(Wake::InputLost(error.to_string()));
+                    return;
+                }
+            };
             if tx.send(Wake::Input(event)).is_err() {
                 return;
             }
         }
-        let _ = tx.send(Wake::InputLost);
     });
 }
 

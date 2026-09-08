@@ -34,6 +34,9 @@ unicode-width = "0.2"
 [build-dependencies]
 syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = ["std", "pty", "stdio", "termios"] }
+
 [dev-dependencies]
 assert_cmd = "2"
 insta = "1"

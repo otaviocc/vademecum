@@ -227,11 +227,36 @@ The pager can be driven for real:
 printf 'q' | script -q /dev/null sh -c 'stty rows 24 cols 80; ./target/debug/vademecum README.md'
 ```
 
-Without the `stty` the pty is 0x0 and the pager correctly draws nothing. Keys
-reach it because crossterm reads `/dev/tty`, which is also why
-`cat x.md | vademecum -` works. A run's key sequence must end in `q` or it
-hangs — and `q` inside the help or contents overlay closes the overlay, so a run
-that opens one needs a second `?`/`t` before the quit.
+Without the `stty` the pty is 0x0 and the pager correctly draws nothing. A run's
+key sequence must end in `q` or it hangs — and `q` inside the help or contents
+overlay closes the overlay, so a run that opens one needs a second `?`/`t`
+before the quit.
+
+- Keys reach the pager because `ui::tty::adopt_controlling_terminal` makes fd 0
+  the terminal: when stdin is a pipe and stdout is a tty it opens
+  `ttyname(stdout)` and `dup2`s it onto stdin, before `ratatui::try_init`. Do
+  **not** rely on crossterm's own `/dev/tty` fallback (#95). It reaches for
+  `/dev/tty` whenever stdin is not a tty, and on macOS kqueue refuses to
+  register the `/dev/tty` clone device with `EINVAL`, so
+  `UnixInternalEventSource::new` fails, `event::read()` returns
+  `"Failed to initialize input reader"` for the rest of the process, and the
+  pager paints one frame and quits. Opening `/dev/tty` succeeds — only the
+  kqueue registration fails — so nothing errors where the problem is. The pty
+  slave behind the same terminal (`/dev/ttys007`) registers fine, which is what
+  the `dup2` gets us. Linux is unaffected: epoll accepts `/dev/tty`.
+- `tests/pipe.rs` is the regression test, and it drives a real pty from Rust
+  through `rustix::pty` rather than `script`. It covers piping with **no
+  controlling terminal**, because a `cargo test` process has none and giving the
+  child one needs `setsid`/`TIOCSCTTY` behind `unsafe`. That is a different
+  failure from the kqueue one — without the fix the test dies in
+  `ratatui::try_init` instead, since enabling raw mode also goes through
+  `/dev/tty` — so the macOS event-source case is still only covered by the
+  manual smoke test above. Both have the same cause and the same fix.
+- Assert on a **positive** frame, not on the pager still being alive: send `G`
+  and wait for the last line of a `LINE-001`…`LINE-400` fixture to appear. That
+  is independent of the terminal size the child ends up believing in, which is
+  not fully determined — crossterm sizes from `/dev/tty` when it can open one,
+  so a `cargo test` run from a developer's terminal may size from *that*.
 
 - **Read the frame with `tools/replay-frame.py <rows> <cols> <capture>`, do not
   strip the escapes.** ratatui positions the cursor and paints runs, never the
