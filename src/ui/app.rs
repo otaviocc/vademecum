@@ -30,6 +30,7 @@ pub enum Mode {
     Search,
     Toc,
     Properties,
+    Visual,
     Help,
 }
 
@@ -99,6 +100,7 @@ pub struct App {
     pub focus: usize,
     reload_failed: bool,
     selection: Option<Selection>,
+    visual: Option<usize>,
     copied: Option<String>,
     back: Vec<Entry>,
     forward: Vec<Entry>,
@@ -139,6 +141,7 @@ impl App {
             focus: 0,
             reload_failed: false,
             selection: None,
+            visual: None,
             copied: None,
             back: Vec::new(),
             forward: Vec::new(),
@@ -164,6 +167,8 @@ impl App {
                 | Action::History { .. }
                 | Action::TocSelect
                 | Action::TocClick { .. }
+                | Action::VisualYank
+                | Action::VisualCancel
         );
 
         match action {
@@ -207,6 +212,9 @@ impl App {
             Action::History { forward } => self.travel(forward),
             Action::Yank => self.yank(),
             Action::YankLink => self.yank_link(),
+            Action::VisualStart => self.start_visual(),
+            Action::VisualYank => self.yank_visual(),
+            Action::VisualCancel => self.cancel_visual(),
         }
 
         self.bound();
@@ -257,10 +265,7 @@ impl App {
     }
 
     fn yank(&mut self) {
-        let Some(line) = self.lines.get(self.cursor) else { return };
-        let text = line.text();
-        let text = text[line.byte_at(line.inset)..].trim_end().to_string();
-        self.copy(text, String::from("Copied the line"));
+        self.copy_lines(self.cursor, self.cursor);
     }
 
     fn yank_link(&mut self) {
@@ -349,6 +354,7 @@ impl App {
 
         self.plain = None;
         self.selection = None;
+        self.end_visual();
     }
 
     fn anchor_line(&self, fragment: Option<&str>) -> Option<usize> {
@@ -616,6 +622,20 @@ impl App {
             };
             lines.push(taken);
         }
+        self.copied_lines(lines);
+    }
+
+    fn copy_lines(&mut self, from: usize, to: usize) {
+        let mut lines = Vec::new();
+        for index in from..=to {
+            let Some(line) = self.lines.get(index) else { break };
+            let text = line.text();
+            lines.push(text[line.byte_at(line.inset)..].trim_end().to_string());
+        }
+        self.copied_lines(lines);
+    }
+
+    fn copied_lines(&mut self, mut lines: Vec<String>) {
         while lines.last().is_some_and(String::is_empty) {
             lines.pop();
         }
@@ -626,6 +646,38 @@ impl App {
             _ => format!("Copied {count} lines"),
         };
         self.copy(lines.join("\n"), notice);
+    }
+
+    pub fn visual_span(&self) -> Option<(usize, usize)> {
+        let anchor = self.visual?.min(self.lines.len().saturating_sub(1));
+        Some((anchor.min(self.cursor), anchor.max(self.cursor)))
+    }
+
+    fn start_visual(&mut self) {
+        self.visual = Some(self.cursor);
+        self.mode = Mode::Visual;
+    }
+
+    fn yank_visual(&mut self) {
+        if let Some((from, to)) = self.visual_span() {
+            self.copy_lines(from, to);
+        }
+        self.cancel_visual();
+    }
+
+    fn cancel_visual(&mut self) {
+        if let Some(anchor) = self.visual {
+            self.cursor = anchor;
+            self.focus = 0;
+        }
+        self.end_visual();
+    }
+
+    fn end_visual(&mut self) {
+        self.visual = None;
+        if self.mode == Mode::Visual {
+            self.mode = Mode::Browse;
+        }
     }
 
     fn click(&mut self, column: u16, row: u16) {
@@ -699,6 +751,7 @@ impl App {
 
         self.plain = None;
         self.selection = None;
+        self.end_visual();
         self.resume_search();
     }
 
@@ -881,6 +934,11 @@ mod tests {
         assert_eq!(app.properties.rows.len(), 1, "{:?}", app.status);
     }
 
+    fn wrapping(source: &str) -> App {
+        let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), source.to_string());
+        App::new(document, Theme::default(), &Options::default(), Size::new(60, 14))
+    }
+
     fn paged() -> App {
         app(&numbered(40), 14)
     }
@@ -1019,6 +1077,16 @@ mod tests {
         click(&mut app, 0, CONTENT_TOP + 1);
         let visible = app.top..app.top + app.viewport_height();
         assert!(visible.contains(&app.cursor), "a click left the cursor outside {visible:?}");
+
+        for leaving in [Action::VisualYank, Action::VisualCancel] {
+            app.apply(Action::Move(Motion::Top));
+            app.apply(Action::VisualStart);
+            for action in [Action::Move(Motion::Bottom), Action::Move(Motion::Page(1)), leaving] {
+                app.apply(action);
+                let visible = app.top..app.top + app.viewport_height();
+                assert!(visible.contains(&app.cursor), "{action:?} left the cursor at {} outside {visible:?}", app.cursor);
+            }
+        }
         drop(dir);
     }
 
@@ -1664,6 +1732,211 @@ mod tests {
         assert_eq!(app.selected(0), Some(4..6), "from where it started to the end");
         assert_eq!(app.selected(2), Some(1..7), "all of the line in between");
         assert_eq!(app.selected(4), Some(1..4), "through the cell it stopped on");
+    }
+
+    #[test]
+    fn v_anchors_on_the_cursor_line_and_enters_visual_mode() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::Line(2)));
+        app.apply(Action::VisualStart);
+
+        assert_eq!(app.mode, Mode::Visual);
+        assert_eq!(app.visual_span(), Some((2, 2)), "the selection starts as the cursor line alone");
+    }
+
+    #[test]
+    fn a_visual_selection_covers_the_lines_between_the_anchor_and_the_cursor() {
+        let mut app = paged();
+        app.apply(Action::VisualStart);
+        for _ in 0..3 {
+            app.apply(Action::Move(Motion::Line(1)));
+        }
+
+        assert_eq!(app.visual_span(), Some((0, 3)));
+        assert_eq!(app.cursor, 3, "the cursor is the head, not the anchor");
+    }
+
+    #[test]
+    fn a_visual_selection_upwards_reads_the_same_as_one_downwards() {
+        let mut down = paged();
+        down.apply(Action::VisualStart);
+        for _ in 0..4 {
+            down.apply(Action::Move(Motion::Line(1)));
+        }
+        down.apply(Action::VisualYank);
+
+        let mut up = paged();
+        up.apply(Action::Move(Motion::Line(4)));
+        up.apply(Action::VisualStart);
+        for _ in 0..4 {
+            up.apply(Action::Move(Motion::Line(-1)));
+        }
+        up.apply(Action::VisualYank);
+
+        assert_eq!(down.take_copy(), up.take_copy(), "the text is in document order either way");
+    }
+
+    #[test]
+    fn yanking_a_visual_selection_copies_its_lines_and_returns_to_the_anchor() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::Line(2)));
+        app.apply(Action::VisualStart);
+        for _ in 0..2 {
+            app.apply(Action::Move(Motion::Line(1)));
+        }
+        app.apply(Action::VisualYank);
+
+        assert_eq!(app.take_copy().as_deref(), Some("line 2\n\nline 3"));
+        assert_eq!(app.status, Status::Notice(String::from("Copied 3 lines")));
+        assert_eq!(app.mode, Mode::Browse, "the yank leaves visual mode");
+        assert_eq!(app.cursor, 2, "the cursor is back on the line the selection started on");
+        assert_eq!(app.visual_span(), None);
+    }
+
+    #[test]
+    fn a_visual_yank_of_one_line_says_it_copied_the_line() {
+        let mut app = app("a paragraph to copy\n", 14);
+        app.apply(Action::VisualStart);
+        app.apply(Action::VisualYank);
+
+        assert_eq!(app.take_copy().as_deref(), Some("a paragraph to copy"), "the same text plain y would take");
+        assert_eq!(app.status, Status::Notice(String::from("Copied the line")));
+    }
+
+    #[test]
+    fn a_visual_run_down_a_code_block_copies_the_code_without_its_padding() {
+        let mut app = app("```rust\nlet x = 1;\nlet y = 2;\n```\n", 14);
+        let first = app.lines.iter().position(|line| line.text().contains("let x")).expect("a code row");
+        app.apply(Action::Move(Motion::Line(first as isize)));
+        app.apply(Action::VisualStart);
+        app.apply(Action::Move(Motion::Line(1)));
+        app.apply(Action::VisualYank);
+
+        assert_eq!(app.take_copy().as_deref(), Some("let x = 1;\nlet y = 2;"), "the pad came along");
+    }
+
+    #[test]
+    fn escape_leaves_visual_mode_copying_nothing_and_returns_to_the_anchor() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::Line(3)));
+        app.apply(Action::VisualStart);
+        app.apply(Action::Move(Motion::Line(2)));
+        app.apply(Action::VisualCancel);
+
+        assert_eq!(app.take_copy(), None, "nothing was copied");
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.cursor, 3);
+        assert_eq!(app.visual_span(), None);
+    }
+
+    #[test]
+    fn returning_to_the_anchor_brings_the_viewport_with_it() {
+        let mut app = paged();
+        app.apply(Action::VisualStart);
+        app.apply(Action::Move(Motion::Bottom));
+        assert_ne!(app.top, 0, "the selection ran off the bottom of the document");
+
+        app.apply(Action::VisualCancel);
+        assert_eq!((app.cursor, app.top), (0, 0), "the reader is looking at the anchor again");
+    }
+
+    #[test]
+    fn an_anchor_still_in_view_does_not_move_the_viewport() {
+        let mut app = paged();
+        app.apply(Action::Move(Motion::Line(2)));
+        app.apply(Action::VisualStart);
+        app.apply(Action::Move(Motion::Line(3)));
+        let top = app.top;
+        app.apply(Action::VisualYank);
+
+        assert_eq!((app.cursor, app.top), (2, top), "the frame was stolen from the reader");
+    }
+
+    #[test]
+    fn a_visual_selection_of_blank_lines_copies_nothing() {
+        let mut app = app("first\n\n\nsecond\n", 14);
+        app.apply(Action::Move(Motion::Line(1)));
+        app.apply(Action::VisualStart);
+        app.apply(Action::VisualYank);
+
+        assert_eq!(app.take_copy(), None);
+        assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn a_visual_selection_keeps_a_blank_line_it_crossed() {
+        let mut app = app("first\n\nsecond\n", 14);
+        app.apply(Action::VisualStart);
+        app.apply(Action::Move(Motion::Line(2)));
+        app.apply(Action::VisualYank);
+
+        assert_eq!(app.take_copy().as_deref(), Some("first\n\nsecond"), "the paragraph break is part of the passage");
+    }
+
+    #[test]
+    fn a_narrower_terminal_ends_visual_mode() {
+        let mut app = wrapping(&numbered(40));
+        app.apply(Action::VisualStart);
+        app.apply(Action::Resize(Size::new(30, 14)));
+
+        assert_eq!(app.mode, Mode::Browse, "the anchor was a line index the relayout has moved");
+        assert_eq!(app.visual_span(), None);
+    }
+
+    #[test]
+    fn a_taller_terminal_leaves_visual_mode_alone() {
+        let mut app = wrapping(&numbered(40));
+        app.apply(Action::VisualStart);
+        app.apply(Action::Move(Motion::Line(2)));
+        app.apply(Action::Resize(Size::new(60, 30)));
+
+        assert_eq!(app.mode, Mode::Visual, "nothing was laid out again, so nothing was invalidated");
+        assert_eq!(app.visual_span(), Some((0, 2)));
+    }
+
+    #[test]
+    fn a_reload_ends_visual_mode() {
+        let (dir, mut app) = on_disk(&numbered(40));
+        app.apply(Action::VisualStart);
+        app.apply(Action::Move(Motion::Line(2)));
+        rewrite(&dir, &numbered(40));
+        app.apply(Action::Reload);
+
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.visual_span(), None);
+        drop(dir);
+    }
+
+    #[test]
+    fn a_failed_reload_leaves_the_reader_in_visual_mode() {
+        let (dir, mut app) = on_disk(&numbered(40));
+        app.apply(Action::VisualStart);
+        std::fs::remove_file(dir.path().join("note.md")).expect("remove");
+        app.apply(Action::Reload);
+
+        assert_eq!(app.mode, Mode::Visual, "nothing was laid out again, so the selection stands");
+        assert!(matches!(app.status, Status::Error(_)));
+        drop(dir);
+    }
+
+    #[test]
+    fn the_mode_and_the_anchor_never_disagree() {
+        let mut app = paged();
+        for action in [Action::VisualStart, Action::Move(Motion::Line(1)), Action::VisualYank, Action::VisualStart] {
+            app.apply(action);
+            assert_eq!(app.mode == Mode::Visual, app.visual_span().is_some(), "{action:?} left the two out of step");
+        }
+        app.apply(Action::VisualCancel);
+        assert_eq!(app.mode == Mode::Visual, app.visual_span().is_some());
+    }
+
+    #[test]
+    fn a_visual_selection_is_not_a_mouse_selection() {
+        let mut app = paged();
+        app.apply(Action::VisualStart);
+        app.apply(Action::Move(Motion::Line(2)));
+
+        assert_eq!(app.selected(1), None, "the columnwise range is for drags only");
     }
 
     #[test]
