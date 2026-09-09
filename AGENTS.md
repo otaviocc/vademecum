@@ -218,6 +218,11 @@ everything up to the publish.
   screen, and the reducer test moved into the body first, so neither exercised
   the top of a long document — where every reader starts. Use `numbered(40)` and
   assert from line 0 whenever a change moves `top` or `cursor`.
+- `app()`, `paged()` and `on_disk()` in `src/ui/app.rs` pin `width: Some(40)`,
+  and `layout::wrap_width` returns an explicit width unchanged — so
+  `Action::Resize` never re-wraps in those apps and never reaches `rerender`. A
+  test about relayout has to build an `App` whose width follows the terminal
+  (`Options::default()`), or it silently proves nothing.
 - Process-global state (the highlight cache, the warning list) makes tests race
   under `cargo test`'s parallelism. **Readers** must take the lock too: a test
   asserting `Arc::ptr_eq` across two calls raced with the test that fills the
@@ -394,6 +399,14 @@ before the quit.
   cursor belong in `moves_cursor`; a click landing on nothing must not drag the
   view. Both clamps run **after** `bound()`, never inside a handler — `bound` is
   what finally lowers `top`.
+- **A linewise highlight cannot be routed through `App::selected`.** It returns
+  `None` for an empty range, and a blank rendered line has no text — so, since
+  Markdown puts a blank rendered line after every paragraph, list and heading, a
+  selection painted that way comes out as alternating bars. Its right edge is
+  ragged too, and differently ragged over a fence, whose trailing pad belongs to
+  the line. Whole-line indicators follow `CursorLine` instead: one
+  `set_style` over `area.width`. `selected()` means "the columns a drag
+  covered" and nothing else. #109 was designed the other way first.
 - Case-insensitive search folds one character at a time against the original
   text. Matching over a `to_lowercase()` copy is easier but its byte offsets
   index the copy, and `İ` folds to two characters, so the highlight lands on the
