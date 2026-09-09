@@ -85,12 +85,13 @@ forces that even on a terminal.
 | `Enter` | Follow the focused link |
 | `o` | Open an external link in the browser |
 | `y` / `Y` | Copy the cursor line / the focused link's target |
+| `v` / `V` | Select whole lines, then `y` copies them |
 | `h` / `Backspace`, `l` | History back / forward |
 | `/`, then `n` / `N` | Search, next / previous match |
 | `t` | Table of contents |
 | `p` | Properties |
 | `?` | Help |
-| `Esc` | Close the overlay, or clear the search |
+| `Esc` | Close the overlay, leave visual mode, or clear the search |
 | `q`, `Ctrl-C` | Quit |
 | Left click | Follow the link under the pointer, on release |
 | Left drag | Select text, and copy it when the button is let go |
@@ -119,6 +120,16 @@ carries on from where you are looking, `Tab` and `Enter` act on a line you can
 see, and the statusbar's `line X/Y` is never describing something off screen.
 Scrolling away and back does not restore the line you started on — the cursor
 came along.
+
+`v` or `V` selects whole lines without the mouse. It anchors on the cursor line
+and the reading keys extend the selection from there — `j` / `k`, the arrows,
+`d` / `u`, `Space` / `b`, `g` / `G` — in either direction, with the statusbar
+counting what is covered. `y` or `Y` copies the lines and `Esc` leaves without
+copying; either way the cursor returns to the line the selection started on, and
+the viewport comes back with it. The text is copied as it is painted, wrapped
+where the page wrapped and without the gutter, the same as a drag. While a
+selection is up the mouse is inert and only those keys answer, so `/`, `t`, `p`
+and the rest wait until you leave.
 
 Dragging selects the text as it is painted — wrapped where the page wrapped,
 without the gutter or the colours — and letting go copies it. Capturing the
