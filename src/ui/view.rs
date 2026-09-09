@@ -31,13 +31,14 @@ const HELP: &[(&str, &str)] = &[
     ("Enter", "Follow focused local/wiki link"),
     ("o", "Open focused external link in the browser"),
     ("y / Y", "Copy the cursor line / the focused link's target"),
+    ("v / V", "Select whole lines: the motions extend, y copies, Esc cancels"),
     ("h / Backspace, l", "History back, forward"),
     ("/", "Search (Enter confirms, Esc cancels)"),
     ("n / N", "Next / previous match"),
     ("t", "Table of contents (j/k moves, Enter or a click jumps, t closes)"),
     ("p", "Properties (j/k moves, y copies the value, p closes)"),
     ("?", "Help overlay"),
-    ("Esc", "Close overlay, clear search highlight"),
+    ("Esc", "Close overlay, leave visual mode, clear search highlight"),
     ("q, Ctrl-C", "Quit"),
     ("Left click", "Follow the link under the pointer"),
     ("Left drag", "Select text, and copy it on release"),
@@ -136,6 +137,13 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
 }
 
 fn selection(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize, line: &RenderedLine) {
+    if let Some((from, to)) = app.visual_span()
+        && (from..=to).contains(&index)
+    {
+        buf.set_style(Rect::new(area.x, y, area.width, 1), app.theme.style(Element::Selection));
+        return;
+    }
+
     let Some(range) = app.selected(index) else { return };
 
     let text = line.text();
@@ -180,6 +188,14 @@ fn statusbar(area: Rect, buf: &mut Buffer, app: &App) {
             (format!("properties · {}/{}", (app.properties.selected + 1).min(total), total), Element::Status)
         }
         (_, Status::Error(error)) => (error.clone(), Element::StatusError),
+        (Mode::Visual, _) => {
+            let count = app.visual_span().map_or(0, |(from, to)| to - from + 1);
+            let lines = match count {
+                1 => String::from("1 line"),
+                _ => format!("{count} lines"),
+            };
+            (format!("visual · {lines}"), Element::Status)
+        }
         (_, Status::Notice(notice)) => (notice.clone(), Element::StatusNotice),
         (_, Status::Idle) => {
             let total = app.lines.len();
@@ -563,6 +579,96 @@ mod tests {
     }
 
     #[test]
+    fn a_visual_selection_is_painted_across_the_whole_row() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        app.apply(Action::VisualStart);
+        app.apply(Action::Move(Motion::Line(1)));
+
+        let buffer = frame(&app, size);
+        let selected = app.theme.style(Element::Selection).bg.expect("a background");
+        for y in CONTENT_TOP..CONTENT_TOP + 2 {
+            for x in 0..size.width {
+                assert_eq!(buffer[(x, y)].bg, selected, "({x}, {y}) is outside the selection");
+            }
+        }
+        assert!(
+            (0..size.width).any(|x| buffer[(x, CONTENT_TOP + 2)].bg != selected),
+            "the row past the selection was painted too"
+        );
+    }
+
+    #[test]
+    fn a_blank_line_inside_a_visual_selection_is_painted_too() {
+        let size = Size::new(60, 12);
+        let mut app = app("first\n\nsecond\n", size);
+        app.apply(Action::VisualStart);
+        app.apply(Action::Move(Motion::Line(2)));
+
+        let blank = CONTENT_TOP + 1;
+        assert!(app.lines[1].is_blank(), "the fixture has no blank line to paint");
+
+        let buffer = frame(&app, size);
+        let selected = app.theme.style(Element::Selection).bg.expect("a background");
+        for x in 0..size.width {
+            assert_eq!(buffer[(x, blank)].bg, selected, "the selection is striped at column {x}");
+        }
+    }
+
+    #[test]
+    fn the_selection_outranks_the_cursor_bar_on_the_anchor_row() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        app.apply(Action::VisualStart);
+
+        let buffer = frame(&app, size);
+        let selected = app.theme.style(Element::Selection).bg.expect("a background");
+        assert_eq!(buffer[(0, CONTENT_TOP)].bg, selected, "the cursor bar is showing through");
+    }
+
+    #[test]
+    fn a_visual_selection_outranks_a_search_highlight() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        search_for(&mut app, "line");
+        app.apply(Action::VisualStart);
+
+        let buffer = frame(&app, size);
+        let selected = app.theme.style(Element::Selection).bg.expect("a background");
+        assert_eq!(buffer[(1, CONTENT_TOP)].bg, selected, "a match under the selection reads as selected");
+    }
+
+    #[test]
+    fn the_statusbar_says_the_reader_is_selecting_and_how_many_lines() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        let status = size.height - 1;
+
+        app.apply(Action::VisualStart);
+        assert_eq!(row(&frame(&app, size), status), "visual · 1 line");
+
+        app.apply(Action::Move(Motion::Line(2)));
+        assert_eq!(row(&frame(&app, size), status), "visual · 3 lines");
+
+        app.apply(Action::VisualYank);
+        assert_eq!(row(&frame(&app, size), status), "Copied 3 lines", "the notice the reader earned");
+    }
+
+    #[test]
+    fn an_error_still_reaches_the_reader_in_visual_mode() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        let status = size.height - 1;
+
+        app.apply(Action::VisualStart);
+        app.report("note.md: not found");
+
+        let buffer = frame(&app, size);
+        assert_eq!(row(&buffer, status), "note.md: not found", "the indicator hid an error");
+        assert_eq!(buffer[(0, status)].fg, app.theme.style(Element::StatusError).fg.expect("a foreground"));
+    }
+
+    #[test]
     fn the_overlay_covers_the_document_and_lists_the_bindings() {
         let size = Size::new(100, 24);
         let mut app = app(&body(), size);
@@ -581,8 +687,8 @@ mod tests {
         let popup = help_area(area);
         assert_eq!(popup.width, 60);
         assert_eq!(popup.x, 20, "centred");
-        assert_eq!(popup.height, 20);
-        assert_eq!(popup.y, 10, "centred");
+        assert_eq!(popup.height, 21);
+        assert_eq!(popup.y, 9, "centred");
     }
 
     #[test]
@@ -948,7 +1054,7 @@ mod tests {
 
     #[test]
     fn the_help_overlay_lists_every_binding_the_readme_names() {
-        for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "h / Backspace, l", "t", "p", "Left drag"] {
+        for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "v / V", "h / Backspace, l", "t", "p", "Left drag"] {
             assert!(HELP.iter().any(|(row, _)| *row == key), "{key} is not in the help table");
         }
     }

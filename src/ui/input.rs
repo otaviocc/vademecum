@@ -49,13 +49,16 @@ pub enum Action {
     History { forward: bool },
     Yank,
     YankLink,
+    VisualStart,
+    VisualYank,
+    VisualCancel,
     Reload,
 }
 
 pub fn action(event: &Event, mode: Mode) -> Option<Action> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => key_action(*key, mode),
-        Event::Mouse(mouse) if mode != Mode::Help => mouse_action(*mouse, mode),
+        Event::Mouse(mouse) if !matches!(mode, Mode::Help | Mode::Visual) => mouse_action(*mouse, mode),
         Event::Resize(columns, rows) => Some(Action::Resize(Size::new(*columns, *rows))),
         _ => None,
     }
@@ -70,6 +73,7 @@ fn key_action(key: KeyEvent, mode: Mode) -> Option<Action> {
         Mode::Search => typing(key),
         Mode::Toc => contents(key),
         Mode::Properties => sheet(key),
+        Mode::Visual => visual(key),
         Mode::Help => overlay(key),
     }
 }
@@ -101,6 +105,7 @@ fn browse(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('o') => Some(Action::OpenExternal),
         KeyCode::Char('y') => Some(Action::Yank),
         KeyCode::Char('Y') => Some(Action::YankLink),
+        KeyCode::Char('v') | KeyCode::Char('V') => Some(Action::VisualStart),
         KeyCode::Char('h') | KeyCode::Backspace => Some(Action::History { forward: false }),
         KeyCode::Char('l') => Some(Action::History { forward: true }),
         KeyCode::Char('/') => Some(Action::SearchStart),
@@ -110,6 +115,34 @@ fn browse(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('t') => Some(Action::ToggleToc),
         KeyCode::Char('p') => Some(Action::ToggleProperties),
         KeyCode::Esc => Some(Action::Dismiss),
+        KeyCode::Char('q') => Some(Action::Quit),
+        _ => None,
+    }
+}
+
+fn visual(key: KeyEvent) -> Option<Action> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match key.code {
+            KeyCode::Char('d') => Some(Action::Move(Motion::HalfPage(1))),
+            KeyCode::Char('u') => Some(Action::Move(Motion::HalfPage(-1))),
+            _ => None,
+        };
+    }
+    if key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER) {
+        return None;
+    }
+
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Some(Action::Move(Motion::Line(1))),
+        KeyCode::Char('k') | KeyCode::Up => Some(Action::Move(Motion::Line(-1))),
+        KeyCode::Char('d') => Some(Action::Move(Motion::HalfPage(1))),
+        KeyCode::Char('u') => Some(Action::Move(Motion::HalfPage(-1))),
+        KeyCode::Char(' ') | KeyCode::PageDown => Some(Action::Move(Motion::Page(1))),
+        KeyCode::Char('b') | KeyCode::PageUp => Some(Action::Move(Motion::Page(-1))),
+        KeyCode::Char('g') | KeyCode::Home => Some(Action::Move(Motion::Top)),
+        KeyCode::Char('G') | KeyCode::End => Some(Action::Move(Motion::Bottom)),
+        KeyCode::Char('y') | KeyCode::Char('Y') => Some(Action::VisualYank),
+        KeyCode::Esc => Some(Action::VisualCancel),
         KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
     }
@@ -269,6 +302,8 @@ mod tests {
             (press(KeyCode::Enter), Action::Follow),
             (press(KeyCode::Char('o')), Action::OpenExternal),
             (press(KeyCode::Char('y')), Action::Yank),
+            (press(KeyCode::Char('v')), Action::VisualStart),
+            (press(KeyCode::Char('V')), Action::VisualStart),
             (press(KeyCode::Char('Y')), Action::YankLink),
             (press(KeyCode::Char('h')), Action::History { forward: false }),
             (press(KeyCode::Backspace), Action::History { forward: false }),
@@ -340,7 +375,7 @@ mod tests {
             row: 0,
             modifiers: KeyModifiers::NONE,
         });
-        for mode in [Mode::Search, Mode::Help] {
+        for mode in [Mode::Search, Mode::Help, Mode::Visual] {
             assert_eq!(action(&click, mode), None, "{mode:?}");
         }
     }
@@ -366,7 +401,7 @@ mod tests {
 
     #[test]
     fn a_resize_reaches_the_pager_in_every_mode() {
-        for mode in [Mode::Browse, Mode::Search, Mode::Toc, Mode::Properties, Mode::Help] {
+        for mode in [Mode::Browse, Mode::Search, Mode::Toc, Mode::Properties, Mode::Visual, Mode::Help] {
             assert_eq!(action(&Event::Resize(80, 24), mode), Some(Action::Resize(Size::new(80, 24))), "{mode:?}");
         }
     }
@@ -429,7 +464,7 @@ mod tests {
 
     #[test]
     fn ctrl_c_quits_from_anywhere() {
-        for mode in [Mode::Browse, Mode::Search, Mode::Toc, Mode::Properties, Mode::Help] {
+        for mode in [Mode::Browse, Mode::Search, Mode::Toc, Mode::Properties, Mode::Visual, Mode::Help] {
             assert_eq!(action(&control('c'), mode), Some(Action::Quit), "{mode:?}");
         }
     }
@@ -483,6 +518,7 @@ mod tests {
         assert_eq!(browsing(&press(KeyCode::Char('p'))), Some(Action::ToggleProperties));
         assert_eq!(action(&press(KeyCode::Char('p')), Mode::Search), Some(Action::SearchType('p')));
         assert_eq!(action(&press(KeyCode::Char('p')), Mode::Toc), None);
+        assert_eq!(action(&press(KeyCode::Char('p')), Mode::Visual), None);
         assert_eq!(action(&press(KeyCode::Char('p')), Mode::Help), None);
     }
 
@@ -510,6 +546,82 @@ mod tests {
     #[test]
     fn a_control_chord_does_not_type_its_letter_into_the_query() {
         assert_eq!(action(&control('d'), Mode::Search), None);
+    }
+
+    #[test]
+    fn visual_mode_answers_to_the_motions_that_walk_the_document() {
+        let cases = [
+            (press(KeyCode::Char('j')), Action::Move(Motion::Line(1))),
+            (press(KeyCode::Down), Action::Move(Motion::Line(1))),
+            (press(KeyCode::Char('k')), Action::Move(Motion::Line(-1))),
+            (press(KeyCode::Up), Action::Move(Motion::Line(-1))),
+            (press(KeyCode::Char('d')), Action::Move(Motion::HalfPage(1))),
+            (control('d'), Action::Move(Motion::HalfPage(1))),
+            (press(KeyCode::Char('u')), Action::Move(Motion::HalfPage(-1))),
+            (control('u'), Action::Move(Motion::HalfPage(-1))),
+            (press(KeyCode::Char(' ')), Action::Move(Motion::Page(1))),
+            (press(KeyCode::PageDown), Action::Move(Motion::Page(1))),
+            (press(KeyCode::Char('b')), Action::Move(Motion::Page(-1))),
+            (press(KeyCode::PageUp), Action::Move(Motion::Page(-1))),
+            (press(KeyCode::Char('g')), Action::Move(Motion::Top)),
+            (press(KeyCode::Home), Action::Move(Motion::Top)),
+            (press(KeyCode::Char('G')), Action::Move(Motion::Bottom)),
+            (press(KeyCode::End), Action::Move(Motion::Bottom)),
+        ];
+        for (event, expected) in cases {
+            assert_eq!(action(&event, Mode::Visual), Some(expected), "{event:?}");
+        }
+    }
+
+    #[test]
+    fn visual_mode_yanks_cancels_and_quits() {
+        let cases = [
+            (press(KeyCode::Char('y')), Action::VisualYank),
+            (press(KeyCode::Char('Y')), Action::VisualYank),
+            (press(KeyCode::Esc), Action::VisualCancel),
+            (press(KeyCode::Char('q')), Action::Quit),
+            (control('c'), Action::Quit),
+        ];
+        for (event, expected) in cases {
+            assert_eq!(action(&event, Mode::Visual), Some(expected), "{event:?}");
+        }
+    }
+
+    #[test]
+    fn visual_mode_answers_to_nothing_that_would_leave_the_document() {
+        let codes = [
+            KeyCode::Char('/'),
+            KeyCode::Char('n'),
+            KeyCode::Char('N'),
+            KeyCode::Char('t'),
+            KeyCode::Char('p'),
+            KeyCode::Char('?'),
+            KeyCode::Char('o'),
+            KeyCode::Char('h'),
+            KeyCode::Char('l'),
+            KeyCode::Char('v'),
+            KeyCode::Tab,
+            KeyCode::BackTab,
+            KeyCode::Enter,
+            KeyCode::Backspace,
+        ];
+        for code in codes {
+            assert_eq!(action(&press(code), Mode::Visual), None, "{code:?}");
+        }
+    }
+
+    #[test]
+    fn every_mouse_event_is_discarded_in_visual_mode() {
+        let kinds = [
+            MouseEventKind::ScrollDown,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ];
+        for kind in kinds {
+            assert_eq!(action(&wheel(kind), Mode::Visual), None, "{kind:?}");
+        }
     }
 
     #[test]
