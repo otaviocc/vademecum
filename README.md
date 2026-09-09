@@ -13,9 +13,7 @@ notes by following `[[wikilinks]]` with `Enter`.
 It is one Rust binary with nothing to install alongside it. Themes and syntax
 definitions are compiled in.
 
-*vade mecum*, Latin: "go with me" — the handbook you carry.
-
-<img width="983" height="863" alt="Screenshot" src="https://github.com/user-attachments/assets/7b7a173e-8908-4d79-9d5c-622f149cf194" />
+<img width="1061" height="1692" alt="Screenshot" src="https://github.com/user-attachments/assets/47a111da-1f4f-47e9-99d4-17978019d427" />
 
 ## Install
 
