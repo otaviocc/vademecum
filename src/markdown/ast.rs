@@ -77,7 +77,9 @@ pub fn parse(source: &str) -> Vec<SourceBlock> {
         | Options::ENABLE_WIKILINKS;
     let events = pulldown_cmark::Parser::new_ext(source, options).into_offset_iter();
 
-    Ast { events: events.peekable(), lines: LineIndex::new(source), anchors: HashMap::new() }.blocks()
+    let mut ast = Ast { events: events.peekable(), lines: LineIndex::new(source), anchors: HashMap::new() };
+    let blocks = ast.blocks();
+    crate::markdown::footnotes::gather(blocks, |text| ast.anchor(text))
 }
 
 pub fn plain_text(inlines: &[Inline]) -> String {
@@ -545,7 +547,8 @@ mod tests {
         let Block::Paragraph(inlines) = &blocks[0] else { panic!("not a paragraph") };
         assert!(inlines.contains(&Inline::FootnoteRef("1".into())));
 
-        let Block::FootnoteDef { label, blocks } = &blocks[1] else { panic!("not a footnote definition") };
+        assert!(matches!(blocks[1], Block::Heading { level: 2, .. }), "the synthesized Footnotes heading");
+        let Block::FootnoteDef { label, blocks } = &blocks[2] else { panic!("not a footnote definition") };
         assert_eq!(label, "1");
         assert_eq!(blocks[0].block, Block::Paragraph(vec![text("the note")]));
     }

@@ -153,11 +153,10 @@ expression: output
 
  [image: a cat, sitting]
 
- Footnotes
+ Notes and references
 
- A sentence with a footnote reference[^1].
-
- [^1] The definition, long enough that it wraps and hangs under its marker.
+ A sentence with a footnote reference[^1], and a second reference[^2] later in
+ the same paragraph.
 
  Raw HTML
 
@@ -174,3 +173,12 @@ expression: output
  Rules
 
  ───────────────────────────────────────────────────────────────────────────────
+
+ Footnotes
+
+ [^1] The first definition, long enough that it wraps and hangs under its
+      marker.
+
+ [^2] The second definition. It is written before the first one in the source,
+      but the reader meets its reference second, so it is renumbered to [^2] and
+      gathered under the heading below.

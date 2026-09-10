@@ -153,11 +153,10 @@ expression: "themed(\"ansi\")"
 
  [0;37;3m[image: a cat, sitting][0m
 
- [0;36;1mFootnotes[0m
+ [0;36;1mNotes and references[0m
 
- [0;39mA sentence with a footnote reference[0;37m[^1][0;39m.[0m
-
- [0;37m[^1] [0;39mThe definition, long enough that it wraps and hangs under its marker.[0m
+ [0;39mA sentence with a footnote reference[0;37m[^1][0;39m, and a second reference[0;37m[^2][0;39m later in[0m
+ [0;39mthe same paragraph.[0m
 
  [0;36;1mRaw HTML[0m
 
@@ -174,3 +173,12 @@ expression: "themed(\"ansi\")"
  [0;36;1mRules[0m
 
  [0;90m───────────────────────────────────────────────────────────────────────────────[0m
+
+ [0;36;1mFootnotes[0m
+
+ [0;37m[^1] [0;39mThe first definition, long enough that it wraps and hangs under its[0m
+      [0;39mmarker.[0m
+
+ [0;37m[^2] [0;39mThe second definition. It is written before the first one in the source,[0m
+      [0;39mbut the reader meets its reference second, so it is renumbered to [0;33m[^2][0;39m and[0m
+      [0;39mgathered under the heading below.[0m

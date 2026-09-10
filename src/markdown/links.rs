@@ -36,6 +36,7 @@ pub enum LinkKind {
     External(Url),
     Local { path: PathBuf, fragment: Option<String> },
     Wiki { target: String, fragment: Option<String> },
+    Footnote { label: String, number: usize, back: bool },
 }
 
 pub fn classify(destination: &str, link_type: LinkType) -> LinkKind {
@@ -73,12 +74,13 @@ impl LinkKind {
             Self::External(_) => "external",
             Self::Local { .. } => "local",
             Self::Wiki { .. } => "wiki",
+            Self::Footnote { .. } => "footnote",
         }
     }
 
     pub fn fragment(&self) -> Option<&str> {
         match self {
-            Self::External(_) => None,
+            Self::External(_) | Self::Footnote { .. } => None,
             Self::Local { fragment, .. } | Self::Wiki { fragment, .. } => fragment.as_deref(),
         }
     }
@@ -92,6 +94,7 @@ impl LinkKind {
             Self::External(url) => url.to_string(),
             Self::Local { path, fragment } => with_fragment(path.display().to_string(), fragment),
             Self::Wiki { target, fragment } => with_fragment(target.clone(), fragment),
+            Self::Footnote { label, .. } => format!("[^{label}]"),
         }
     }
 }
@@ -202,6 +205,7 @@ impl Vault {
     pub fn resolve(&self, kind: &LinkKind, document: &Document) -> Result<Target, ResolveError> {
         match kind {
             LinkKind::External(_) => Ok(Target::External),
+            LinkKind::Footnote { .. } => Ok(Target::SameDocument),
             LinkKind::Local { path, .. } if path.as_os_str().is_empty() => Ok(Target::SameDocument),
             LinkKind::Local { path, .. } => {
                 for candidate in local_candidates(path) {

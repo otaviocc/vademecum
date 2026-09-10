@@ -153,11 +153,10 @@ expression: "themed(\"tokyo-night\")"
 
  [0;38;2;86;95;137;3m[image: a cat, sitting][0m
 
- [0;38;2;122;162;247;1mFootnotes[0m
+ [0;38;2;122;162;247;1mNotes and references[0m
 
- [0;38;2;192;202;245mA sentence with a footnote reference[0;38;2;86;95;137m[^1][0;38;2;192;202;245m.[0m
-
- [0;38;2;86;95;137m[^1] [0;38;2;192;202;245mThe definition, long enough that it wraps and hangs under its marker.[0m
+ [0;38;2;192;202;245mA sentence with a footnote reference[0;38;2;86;95;137m[^1][0;38;2;192;202;245m, and a second reference[0;38;2;86;95;137m[^2][0;38;2;192;202;245m later in[0m
+ [0;38;2;192;202;245mthe same paragraph.[0m
 
  [0;38;2;122;162;247;1mRaw HTML[0m
 
@@ -174,3 +173,12 @@ expression: "themed(\"tokyo-night\")"
  [0;38;2;122;162;247;1mRules[0m
 
  [0;38;2;65;72;104m───────────────────────────────────────────────────────────────────────────────[0m
+
+ [0;38;2;122;162;247;1mFootnotes[0m
+
+ [0;38;2;86;95;137m[^1] [0;38;2;192;202;245mThe first definition, long enough that it wraps and hangs under its[0m
+      [0;38;2;192;202;245mmarker.[0m
+
+ [0;38;2;86;95;137m[^2] [0;38;2;192;202;245mThe second definition. It is written before the first one in the source,[0m
+      [0;38;2;192;202;245mbut the reader meets its reference second, so it is renumbered to [0;38;2;224;175;104;48;2;31;35;53m[^2][0;38;2;192;202;245m and[0m
+      [0;38;2;192;202;245mgathered under the heading below.[0m
