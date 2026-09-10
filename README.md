@@ -321,6 +321,13 @@ on its own, and a note you create elsewhere in the vault stops being a broken
 link without a restart (in a vault; outside one, only the document's own folder
 is ever consulted).
 
+A reload marks what it changed: a `▍` bar in the left margin against every
+line the edit touched, painted in the `changed_line` colour. The marks cut two
+seconds later, so the page returns to rest on its own, and moving around does
+not clear them early — scrolling over to look at a change cannot erase it. An
+edit inside a paragraph marks the whole paragraph, since that is the unit the
+reader sees. `--no-change-marks` turns them off.
+
 ## Themes
 
 Thirteen themes ship in the binary, listed in the order `--list-themes` prints
@@ -451,8 +458,8 @@ The element names are `paragraph`, `heading1`–`heading6`, `emphasis`, `strong`
 `link_focused`, `link_unfocused`, `link_broken`, `image`, `footnote`, `html`, `callout`,
 `quote_gutter`, `table_header`,
 `table_border`, `hr`, `header_title`, `hint`, `status`, `status_notice`,
-`status_error`, `cursor_line`, `search_match`, `search_current`, `selection`
-and `help_window`. Each takes `fg`, `bg` and `modifiers`, and each falls back
+`status_error`, `cursor_line`, `changed_line`, `search_match`, `search_current`,
+`selection` and `help_window`. Each takes `fg`, `bg` and `modifiers`, and each falls back
 independently. Note that `link` is external links only — a local or wiki link
 that resolves is painted with `wikilink`, and one that does not with
 `link_broken`.
@@ -529,6 +536,7 @@ TOML and Mermaid. Origins and licences for the added ones are in
 | `--root <dir>` | Vault root for wikilink lookup |
 | `--watch` | Re-render on change. Needs a file |
 | `--no-mouse` | Give up wheel scrolling, keep the terminal's own selection |
+| `--no-change-marks` | Do not mark the lines a reload changed. Needs `--watch` |
 | `--list-themes`, `--list-syntax-themes` | Print available names and exit |
 | `--resolve-links` | Print every link and where it resolves, then exit |
 
