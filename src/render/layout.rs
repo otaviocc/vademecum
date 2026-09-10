@@ -20,12 +20,10 @@ const QUOTE_GUTTER: &str = "┃ ";
 const CALLOUT_SEPARATOR: &str = " · ";
 
 pub fn wrap_width(explicit: Option<u16>, columns: Option<u16>) -> usize {
-    if let Some(width) = explicit {
-        return usize::from(width).max(1);
-    }
+    let cap = explicit.map_or(DEFAULT_WIDTH, |width| usize::from(width).max(1));
     match columns {
-        Some(columns) => usize::from(columns).saturating_sub(TERMINAL_MARGIN).clamp(1, DEFAULT_WIDTH),
-        None => DEFAULT_WIDTH,
+        Some(columns) => usize::from(columns).saturating_sub(TERMINAL_MARGIN).clamp(1, cap),
+        None => cap,
     }
 }
 
@@ -827,9 +825,19 @@ mod tests {
     use crate::markdown::ast::parse;
 
     #[test]
-    fn an_explicit_width_wins_over_the_terminal() {
+    fn an_explicit_width_caps_a_wider_terminal() {
         assert_eq!(wrap_width(Some(80), Some(200)), 80);
+    }
+
+    #[test]
+    fn a_narrower_terminal_wins_over_an_explicit_width() {
+        assert_eq!(wrap_width(Some(80), Some(40)), 39);
+    }
+
+    #[test]
+    fn an_explicit_width_is_taken_whole_with_no_terminal_to_measure() {
         assert_eq!(wrap_width(Some(80), None), 80);
+        assert_eq!(wrap_width(Some(200), None), 200);
     }
 
     #[test]

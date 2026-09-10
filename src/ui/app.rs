@@ -1293,10 +1293,23 @@ mod tests {
     }
 
     #[test]
-    fn a_pinned_width_ignores_the_terminal() {
+    fn a_pinned_width_caps_a_wider_terminal() {
         let mut app = paged();
         app.apply(Action::Resize(Size::new(200, 14)));
         assert_eq!(app.width, 40);
+    }
+
+    #[test]
+    fn a_terminal_narrower_than_the_pinned_width_lays_the_document_out_again() {
+        let mut app = paged();
+        assert_eq!(app.width, 40);
+
+        app.apply(Action::Resize(Size::new(30, 14)));
+
+        assert_eq!(app.width, 29);
+        for line in &app.lines {
+            assert!(line.width() <= 29, "{:?} is wider than the terminal", line.text());
+        }
     }
 
     #[test]
