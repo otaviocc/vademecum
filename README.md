@@ -119,6 +119,11 @@ see, and the statusbar's `line X/Y` is never describing something off screen.
 Scrolling away and back does not restore the line you started on — the cursor
 came along.
 
+The rule under the header doubles as a progress bar. It starts plain and tints
+from the left as you read, matching the percentage on the statusbar, so it is
+empty at the top of a document and fully coloured at the bottom. It reports
+position and nothing else — clicking or dragging it does nothing.
+
 `v` or `V` selects whole lines without the mouse. It anchors on the cursor line
 and the reading keys extend the selection from there — `j` / `k`, the arrows,
 `d` / `u`, `Space` / `b`, `g` / `G` — in either direction, with the statusbar
@@ -458,9 +463,12 @@ The element names are `paragraph`, `heading1`–`heading6`, `emphasis`, `strong`
 `link_focused`, `link_unfocused`, `link_broken`, `image`, `footnote`, `html`, `callout`,
 `quote_gutter`, `table_header`,
 `table_border`, `hr`, `header_title`, `hint`, `status`, `status_notice`,
-`status_error`, `cursor_line`, `changed_line`, `search_match`, `search_current`,
-`selection` and `help_window`. Each takes `fg`, `bg` and `modifiers`, and each falls back
-independently. Note that `link` is external links only — a local or wiki link
+`status_error`, `cursor_line`, `changed_line`, `scroll_progress`, `search_match`,
+`search_current`, `selection` and `help_window`. Each takes `fg`, `bg` and `modifiers`,
+and each falls back
+independently. `scroll_progress` is the exception: it recolours the rule under the
+header in place, so only its `fg` is used. To hide the progress bar, give it the same
+colour as `hint`. Note that `link` is external links only — a local or wiki link
 that resolves is painted with `wikilink`, and one that does not with
 `link_broken`.
 
