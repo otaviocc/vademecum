@@ -107,6 +107,19 @@ integration suites; `tests/common/mod.rs` builds the `Command`.
 
   `link` needs no local state, so a stack opened one `gh pr create` at a time
   can be adopted after the fact.
+- `gh stack merge --yes --merge` with **no number** resolves the stack from the
+  branch you have checked out, and a branch `link`ed into a stack from another
+  branch is not it: the merge refuses with *"current branch is not part of a
+  stack"*. Pass the top PR's number instead — `gh stack merge 115 --yes
+  --merge` merges everything up to and including it, atomically and
+  all-or-nothing. A bare number is read as a *stack* number first and a PR
+  number second, so prefer the PR number, which cannot collide. There is no
+  `gh stack list`; `gh stack link` prints the stack number it made.
+- `git commit --amend` amends **HEAD**, and `--only <paths>` does not change
+  which commit that is. Folding a fix into the commit that owns it, when a
+  `docs:` commit sits on top, goes `git reset --soft HEAD~1`,
+  `git restore --staged <the docs paths>`, `git commit --amend --no-edit`, then
+  re-commit the docs. Amending blind puts test code in the documentation commit.
 - Do **not** merge a stack PR-by-PR with `--delete-branch`. Deleting the base of
   the PR above **closes** it rather than retargeting, and a closed PR whose base
   is gone cannot be recovered with `gh pr edit --base` or `gh pr reopen` —
@@ -225,6 +238,12 @@ everything up to the publish.
   resize below that does. A test about relayout can therefore resize one of them
   narrow, or build an `App` whose width follows the terminal
   (`Options::default()`); a test that wants *no* relayout must stay wide.
+- `row()` in `src/ui/view.rs`'s tests is `raw(...).trim()`, so it is the wrong
+  tool for proving a paint moved nothing. A leading space is trimmed away and a
+  glyph painted over that same column is not, so the two rows shift against each
+  other and a passing comparison means the opposite of what it reads. Compare
+  the cells (`buffer[(x, y)].symbol()`) column by column instead — that is what
+  "nothing moved" actually asserts.
 - Process-global state (the highlight cache, the warning list) makes tests race
   under `cargo test`'s parallelism. **Readers** must take the lock too: a test
   asserting `Arc::ptr_eq` across two calls raced with the test that fills the
@@ -320,6 +339,14 @@ before the quit.
   N is past the whole key sequence: an edit landing before the navigation is
   already in the file when it opens, and the run looks like a successful reload
   when none happened.
+- **A capture of something that expires has to quit before it expires.**
+  `tools/replay-frame.py` reassembles every repaint in order, so a run that
+  outlives a transient mark shows the frame with it already cut and reads
+  exactly like a feature that never drew. Time the `q` between the effect and
+  its deadline, and prove the other half separately: the cut is its own frame,
+  a lone `ESC[<row>;1H` and a space, which is also how you see the clock fired
+  once and did one cell of work. Grepping the raw capture for the glyph still
+  finds it either way — that is what tells the two cases apart.
 - `cargo build` in this tree can report the binary `Fresh` while
   `target/debug/vademecum` is a day old, so a smoke test silently runs the
   previous build — and so does `cargo test`, which uses the same copy via
@@ -409,6 +436,24 @@ before the quit.
   the line. Whole-line indicators follow `CursorLine` instead: one
   `set_style` over `area.width`. `selected()` means "the columns a drag
   covered" and nothing else. #109 was designed the other way first.
+- **`layout::render` prefixes every non-blank line with a one-column blank
+  gutter, and that column is the place for a line-level indicator.** It is
+  already reserved, no document content can occupy it, and painting there
+  reflows nothing and leaves `render::layout` and the stdout snapshots alone.
+  Paint it with `cell_mut(...).set_symbol(…).set_fg(…)` rather than
+  `set_stringn`, so the mark keeps whatever background is under it — the cursor
+  line's, a code fence's band — and needs no `bg` of its own, which is what
+  lets it work under `handbook`, whose background is `Color::Reset`.
+- A clock the pager owns is asked for through **one** function
+  (`ui::pulse::patience`) that returns `None` when nothing is armed, so
+  `event_loop`'s receive is untimed while idle by construction rather than by
+  care. Expire it at the **top of every loop turn**, never on the
+  `RecvTimeoutError::Timeout` arm: `recv_timeout` returns `Ok` whenever anything
+  is queued, and mouse capture is on by default, so a reader moving the pointer
+  would keep a spent deadline alive indefinitely. Colour is not the medium for
+  a fade here — `handbook`'s `background` and `foreground` are `Color::Reset`
+  and most slots are named ANSI variants, so there is no RGB to interpolate
+  against. Cut, do not fade.
 - Case-insensitive search folds one character at a time against the original
   text. Matching over a `to_lowercase()` copy is easier but its byte offsets
   index the copy, and `İ` folds to two characters, so the highlight lands on the
