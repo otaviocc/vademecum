@@ -530,11 +530,15 @@ impl App {
         (count > 0).then_some((self.focus + 1, count))
     }
 
-    pub fn percent(&self) -> usize {
+    pub fn progress(&self, scale: usize) -> usize {
         match self.lines.len() {
-            0 | 1 => 100,
-            len => self.cursor * 100 / (len - 1),
+            0 | 1 => scale,
+            len => (self.cursor as u64 * scale as u64 / (len as u64 - 1)) as usize,
         }
+    }
+
+    pub fn percent(&self) -> usize {
+        self.progress(100)
     }
 
     fn move_cursor(&mut self, motion: Motion) {
@@ -1438,6 +1442,47 @@ mod tests {
     #[test]
     fn a_one_line_document_is_read_in_full() {
         assert_eq!(app("hi\n", 14).percent(), 100);
+    }
+
+    #[test]
+    fn progress_spans_the_whole_scale_and_only_ever_grows() {
+        let mut app = paged();
+        assert_eq!(app.progress(80), 0, "the top of a document fills nothing");
+
+        let mut seen = 0;
+        for _ in 0..app.lines.len() {
+            let filled = app.progress(80);
+            assert!(filled >= seen, "the bar went backwards");
+            assert!(filled <= 80, "the bar overran its scale");
+            seen = filled;
+            app.apply(Action::Move(Motion::Line(1)));
+        }
+
+        app.apply(Action::Move(Motion::Bottom));
+        assert_eq!(app.progress(80), 80, "the bottom of a document fills everything");
+    }
+
+    #[test]
+    fn the_percentage_is_the_bar_measured_in_hundredths() {
+        let mut app = paged();
+        for _ in 0..12 {
+            assert_eq!(app.percent(), app.progress(100));
+            app.apply(Action::Move(Motion::HalfPage(1)));
+        }
+    }
+
+    #[test]
+    fn a_document_too_short_to_scroll_fills_the_bar() {
+        assert_eq!(app("hi\n", 14).progress(80), 80);
+        assert_eq!(app("", 14).progress(80), 80);
+    }
+
+    #[test]
+    fn a_bar_with_no_width_asks_for_no_cells() {
+        let mut app = paged();
+        assert_eq!(app.progress(0), 0);
+        app.apply(Action::Move(Motion::Bottom));
+        assert_eq!(app.progress(0), 0);
     }
 
     #[test]
