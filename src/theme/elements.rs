@@ -51,10 +51,11 @@ pub enum Element {
     Callout,
     QuoteGutter,
     ChangedLine,
+    ScrollProgress,
 }
 
 impl Element {
-    pub const ALL: [Element; 42] = [
+    pub const ALL: [Element; 43] = [
         Element::Paragraph,
         Element::Heading1,
         Element::Heading2,
@@ -97,6 +98,7 @@ impl Element {
         Element::Callout,
         Element::QuoteGutter,
         Element::ChangedLine,
+        Element::ScrollProgress,
     ];
 
     pub fn key(self) -> &'static str {
@@ -143,6 +145,7 @@ impl Element {
             Element::Callout => "callout",
             Element::QuoteGutter => "quote_gutter",
             Element::ChangedLine => "changed_line",
+            Element::ScrollProgress => "scroll_progress",
         }
     }
 
@@ -204,6 +207,7 @@ pub fn default_style(element: Element, palette: &Palette) -> Style {
         Element::Selection => style.fg(palette.selection_foreground).bg(palette.selection_background),
         Element::HelpWindow => style.fg(palette.foreground).bg(palette.background),
         Element::ChangedLine => style.fg(palette.notice),
+        Element::ScrollProgress => style.fg(palette.accent),
     }
 }
 

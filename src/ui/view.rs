@@ -63,6 +63,7 @@ impl Widget for Screen<'_> {
         let hint = self.app.theme.style(Element::Hint);
         header(header_row, buf, self.app);
         rule(top_rule, buf, hint);
+        progress(top_rule, buf, self.app);
         content(content_rows, buf, self.app);
         rule(bottom_rule, buf, hint);
         statusbar(status_row, buf, self.app);
@@ -96,6 +97,19 @@ fn header(area: Rect, buf: &mut Buffer, app: &App) {
 
 fn rule(area: Rect, buf: &mut Buffer, style: Style) {
     row(area, buf, area.x, &symbols::line::HORIZONTAL.repeat(area.width as usize), style);
+}
+
+fn progress(area: Rect, buf: &mut Buffer, app: &App) {
+    if area.height == 0 {
+        return;
+    }
+    let Some(color) = app.theme.style(Element::ScrollProgress).fg else { return };
+    let filled = u16::try_from(app.progress(area.width as usize)).unwrap_or(u16::MAX).min(area.width);
+    for x in area.x..area.x + filled {
+        if let Some(cell) = buf.cell_mut((x, area.y)) {
+            cell.set_fg(color);
+        }
+    }
 }
 
 fn content(area: Rect, buf: &mut Buffer, app: &App) {
@@ -483,6 +497,98 @@ mod tests {
         app.apply(Action::Move(Motion::Bottom));
         let buffer = frame(&app, size);
         assert_eq!(row(&buffer, size.height - 3).trim(), "line 20");
+    }
+
+    const TOP_RULE: u16 = 1;
+
+    fn tinted(buffer: &Buffer, app: &App, width: u16) -> u16 {
+        let progress = app.theme.style(Element::ScrollProgress).fg.expect("the bar has a colour");
+        (0..width).filter(|x| buffer[(*x, TOP_RULE)].fg == progress).count() as u16
+    }
+
+    #[test]
+    fn the_top_rule_is_untinted_at_the_top_of_the_document() {
+        let size = Size::new(60, 12);
+        let app = app(&body(), size);
+        let buffer = frame(&app, size);
+        let hint = app.theme.style(Element::Hint).fg.expect("the rule has a colour");
+
+        assert_eq!(app.progress(size.width as usize), 0, "the fixture does not start at the top");
+        for x in 0..size.width {
+            assert_eq!(buffer[(x, TOP_RULE)].fg, hint, "column {x} was tinted");
+        }
+    }
+
+    #[test]
+    fn the_top_rule_is_wholly_tinted_at_the_bottom_of_the_document() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        app.apply(Action::Move(Motion::Bottom));
+        let buffer = frame(&app, size);
+
+        assert_eq!(tinted(&buffer, &app, size.width), size.width);
+    }
+
+    #[test]
+    fn the_tint_stops_where_the_reading_position_says_it_does() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        app.apply(Action::Move(Motion::HalfPage(1)));
+        let buffer = frame(&app, size);
+
+        let filled = u16::try_from(app.progress(size.width as usize)).expect("fits");
+        assert!(filled > 0 && filled < size.width, "the fixture is not part way through");
+        assert_eq!(tinted(&buffer, &app, size.width), filled);
+
+        let hint = app.theme.style(Element::Hint).fg.expect("the rule has a colour");
+        for x in filled..size.width {
+            assert_eq!(buffer[(x, TOP_RULE)].fg, hint, "column {x} was tinted past the position");
+        }
+    }
+
+    #[test]
+    fn the_tint_recolours_the_rule_and_never_reshapes_it() {
+        let size = Size::new(60, 12);
+        let plain = row(&frame(&app(&body(), size), size), TOP_RULE);
+
+        for motion in [Motion::HalfPage(1), Motion::Bottom] {
+            let mut app = app(&body(), size);
+            app.apply(Action::Move(motion));
+            assert_eq!(row(&frame(&app, size), TOP_RULE), plain, "the rule changed shape");
+        }
+    }
+
+    #[test]
+    fn the_bottom_rule_carries_no_progress() {
+        let size = Size::new(60, 12);
+        let mut app = app(&body(), size);
+        app.apply(Action::Move(Motion::Bottom));
+        let buffer = frame(&app, size);
+        let hint = app.theme.style(Element::Hint).fg.expect("the rule has a colour");
+
+        for x in 0..size.width {
+            assert_eq!(buffer[(x, size.height - 2)].fg, hint, "column {x} was tinted");
+        }
+    }
+
+    #[test]
+    fn a_theme_that_paints_the_bar_like_the_rule_shows_no_bar() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("theme.toml");
+        std::fs::write(&path, "name = \"quiet\"\n\n[elements.scroll_progress]\nfg = \"muted_text\"\n").expect("write");
+        let theme = crate::theme::loader::load(Some(&path), None).expect("theme");
+        assert_eq!(theme.style(Element::ScrollProgress).fg, theme.style(Element::Hint).fg);
+
+        let size = Size::new(60, 12);
+        let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), body());
+        let mut app = App::new(document, theme, &Options { width: None, ..Options::default() }, size);
+        app.apply(Action::Move(Motion::Bottom));
+
+        let buffer = frame(&app, size);
+        let hint = app.theme.style(Element::Hint).fg.expect("the rule has a colour");
+        for x in 0..size.width {
+            assert_eq!(buffer[(x, TOP_RULE)].fg, hint, "column {x} was tinted");
+        }
     }
 
     #[test]
