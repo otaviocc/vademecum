@@ -14,7 +14,7 @@ use crate::theme::{Element, Theme};
 pub const GUTTER: usize = 1;
 const CODE_PAD: usize = 1;
 const DEFAULT_WIDTH: usize = 100;
-const TERMINAL_MARGIN: usize = 2;
+const TERMINAL_MARGIN: usize = 1;
 const BULLETS: [&str; 3] = ["•", "◦", "▪"];
 const QUOTE_GUTTER: &str = "┃ ";
 const CALLOUT_SEPARATOR: &str = " · ";
@@ -844,7 +844,7 @@ mod tests {
 
     #[test]
     fn a_terminal_is_measured_less_a_margin_and_capped() {
-        assert_eq!(wrap_width(None, Some(40)), 38);
+        assert_eq!(wrap_width(None, Some(40)), 39);
         assert_eq!(wrap_width(None, Some(200)), DEFAULT_WIDTH);
         assert_eq!(wrap_width(None, Some(1)), 1);
     }
