@@ -235,8 +235,22 @@ capped, and going back returns you to the exact line you left rather than to the
 top. `Y` copies the focused link's target as it is written in the document,
 fragment and all.
 
-Images and footnote references are not links: they are rendered as text, so
-`Tab` skips them.
+Images are not links: they are rendered as text, so `Tab` skips them.
+
+### Footnotes
+
+Every footnote definition is gathered at the end of the document, under a
+`Footnotes` heading that vademecum adds, in the order the definitions are first
+referenced, and renumbered `[^1]`, `[^2]`, … however they were labelled in the
+source. An authored `## Footnotes` heading of your own is left where it is.
+
+A reference is a link. `Enter` on `[^1]` jumps to its definition; `Enter` on the
+`[^1]` at the head of the definition jumps back to the reference, so the two
+ping-pong, and `h` (or `Backspace`) also returns. A reference with no definition
+stays plain text.
+
+`Y` on a reference copies it with the label as written — `[^note]`, not the
+renumbered `[^1]` — so a search for the on-screen number will not find it.
 
 ### How a target is found
 
