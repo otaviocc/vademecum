@@ -523,7 +523,7 @@ TOML and Mermaid. Origins and licences for the added ones are in
 | `<path>` or `-` | Markdown file to open, or stdin |
 | `--plain` | Styled text on stdout even when it is a terminal |
 | `--color <auto\|always\|never>` | Colour in stdout mode. `auto` follows the terminal; `NO_COLOR` forces `never` |
-| `--width <n>` | Wrap width. Default `min(terminal − 1, 100)` |
+| `--width <n>` | Maximum wrap width. Default `100`, and never wider than `terminal − 1` |
 | `--theme <name>` | Built-in or user theme |
 | `--config <file>` | Explicit theme file, beats `--theme` |
 | `--root <dir>` | Vault root for wikilink lookup |
