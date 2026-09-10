@@ -218,11 +218,13 @@ everything up to the publish.
   screen, and the reducer test moved into the body first, so neither exercised
   the top of a long document — where every reader starts. Use `numbered(40)` and
   assert from line 0 whenever a change moves `top` or `cursor`.
-- `app()`, `paged()` and `on_disk()` in `src/ui/app.rs` pin `width: Some(40)`,
-  and `layout::wrap_width` returns an explicit width unchanged — so
-  `Action::Resize` never re-wraps in those apps and never reaches `rerender`. A
-  test about relayout has to build an `App` whose width follows the terminal
-  (`Options::default()`), or it silently proves nothing.
+- `app()`, `paged()` and `on_disk()` in `src/ui/app.rs` pin `width: Some(40)`
+  against a 60-column terminal, and an explicit width is a **maximum**: it only
+  holds while the terminal is wider. So `Action::Resize` to anything at or above
+  41 columns never re-wraps in those apps and never reaches `rerender`, while a
+  resize below that does. A test about relayout can therefore resize one of them
+  narrow, or build an `App` whose width follows the terminal
+  (`Options::default()`); a test that wants *no* relayout must stay wide.
 - Process-global state (the highlight cache, the warning list) makes tests race
   under `cargo test`'s parallelism. **Readers** must take the lock too: a test
   asserting `Arc::ptr_eq` across two calls raced with the test that fills the

@@ -16,7 +16,7 @@ pub struct Cli {
     #[arg(long, value_name = "WHEN", value_enum, default_value_t = ColorChoice::Auto, help = "ANSI colors in stdout mode")]
     pub color: ColorChoice,
 
-    #[arg(long, value_name = "N", help = "Wrap width. Defaults to min(terminal width - 2, 100)")]
+    #[arg(long, value_name = "N", help = "Maximum wrap width. Defaults to 100; a narrower terminal, less a column, wins")]
     pub width: Option<u16>,
 
     #[arg(long, value_name = "NAME", help = "Built-in or user theme by name")]
@@ -33,6 +33,9 @@ pub struct Cli {
 
     #[arg(long, help = "Disable mouse capture, keeping the terminal's own text selection")]
     pub no_mouse: bool,
+
+    #[arg(long, help = "Do not mark the lines a `--watch` reload changed")]
+    pub no_change_marks: bool,
 
     #[arg(long, help = "Print the available theme names and exit")]
     pub list_themes: bool,

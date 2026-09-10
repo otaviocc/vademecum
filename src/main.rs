@@ -48,7 +48,13 @@ fn main() -> Result<()> {
         return ui::run(
             document,
             theme,
-            ui::Options { mouse: !cli.no_mouse, width: cli.width, root: cli.root, watch: cli.watch },
+            ui::Options {
+                mouse: !cli.no_mouse,
+                width: cli.width,
+                root: cli.root,
+                watch: cli.watch,
+                change_marks: !cli.no_change_marks,
+            },
         );
     }
 

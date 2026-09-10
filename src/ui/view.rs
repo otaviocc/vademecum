@@ -12,11 +12,13 @@ use crate::theme::Element;
 use crate::ui::app::{App, Mode, Status};
 
 const HINTS: &str = "? help  t contents  / search  ⇥ link  ⏎ follow  h/l back/fwd  q quit";
-const TITLE_PREFIX: &str = " vademecum · ";
+const TITLE_PREFIX: &str = "vademecum · ";
 const HINT_GAP: usize = 2;
+const EDGE_PAD: u16 = 1;
 const HELP_WIDTH: (u32, u32) = (3, 5);
 const HELP_FLOOR: (u32, u32) = (4, 10);
 const HELP_CEILING: (u32, u32) = (9, 10);
+const MARK: &str = "▍";
 const CHEVRON: &str = "›";
 const CHEVRON_COLUMN: u16 = 2;
 const TOC_INDENT: usize = 2;
@@ -82,6 +84,7 @@ fn row(area: Rect, buf: &mut Buffer, x: u16, text: &str, style: Style) {
 }
 
 fn header(area: Rect, buf: &mut Buffer, app: &App) {
+    let area = padded(area);
     let title = format!("{TITLE_PREFIX}{}", app.title);
     row(area, buf, area.x, &title, app.theme.style(Element::HeaderTitle));
 
@@ -133,6 +136,17 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
 
         highlight(area, buf, y, app, index, line);
         selection(area, buf, y, app, index, line);
+        mark(area, buf, y, app, index);
+    }
+}
+
+fn mark(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize) {
+    if !app.pulsed.get(index).copied().unwrap_or(false) {
+        return;
+    }
+    let Some(color) = app.theme.style(Element::ChangedLine).fg else { return };
+    if let Some(cell) = buf.cell_mut((area.x, y)) {
+        cell.set_symbol(MARK).set_fg(color);
     }
 }
 
@@ -176,6 +190,7 @@ fn highlight(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize, line
 }
 
 fn statusbar(area: Rect, buf: &mut Buffer, app: &App) {
+    let area = padded(area);
     let (text, element) = match (app.mode, &app.status) {
         (Mode::Search, _) => (format!("/{}", app.search.input), Element::Status),
         (Mode::Toc, _) => {
@@ -310,6 +325,10 @@ fn properties(area: Rect, buf: &mut Buffer, app: &App) {
     }
 }
 
+fn padded(area: Rect) -> Rect {
+    Rect { x: area.x + EDGE_PAD.min(area.width), width: area.width.saturating_sub(EDGE_PAD * 2), ..area }
+}
+
 fn centred(area: Rect, rows: usize) -> Rect {
     let share = |whole: u16, (numerator, denominator): (u32, u32)| (u32::from(whole) * numerator / denominator) as u16;
 
@@ -340,7 +359,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Size;
-    use ratatui::style::Modifier;
+    use ratatui::style::{Color, Modifier};
 
     use crate::document::Document;
     use crate::theme::Theme;
@@ -359,7 +378,7 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
-    fn row(buffer: &Buffer, y: u16) -> String {
+    fn raw(buffer: &Buffer, y: u16) -> String {
         let mut text = String::new();
         let mut x = 0;
         while x < buffer.area.width {
@@ -367,7 +386,11 @@ mod tests {
             text.push_str(symbol);
             x += (symbol.width() as u16).max(1);
         }
-        text.trim_end().to_string()
+        text
+    }
+
+    fn row(buffer: &Buffer, y: u16) -> String {
+        raw(buffer, y).trim().to_string()
     }
 
     #[test]
@@ -386,14 +409,25 @@ mod tests {
     fn the_header_names_the_binary_and_the_document() {
         let size = Size::new(60, 12);
         let buffer = frame(&app(&body(), size), size);
-        assert!(row(&buffer, 0).starts_with(" vademecum · x.md"), "{:?}", row(&buffer, 0));
+        assert!(row(&buffer, 0).starts_with("vademecum · x.md"), "{:?}", row(&buffer, 0));
     }
 
     #[test]
-    fn the_hints_sit_against_the_right_edge() {
+    fn the_hints_sit_one_column_in_from_the_right_edge() {
         let size = Size::new(90, 12);
         let buffer = frame(&app(&body(), size), size);
-        assert!(row(&buffer, 0).ends_with(HINTS), "{:?}", row(&buffer, 0));
+        assert!(raw(&buffer, 0).ends_with(&format!("{HINTS} ")), "{:?}", raw(&buffer, 0));
+    }
+
+    #[test]
+    fn the_chrome_rows_keep_one_column_of_padding_on_both_sides() {
+        let size = Size::new(90, 12);
+        let buffer = frame(&app(&body(), size), size);
+        for y in [0, size.height - 1] {
+            let painted = raw(&buffer, y);
+            assert!(painted.starts_with(' '), "{painted:?}");
+            assert!(painted.ends_with(' '), "{painted:?}");
+        }
     }
 
     #[test]
@@ -665,7 +699,7 @@ mod tests {
 
         let buffer = frame(&app, size);
         assert_eq!(row(&buffer, status), "note.md: not found", "the indicator hid an error");
-        assert_eq!(buffer[(0, status)].fg, app.theme.style(Element::StatusError).fg.expect("a foreground"));
+        assert_eq!(buffer[(EDGE_PAD, status)].fg, app.theme.style(Element::StatusError).fg.expect("a foreground"));
     }
 
     #[test]
@@ -790,7 +824,7 @@ mod tests {
         let inner = toc_inner(Rect::new(0, 0, size.width, size.height), app.outline.entries.len());
         let buffer = frame(&app, size);
         let listing: Vec<String> = (inner.y..inner.bottom())
-            .map(|y| row(&buffer, y).chars().skip(inner.x as usize).take(inner.width as usize).collect())
+            .map(|y| raw(&buffer, y).chars().skip(inner.x as usize).take(inner.width as usize).collect())
             .collect();
 
         assert!(listing.last().expect("a row").contains("Section 12"), "the last heading is in view: {listing:?}");
@@ -868,8 +902,8 @@ mod tests {
 
         let buffer = frame(&app, size);
         for (offset, line) in app.lines.iter().enumerate() {
-            let painted = row(&buffer, CONTENT_TOP + offset as u16);
-            assert_eq!(painted, line.text().trim_end(), "line {offset}");
+            let painted = raw(&buffer, CONTENT_TOP + offset as u16);
+            assert_eq!(painted.trim_end(), line.text().trim_end(), "line {offset}");
         }
     }
 
@@ -879,7 +913,7 @@ mod tests {
         let piped = Document::new(None, PathBuf::from("."), "hi\n".to_string());
         let app = App::new(piped, Theme::default(), &Options { width: None, ..Options::default() }, size);
         let buffer = frame(&app, size);
-        assert!(row(&buffer, 0).starts_with(" vademecum · stdin"));
+        assert!(row(&buffer, 0).starts_with("vademecum · stdin"));
         assert!(row(&buffer, 11).starts_with("stdin · line 1/1"));
     }
 
@@ -976,7 +1010,7 @@ mod tests {
         app.status = Status::Error(String::from("note.md: not found"));
         let buffer = frame(&app, size);
         assert_eq!(row(&buffer, status), "note.md: not found");
-        assert_eq!(buffer[(0, status)].fg, app.theme.style(Element::StatusError).fg.expect("a foreground"));
+        assert_eq!(buffer[(EDGE_PAD, status)].fg, app.theme.style(Element::StatusError).fg.expect("a foreground"));
     }
 
     fn with_properties(size: Size) -> App {
@@ -1057,5 +1091,35 @@ mod tests {
         for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "v / V", "h / Backspace, l", "t", "p", "Left drag"] {
             assert!(HELP.iter().any(|(row, _)| *row == key), "{key} is not in the help table");
         }
+    }
+
+    #[test]
+    fn a_mark_paints_the_gutter_and_moves_no_text() {
+        let size = Size::new(40, 12);
+        let mut app = app("a paragraph long enough to fill the row\n", size);
+        let before = frame(&app, size);
+        assert_eq!(before[(0, CONTENT_TOP)].symbol(), " ", "the gutter column was not blank to begin with");
+
+        app.pulsed = vec![true; app.lines.len()];
+        let after = frame(&app, size);
+
+        assert_eq!(after[(0, CONTENT_TOP)].symbol(), MARK, "the gutter carries no mark");
+        assert_eq!(after[(0, CONTENT_TOP)].fg, Color::Magenta, "the mark is not painted in the notice colour");
+        for x in 1..size.width {
+            assert_eq!(
+                before[(x, CONTENT_TOP)].symbol(),
+                after[(x, CONTENT_TOP)].symbol(),
+                "the mark moved the body text at column {x}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unmarked_row_keeps_its_blank_gutter() {
+        let size = Size::new(40, 12);
+        let mut app = app("first paragraph\n\nsecond paragraph\n", size);
+        app.pulsed = vec![false; app.lines.len()];
+        let buffer = frame(&app, size);
+        assert_eq!(buffer[(0, CONTENT_TOP)].symbol(), " ");
     }
 }
