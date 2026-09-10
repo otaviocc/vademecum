@@ -153,11 +153,10 @@ expression: "themed(\"nord\")"
 
  [0;38;2;123;136;161;3m[image: a cat, sitting][0m
 
- [0;38;2;136;192;208;1mFootnotes[0m
+ [0;38;2;136;192;208;1mNotes and references[0m
 
- [0;38;2;216;222;233mA sentence with a footnote reference[0;38;2;123;136;161m[^1][0;38;2;216;222;233m.[0m
-
- [0;38;2;123;136;161m[^1] [0;38;2;216;222;233mThe definition, long enough that it wraps and hangs under its marker.[0m
+ [0;38;2;216;222;233mA sentence with a footnote reference[0;38;2;123;136;161m[^1][0;38;2;216;222;233m, and a second reference[0;38;2;123;136;161m[^2][0;38;2;216;222;233m later in[0m
+ [0;38;2;216;222;233mthe same paragraph.[0m
 
  [0;38;2;136;192;208;1mRaw HTML[0m
 
@@ -174,3 +173,12 @@ expression: "themed(\"nord\")"
  [0;38;2;136;192;208;1mRules[0m
 
  [0;38;2;67;76;94m───────────────────────────────────────────────────────────────────────────────[0m
+
+ [0;38;2;136;192;208;1mFootnotes[0m
+
+ [0;38;2;123;136;161m[^1] [0;38;2;216;222;233mThe first definition, long enough that it wraps and hangs under its[0m
+      [0;38;2;216;222;233mmarker.[0m
+
+ [0;38;2;123;136;161m[^2] [0;38;2;216;222;233mThe second definition. It is written before the first one in the source,[0m
+      [0;38;2;216;222;233mbut the reader meets its reference second, so it is renumbered to [0;38;2;235;203;139;48;2;53;60;74m[^2][0;38;2;216;222;233m and[0m
+      [0;38;2;216;222;233mgathered under the heading below.[0m

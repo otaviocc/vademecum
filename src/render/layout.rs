@@ -30,15 +30,21 @@ pub fn wrap_width(explicit: Option<u16>, columns: Option<u16>) -> usize {
 pub struct Ctx<'a> {
     pub theme: &'a Theme,
     pub links: &'a Links,
+    notes: Vec<String>,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(theme: &'a Theme, links: &'a Links) -> Self {
-        Self { theme, links }
+        Self { theme, links, notes: Vec::new() }
+    }
+
+    fn number(&self, label: &str) -> Option<usize> {
+        self.notes.iter().position(|seen| seen == label).map(|index| index + 1)
     }
 }
 
 pub fn render(blocks: &[SourceBlock], ctx: &Ctx<'_>, width: usize) -> Vec<RenderedLine> {
+    let ctx = &Ctx { theme: ctx.theme, links: ctx.links, notes: crate::markdown::footnotes::labels(blocks) };
     let content_width = width.saturating_sub(GUTTER).max(1);
     let mut lines = blocks_to_lines(blocks, ctx, ctx.theme.style(Element::Paragraph), content_width, 0);
 
@@ -428,7 +434,9 @@ fn footnote_to_lines(
     depth: usize,
     source_line: usize,
 ) -> Vec<RenderedLine> {
-    let marker = format!("[^{label}] ");
+    let number = ctx.number(label);
+    let shown = number.map_or_else(|| label.to_string(), |number| number.to_string());
+    let marker = format!("[^{shown}] ");
     let indent = marker.width();
     let style = ctx.theme.style(Element::Footnote);
 
@@ -443,6 +451,16 @@ fn footnote_to_lines(
             StyledSpan::new(" ".repeat(indent), Style::default())
         };
         line.prefix(prefix);
+    }
+    if let (Some(first), Some(number)) = (lines.first_mut(), number) {
+        first.links.insert(
+            0,
+            LinkRef {
+                span_range: 0..1,
+                kind: LinkKind::Footnote { label: label.to_string(), number, back: true },
+                resolved: None,
+            },
+        );
     }
     lines
 }
@@ -618,7 +636,20 @@ impl Flat {
             Inline::Code(value) => text(self, value.clone(), base.patch(ctx.theme.style(Element::InlineCode))),
             Inline::Html(value) => text(self, value.clone(), base.patch(ctx.theme.style(Element::Html))),
             Inline::Image { alt, .. } => text(self, format!("[image: {alt}]"), base.patch(ctx.theme.style(Element::Image))),
-            Inline::FootnoteRef(label) => text(self, format!("[^{label}]"), base.patch(ctx.theme.style(Element::Footnote))),
+            Inline::FootnoteRef(label) => {
+                let style = base.patch(ctx.theme.style(Element::Footnote));
+                match ctx.number(label) {
+                    Some(number) => {
+                        let id = self.links.len();
+                        self.links.push(Resolved {
+                            kind: LinkKind::Footnote { label: label.clone(), number, back: false },
+                            target: None,
+                        });
+                        self.pieces.push(Piece { text: format!("[^{number}]"), style, link: Some(id), hard_break: false });
+                    }
+                    None => text(self, format!("[^{label}]"), style),
+                }
+            }
             Inline::SoftBreak => text(self, " ".to_string(), base),
             Inline::Emphasis(children) => self.push_inlines(children, ctx, base.patch(ctx.theme.style(Element::Emphasis)), link),
             Inline::Strong(children) => self.push_inlines(children, ctx, base.patch(ctx.theme.style(Element::Strong)), link),
@@ -1211,7 +1242,40 @@ mod tests {
 
     #[test]
     fn footnote_definitions_hang_under_their_marker() {
-        assert_eq!(bare("[^1]: one two\n", 9), ["[^1] one", "     two"]);
+        assert_eq!(bare("a[^1]\n\n[^1]: one two\n", 9), ["a[^1]", "", "Footnotes", "", "[^1] one", "     two"]);
+    }
+
+    #[test]
+    fn a_reference_is_a_link_to_its_renumbered_definition() {
+        let theme = Theme::default();
+        let source = "x[^note] y[^other]\n\n[^other]: O\n\n[^note]: N\n";
+        let links = Links::new(Document::new(None, PathBuf::from("."), source.into()), None);
+        let lines = render(&parse(source), &Ctx::new(&theme, &links), 40);
+
+        let refs: Vec<_> = lines
+            .iter()
+            .flat_map(|line| &line.links)
+            .filter_map(|link| match &link.kind {
+                LinkKind::Footnote { number, back, .. } => Some((*number, *back)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(refs, [(1, false), (2, false), (1, true), (2, true)], "note renumbers to 1, other to 2");
+
+        let marker = lines.iter().find(|line| line.text().contains("N")).expect("the [^1] definition");
+        let back = &marker.links[0];
+        assert!(matches!(back.kind, LinkKind::Footnote { back: true, .. }), "links[0] is the way back");
+        assert_eq!(marker.spans[back.span_range.start].text, "[^1] ", "and it covers the marker span");
+    }
+
+    #[test]
+    fn a_dangling_reference_stays_plain_text() {
+        let theme = Theme::default();
+        let source = "see[^missing]\n";
+        let links = Links::new(Document::new(None, PathBuf::from("."), source.into()), None);
+        let lines = render(&parse(source), &Ctx::new(&theme, &links), 40);
+        assert!(lines.iter().all(|line| line.links.is_empty()));
+        assert!(lines.iter().any(|line| line.text().contains("[^missing]")));
     }
 
     #[test]

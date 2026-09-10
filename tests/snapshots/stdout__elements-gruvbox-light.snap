@@ -153,11 +153,10 @@ expression: "themed(\"gruvbox-light\")"
 
  [0;38;2;124;111;100;3m[image: a cat, sitting][0m
 
- [0;38;2;181;118;20;1mFootnotes[0m
+ [0;38;2;181;118;20;1mNotes and references[0m
 
- [0;38;2;60;56;54mA sentence with a footnote reference[0;38;2;124;111;100m[^1][0;38;2;60;56;54m.[0m
-
- [0;38;2;124;111;100m[^1] [0;38;2;60;56;54mThe definition, long enough that it wraps and hangs under its marker.[0m
+ [0;38;2;60;56;54mA sentence with a footnote reference[0;38;2;124;111;100m[^1][0;38;2;60;56;54m, and a second reference[0;38;2;124;111;100m[^2][0;38;2;60;56;54m later in[0m
+ [0;38;2;60;56;54mthe same paragraph.[0m
 
  [0;38;2;181;118;20;1mRaw HTML[0m
 
@@ -174,3 +173,12 @@ expression: "themed(\"gruvbox-light\")"
  [0;38;2;181;118;20;1mRules[0m
 
  [0;38;2;213;196;161m───────────────────────────────────────────────────────────────────────────────[0m
+
+ [0;38;2;181;118;20;1mFootnotes[0m
+
+ [0;38;2;124;111;100m[^1] [0;38;2;60;56;54mThe first definition, long enough that it wraps and hangs under its[0m
+      [0;38;2;60;56;54mmarker.[0m
+
+ [0;38;2;124;111;100m[^2] [0;38;2;60;56;54mThe second definition. It is written before the first one in the source,[0m
+      [0;38;2;60;56;54mbut the reader meets its reference second, so it is renumbered to [0;38;2;181;118;20;48;2;242;229;188m[^2][0;38;2;60;56;54m and[0m
+      [0;38;2;60;56;54mgathered under the heading below.[0m

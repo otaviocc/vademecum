@@ -153,11 +153,10 @@ expression: "themed(\"vesper\")"
 
  [0;38;2;139;139;139;3m[image: a cat, sitting][0m
 
- [0;38;2;255;199;153;1mFootnotes[0m
+ [0;38;2;255;199;153;1mNotes and references[0m
 
- [0;38;2;255;255;255mA sentence with a footnote reference[0;38;2;139;139;139m[^1][0;38;2;255;255;255m.[0m
-
- [0;38;2;139;139;139m[^1] [0;38;2;255;255;255mThe definition, long enough that it wraps and hangs under its marker.[0m
+ [0;38;2;255;255;255mA sentence with a footnote reference[0;38;2;139;139;139m[^1][0;38;2;255;255;255m, and a second reference[0;38;2;139;139;139m[^2][0;38;2;255;255;255m later in[0m
+ [0;38;2;255;255;255mthe same paragraph.[0m
 
  [0;38;2;255;199;153;1mRaw HTML[0m
 
@@ -174,3 +173,12 @@ expression: "themed(\"vesper\")"
  [0;38;2;255;199;153;1mRules[0m
 
  [0;38;2;52;52;52m───────────────────────────────────────────────────────────────────────────────[0m
+
+ [0;38;2;255;199;153;1mFootnotes[0m
+
+ [0;38;2;139;139;139m[^1] [0;38;2;255;255;255mThe first definition, long enough that it wraps and hangs under its[0m
+      [0;38;2;255;255;255mmarker.[0m
+
+ [0;38;2;139;139;139m[^2] [0;38;2;255;255;255mThe second definition. It is written before the first one in the source,[0m
+      [0;38;2;255;255;255mbut the reader meets its reference second, so it is renumbered to [0;38;2;255;199;153;48;2;22;22;22m[^2][0;38;2;255;255;255m and[0m
+      [0;38;2;255;255;255mgathered under the heading below.[0m

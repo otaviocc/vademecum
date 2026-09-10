@@ -251,6 +251,15 @@ impl App {
 
     fn follow(&mut self) {
         let Some(kind) = self.focused().map(|link| link.kind.clone()) else { return };
+        if let LinkKind::Footnote { number, back, .. } = kind {
+            if let Some((line, index)) = self.twin(number, !back) {
+                self.remember();
+                self.go_to(line);
+                self.focus = index;
+                self.resume_search();
+            }
+            return;
+        }
         match self.links.resolve(&kind) {
             Err(error) => self.status = Status::Error(error.to_string()),
             Ok(Target::External) => {}
@@ -363,6 +372,15 @@ impl App {
         self.plain = None;
         self.selection = None;
         self.end_visual();
+    }
+
+    fn twin(&self, number: usize, back: bool) -> Option<(usize, usize)> {
+        self.lines.iter().enumerate().find_map(|(line, rendered)| {
+            let index = rendered.links.iter().position(
+                |link| matches!(&link.kind, LinkKind::Footnote { number: n, back: b, .. } if *n == number && *b == back),
+            )?;
+            Some((line, index))
+        })
     }
 
     fn anchor_line(&self, fragment: Option<&str>) -> Option<usize> {
@@ -2444,6 +2462,36 @@ mod tests {
 
         app.apply(Action::History { forward: false });
         assert_eq!(app.cursor, app.lines.len() - 1);
+    }
+
+    #[test]
+    fn enter_walks_between_a_footnote_and_its_definition_and_back() {
+        let mut app = app("body text[^one] and more[^two]\n\n[^two]: second\n\n[^one]: first\n", 20);
+        let reference = app.cursor;
+        focus_link(&mut app, "[^one]");
+
+        app.apply(Action::Follow);
+        assert!(app.lines[app.cursor].text().contains("first"), "landed on the [^one] definition");
+        assert!(
+            matches!(app.focused().map(|link| &link.kind), Some(LinkKind::Footnote { back: true, number: 1, .. })),
+            "the marker back-link is focused"
+        );
+
+        app.apply(Action::Follow);
+        assert_eq!(app.cursor, reference, "a second Enter returns to the reference line");
+        assert!(matches!(app.focused().map(|link| &link.kind), Some(LinkKind::Footnote { back: false, number: 1, .. })));
+
+        app.apply(Action::Follow);
+        app.apply(Action::History { forward: false });
+        assert_eq!(app.cursor, reference, "history also returns to where the reference was left");
+    }
+
+    #[test]
+    fn yanking_a_footnote_link_copies_the_label_as_written() {
+        let mut app = app("see[^note]\n\n[^note]: the note\n", 20);
+        focus_link(&mut app, "[^note]");
+        app.apply(Action::YankLink);
+        assert_eq!(app.take_copy().as_deref(), Some("[^note]"));
     }
 
     #[test]

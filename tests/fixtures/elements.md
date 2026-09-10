@@ -145,11 +145,17 @@ Targets that are not there: a [local link to nothing](missing.md) and a
 
 ![a cat, sitting](cat.png)
 
-## Footnotes
+## Notes and references
 
-A sentence with a footnote reference[^1].
+A sentence with a footnote reference[^note], and a second reference[^another]
+later in the same paragraph.
 
-[^1]: The definition, long enough that it wraps and hangs under its marker.
+[^another]: The second definition. It is written before the first one in the
+    source, but the reader meets its reference second, so it is renumbered to
+    `[^2]` and gathered under the heading below.
+
+[^note]: The first definition, long enough that it wraps and hangs under its
+    marker.
 
 ## Raw HTML
 

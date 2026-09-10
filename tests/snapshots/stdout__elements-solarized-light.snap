@@ -153,11 +153,10 @@ expression: "themed(\"solarized-light\")"
 
  [0;38;2;131;148;150;3m[image: a cat, sitting][0m
 
- [0;38;2;38;139;210;1mFootnotes[0m
+ [0;38;2;38;139;210;1mNotes and references[0m
 
- [0;38;2;101;123;131mA sentence with a footnote reference[0;38;2;131;148;150m[^1][0;38;2;101;123;131m.[0m
-
- [0;38;2;131;148;150m[^1] [0;38;2;101;123;131mThe definition, long enough that it wraps and hangs under its marker.[0m
+ [0;38;2;101;123;131mA sentence with a footnote reference[0;38;2;131;148;150m[^1][0;38;2;101;123;131m, and a second reference[0;38;2;131;148;150m[^2][0;38;2;101;123;131m later in[0m
+ [0;38;2;101;123;131mthe same paragraph.[0m
 
  [0;38;2;38;139;210;1mRaw HTML[0m
 
@@ -174,3 +173,12 @@ expression: "themed(\"solarized-light\")"
  [0;38;2;38;139;210;1mRules[0m
 
  [0;38;2;147;161;161m───────────────────────────────────────────────────────────────────────────────[0m
+
+ [0;38;2;38;139;210;1mFootnotes[0m
+
+ [0;38;2;131;148;150m[^1] [0;38;2;101;123;131mThe first definition, long enough that it wraps and hangs under its[0m
+      [0;38;2;101;123;131mmarker.[0m
+
+ [0;38;2;131;148;150m[^2] [0;38;2;101;123;131mThe second definition. It is written before the first one in the source,[0m
+      [0;38;2;101;123;131mbut the reader meets its reference second, so it is renumbered to [0;38;2;181;137;0;48;2;238;232;213m[^2][0;38;2;101;123;131m and[0m
+      [0;38;2;101;123;131mgathered under the heading below.[0m
