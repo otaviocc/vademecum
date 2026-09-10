@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use ratatui::layout::{Rect, Size};
 
@@ -16,6 +17,7 @@ use crate::ui::Options;
 use crate::ui::input::{Action, Motion};
 use crate::ui::outline::{self, Outline};
 use crate::ui::properties::Properties;
+use crate::ui::pulse::{self, Pulse};
 use crate::ui::search::{self, Search};
 use crate::ui::view;
 
@@ -104,6 +106,9 @@ pub struct App {
     copied: Option<String>,
     back: Vec<Entry>,
     forward: Vec<Entry>,
+    marks_wanted: bool,
+    pulse: Option<Pulse>,
+    pub pulsed: Vec<bool>,
 }
 
 impl App {
@@ -145,6 +150,9 @@ impl App {
             copied: None,
             back: Vec::new(),
             forward: Vec::new(),
+            marks_wanted: options.change_marks,
+            pulse: None,
+            pulsed: Vec::new(),
         }
     }
 
@@ -719,6 +727,9 @@ impl App {
         };
 
         let place = self.place();
+        let changed = self.marks_wanted.then(|| pulse::changed(&self.links.document.source, &document.source));
+        self.pulse =
+            changed.filter(|changed| !changed.is_empty()).map(|changed| Pulse { changed, until: Instant::now() + pulse::PULSE });
         (self.title, self.file) = names(&document);
         self.blocks = ast::parse(&document.source);
         self.links.open(document);
@@ -729,12 +740,24 @@ impl App {
         self.reload_failed = false;
     }
 
+    pub fn patience(&self, now: Instant) -> Option<Duration> {
+        pulse::patience(self.pulse.as_ref(), now)
+    }
+
+    pub fn settle_pulse(&mut self, now: Instant) {
+        if pulse::settled(self.pulse.as_ref(), now) {
+            self.pulse = None;
+            self.pulsed = Vec::new();
+        }
+    }
+
     fn place(&self) -> Place {
         Place { anchor: self.anchor(), row: self.cursor as isize - self.top as isize }
     }
 
     fn rerender(&mut self, place: Place) {
         self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
+        self.pulsed = self.pulse.as_ref().map_or_else(Vec::new, |pulse| pulse::marks(&pulse.changed, &self.lines));
         self.reoutline();
         if let Some(complaint) = complaint() {
             self.status = complaint;
@@ -1160,6 +1183,98 @@ mod tests {
 
     fn rewrite(dir: &tempfile::TempDir, source: &str) {
         std::fs::write(dir.path().join("note.md"), source).expect("write");
+    }
+
+    fn marked(source: &str) -> (tempfile::TempDir, App) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, source).expect("write");
+        let document = Document::load(&path).expect("load");
+        let options = Options { change_marks: true, ..Options::default() };
+        (dir, App::new(document, Theme::default(), &options, Size::new(60, 14)))
+    }
+
+    fn marked_rows(app: &App) -> Vec<usize> {
+        app.pulsed.iter().enumerate().filter(|(_, on)| **on).map(|(row, _)| row).collect()
+    }
+
+    const ALPHA: &str = "alpha one and some more words to make this paragraph wrap over several rows\nalpha two continues the same markdown paragraph\nalpha three ends it\n";
+    const BETA: &str = "\nbeta is a separate paragraph which has to stay unmarked\n";
+
+    #[test]
+    fn a_reload_marks_every_row_of_the_paragraph_a_soft_wrapped_edit_landed_in() {
+        let (dir, mut app) = marked(&format!("{ALPHA}{BETA}"));
+        rewrite(&dir, &format!("{}{BETA}", ALPHA.replace("alpha two", "alpha TWO")));
+        app.apply(Action::Reload);
+
+        let rows = marked_rows(&app);
+        assert!(rows.len() > 1, "an edit inside a wrapped paragraph marked {} rows", rows.len());
+        assert!(
+            rows.iter().all(|&row| app.lines[row].source_line == 1),
+            "the mark escaped the paragraph that changed: {:?}",
+            rows.iter().map(|&row| app.lines[row].source_line).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_reload_that_changes_nothing_leaves_no_marks() {
+        let (dir, mut app) = marked(&numbered(10));
+        rewrite(&dir, &numbered(10));
+        app.apply(Action::Reload);
+        assert!(marked_rows(&app).is_empty(), "an unchanged file was marked");
+    }
+
+    #[test]
+    fn the_marks_survive_a_resize_that_relays_out() {
+        let (dir, mut app) = marked(&format!("{ALPHA}{BETA}"));
+        rewrite(&dir, &format!("{}{BETA}", ALPHA.replace("alpha two", "alpha TWO")));
+        app.apply(Action::Reload);
+        assert!(!marked_rows(&app).is_empty());
+        let rows = app.lines.len();
+
+        app.apply(Action::Resize(Size::new(30, 14)));
+        assert_ne!(app.lines.len(), rows, "the resize did not re-wrap, so this proves nothing about relayout");
+        assert!(!marked_rows(&app).is_empty(), "a resize dropped the marks");
+        assert_eq!(app.pulsed.len(), app.lines.len(), "the marks were not re-derived for the new layout");
+    }
+
+    #[test]
+    fn a_key_does_not_cut_the_marks_so_scrolling_to_the_change_cannot_erase_it() {
+        let (dir, mut app) = marked(&numbered(20));
+        rewrite(&dir, &format!("{}{}", numbered(20), numbered(4)));
+        app.apply(Action::Reload);
+        assert!(!marked_rows(&app).is_empty());
+
+        app.apply(Action::Move(Motion::Line(1)));
+        assert!(!marked_rows(&app).is_empty(), "a keypress erased the marks");
+    }
+
+    #[test]
+    fn the_clock_cuts_the_marks_and_gives_the_timer_back() {
+        let (dir, mut app) = marked(&numbered(20));
+        rewrite(&dir, &format!("{}{}", numbered(20), numbered(4)));
+        app.apply(Action::Reload);
+        assert!(app.patience(Instant::now()).is_some(), "a fresh pulse owns no clock");
+
+        app.settle_pulse(Instant::now() + pulse::PULSE);
+        assert!(marked_rows(&app).is_empty(), "the clock did not cut the marks");
+        assert_eq!(app.patience(Instant::now()), None, "a spent pulse still owns a clock");
+    }
+
+    #[test]
+    fn without_the_flag_a_reload_is_never_marked_and_never_arms_a_clock() {
+        let (dir, mut app) = on_disk(&numbered(20));
+        rewrite(&dir, &format!("{}{}", numbered(20), numbered(4)));
+        app.apply(Action::Reload);
+
+        assert!(app.lines.len() > 40, "the file on disk was not re-read");
+        assert!(marked_rows(&app).is_empty(), "--no-change-marks still marked the reload");
+        assert_eq!(app.patience(Instant::now()), None, "--no-change-marks still armed a clock");
+    }
+
+    #[test]
+    fn a_pager_that_has_not_reloaded_owns_no_timer_at_all() {
+        assert_eq!(app(&numbered(10), 14).patience(Instant::now()), None);
     }
 
     #[test]

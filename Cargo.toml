@@ -24,6 +24,7 @@ open = "5"
 pulldown-cmark = "0.13"
 ratatui = { version = "0.30", features = ["crossterm"] }
 serde = { version = "1", features = ["derive"] }
+similar = { version = "2", default-features = false, features = ["text"] }
 syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
 thiserror = "2"
 toml = "1"

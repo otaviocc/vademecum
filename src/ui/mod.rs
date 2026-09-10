@@ -6,13 +6,15 @@ pub mod input;
 pub mod listing;
 pub mod outline;
 pub mod properties;
+pub mod pulse;
 pub mod search;
 pub mod tty;
 pub mod view;
 
 use std::io;
 use std::path::Path;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use ratatui::DefaultTerminal;
@@ -37,6 +39,7 @@ pub struct Options {
     pub width: Option<u16>,
     pub root: Option<std::path::PathBuf>,
     pub watch: bool,
+    pub change_marks: bool,
 }
 
 pub fn run(document: Document, theme: Theme, options: Options) -> Result<()> {
@@ -72,12 +75,26 @@ fn event_loop(
     watcher: &mut Option<watch::Watcher>,
 ) -> Result<()> {
     loop {
+        app.settle_pulse(Instant::now());
         terminal.draw(|frame| view::draw(frame, app)).context("cannot draw")?;
 
-        let Ok(wake) = rx.recv() else { return Ok(()) };
-        handle(app, wake, watcher)?;
-        while let Ok(wake) = rx.try_recv() {
+        let wake = match app.patience(Instant::now()) {
+            None => match rx.recv() {
+                Ok(wake) => Some(wake),
+                Err(_) => return Ok(()),
+            },
+            Some(patience) => match rx.recv_timeout(patience) {
+                Ok(wake) => Some(wake),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+            },
+        };
+
+        if let Some(wake) = wake {
             handle(app, wake, watcher)?;
+            while let Ok(wake) = rx.try_recv() {
+                handle(app, wake, watcher)?;
+            }
         }
 
         if app.quit {

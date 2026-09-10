@@ -34,6 +34,9 @@ pub struct Cli {
     #[arg(long, help = "Disable mouse capture, keeping the terminal's own text selection")]
     pub no_mouse: bool,
 
+    #[arg(long, help = "Do not mark the lines a `--watch` reload changed")]
+    pub no_change_marks: bool,
+
     #[arg(long, help = "Print the available theme names and exit")]
     pub list_themes: bool,
 

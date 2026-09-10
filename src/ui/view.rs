@@ -18,6 +18,7 @@ const EDGE_PAD: u16 = 1;
 const HELP_WIDTH: (u32, u32) = (3, 5);
 const HELP_FLOOR: (u32, u32) = (4, 10);
 const HELP_CEILING: (u32, u32) = (9, 10);
+const MARK: &str = "▍";
 const CHEVRON: &str = "›";
 const CHEVRON_COLUMN: u16 = 2;
 const TOC_INDENT: usize = 2;
@@ -135,6 +136,17 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
 
         highlight(area, buf, y, app, index, line);
         selection(area, buf, y, app, index, line);
+        mark(area, buf, y, app, index);
+    }
+}
+
+fn mark(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize) {
+    if !app.pulsed.get(index).copied().unwrap_or(false) {
+        return;
+    }
+    let Some(color) = app.theme.style(Element::ChangedLine).fg else { return };
+    if let Some(cell) = buf.cell_mut((area.x, y)) {
+        cell.set_symbol(MARK).set_fg(color);
     }
 }
 
@@ -347,7 +359,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Size;
-    use ratatui::style::Modifier;
+    use ratatui::style::{Color, Modifier};
 
     use crate::document::Document;
     use crate::theme::Theme;
@@ -1079,5 +1091,35 @@ mod tests {
         for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "v / V", "h / Backspace, l", "t", "p", "Left drag"] {
             assert!(HELP.iter().any(|(row, _)| *row == key), "{key} is not in the help table");
         }
+    }
+
+    #[test]
+    fn a_mark_paints_the_gutter_and_moves_no_text() {
+        let size = Size::new(40, 12);
+        let mut app = app("a paragraph long enough to fill the row\n", size);
+        let before = frame(&app, size);
+        assert_eq!(before[(0, CONTENT_TOP)].symbol(), " ", "the gutter column was not blank to begin with");
+
+        app.pulsed = vec![true; app.lines.len()];
+        let after = frame(&app, size);
+
+        assert_eq!(after[(0, CONTENT_TOP)].symbol(), MARK, "the gutter carries no mark");
+        assert_eq!(after[(0, CONTENT_TOP)].fg, Color::Magenta, "the mark is not painted in the notice colour");
+        for x in 1..size.width {
+            assert_eq!(
+                before[(x, CONTENT_TOP)].symbol(),
+                after[(x, CONTENT_TOP)].symbol(),
+                "the mark moved the body text at column {x}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unmarked_row_keeps_its_blank_gutter() {
+        let size = Size::new(40, 12);
+        let mut app = app("first paragraph\n\nsecond paragraph\n", size);
+        app.pulsed = vec![false; app.lines.len()];
+        let buffer = frame(&app, size);
+        assert_eq!(buffer[(0, CONTENT_TOP)].symbol(), " ");
     }
 }
