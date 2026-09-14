@@ -87,12 +87,13 @@ forces that even on a terminal.
 | `h` / `Backspace`, `l` | History back / forward |
 | `/`, then `n` / `N` | Search, next / previous match |
 | `t` | Table of contents |
+| `m` | Minimap |
 | `p` | Properties |
 | `?` | Help |
 | `Esc` | Close the overlay, leave visual mode, or clear the search |
 | `q`, `Ctrl-C` | Quit |
 | Left click | Follow the link under the pointer, on release |
-| Left drag | Select text, and copy it when the button is let go |
+| Left drag | Select text, and copy it when the button is let go, or scrub the minimap |
 
 `t` opens the document's headings in a scrollable list, indented by level, with
 a `›` marking the selection. It opens on the section being read. The reading
@@ -122,7 +123,8 @@ came along.
 The rule under the header doubles as a progress bar. It starts plain and tints
 from the left as you read, matching the percentage on the statusbar, so it is
 empty at the top of a document and fully coloured at the bottom. It reports
-position and nothing else — clicking or dragging it does nothing.
+position and nothing else — clicking or dragging it does nothing. For something
+you can steer, use the minimap.
 
 `v` or `V` selects whole lines without the mouse. It anchors on the cursor line
 and the reading keys extend the selection from there — `j` / `k`, the arrows,
@@ -139,6 +141,24 @@ without the gutter or the colours — and letting go copies it. Capturing the
 mouse takes your terminal's own selection away, so `--no-mouse` turns it off and
 hands it back; most terminals also let you hold `Shift` while dragging to select
 through a capturing program.
+
+## Minimap
+
+`m`, or `--minimap` at startup, opens a strip down the right edge: the whole
+document at once, scaled to fit. It is not meant to be read. Each cell is
+shaded by how much text covers that slice of the page and takes the colour of
+whatever covers most of it, so a heading arrives as a short bar in the heading
+colour, a fenced block as a dense one, a paragraph as a ragged band, and blank
+lines as gaps. A darker band marks the part you are looking at.
+
+Click anywhere on the strip to jump there, or press and drag to scrub through
+the document and let go where you want to stop. Either way the place you left
+is one `h` away. The wheel over the strip scrolls as it does anywhere else.
+
+The strip takes its columns from the body, so opening it re-wraps the document
+a little narrower and closing it gives the columns back; your place on the page
+is kept across both. On a terminal under 40 columns wide there is no room to
+spare, so the strip stays shut and the body keeps every column.
 
 ## Properties
 
@@ -477,12 +497,17 @@ The element names are `paragraph`, `heading1`–`heading6`, `emphasis`, `strong`
 `link_focused`, `link_unfocused`, `link_broken`, `image`, `footnote`, `html`, `callout`,
 `quote_gutter`, `table_header`,
 `table_border`, `hr`, `header_title`, `hint`, `status`, `status_notice`,
-`status_error`, `cursor_line`, `changed_line`, `scroll_progress`, `search_match`,
+`status_error`, `cursor_line`, `changed_line`, `scroll_progress`, `minimap`,
+`minimap_viewport`, `search_match`,
 `search_current`, `selection` and `help_window`. Each takes `fg`, `bg` and `modifiers`,
 and each falls back
 independently. `scroll_progress` is the exception: it recolours the rule under the
 header in place, so only its `fg` is used. To hide the progress bar, give it the same
-colour as `hint`. Note that `link` is external links only — a local or wiki link
+colour as `hint`. `minimap` is a second exception: its cells take their colour from
+the document they stand for, so its `fg` is only the fallback for text the theme
+leaves uncoloured, while its `modifiers` apply to every cell — `dim` quietens the
+whole strip. `minimap_viewport` is the band marking what is on screen, and only its
+`bg` is used. Note that `link` is external links only — a local or wiki link
 that resolves is painted with `wikilink`, and one that does not with
 `link_broken`.
 
@@ -557,6 +582,7 @@ TOML and Mermaid. Origins and licences for the added ones are in
 | `--config <file>` | Explicit theme file, beats `--theme` |
 | `--root <dir>` | Vault root for wikilink lookup |
 | `--watch` | Re-render on change. Needs a file |
+| `--minimap` | Open the pager with the minimap showing |
 | `--no-mouse` | Give up wheel scrolling, keep the terminal's own selection |
 | `--no-change-marks` | Do not mark the lines a reload changed. Needs `--watch` |
 | `--list-themes`, `--list-syntax-themes` | Print available names and exit |
