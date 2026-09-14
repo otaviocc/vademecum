@@ -4,6 +4,7 @@ pub mod app;
 pub mod clipboard;
 pub mod input;
 pub mod listing;
+pub mod minimap;
 pub mod outline;
 pub mod properties;
 pub mod pulse;
@@ -36,6 +37,7 @@ enum Wake {
 #[derive(Debug, Clone, Default)]
 pub struct Options {
     pub mouse: bool,
+    pub minimap: bool,
     pub width: Option<u16>,
     pub root: Option<std::path::PathBuf>,
     pub watch: bool,

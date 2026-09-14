@@ -15,6 +15,7 @@ use crate::render::line::RenderedLine;
 use crate::theme::Theme;
 use crate::ui::Options;
 use crate::ui::input::{Action, Motion};
+use crate::ui::minimap;
 use crate::ui::outline::{self, Outline};
 use crate::ui::properties::Properties;
 use crate::ui::pulse::{self, Pulse};
@@ -109,6 +110,9 @@ pub struct App {
     marks_wanted: bool,
     pulse: Option<Pulse>,
     pub pulsed: Vec<bool>,
+    pub minimap_open: bool,
+    pub minimap: minimap::Map,
+    scrubbing: bool,
 }
 
 impl App {
@@ -118,13 +122,14 @@ impl App {
 
         let blocks = ast::parse(&document.source);
         let links = Links::new(document, options.root.as_deref());
-        let width = layout::wrap_width(width_override, Some(area.width));
+        let minimap_open = options.minimap;
+        let width = layout::wrap_width(width_override, Some(area.width - minimap::reserved(area.width, minimap_open)));
         let lines = layout::render(&blocks, &Ctx::new(&theme, &links), width);
         let outline = Outline { entries: outline::build(&blocks, &lines), selected: 0, top: 0 };
         let properties = Properties::of(&links.document);
         let status = complaint().unwrap_or_default();
 
-        Self {
+        let mut app = Self {
             theme,
             links,
             blocks,
@@ -153,7 +158,12 @@ impl App {
             marks_wanted: options.change_marks,
             pulse: None,
             pulsed: Vec::new(),
-        }
+            minimap_open,
+            minimap: minimap::Map::default(),
+            scrubbing: false,
+        };
+        app.remap();
+        app
     }
 
     pub fn apply(&mut self, action: Action) {
@@ -175,6 +185,7 @@ impl App {
                 | Action::History { .. }
                 | Action::TocSelect
                 | Action::TocClick { .. }
+                | Action::ToggleMinimap
                 | Action::VisualYank
                 | Action::VisualCancel
         );
@@ -191,6 +202,7 @@ impl App {
             Action::ToggleHelp => self.mode = if self.mode == Mode::Help { Mode::Browse } else { Mode::Help },
             Action::ToggleToc => self.toggle_toc(),
             Action::ToggleProperties => self.toggle_properties(),
+            Action::ToggleMinimap => self.toggle_minimap(),
             Action::PropertiesMove(motion) => self.properties.move_by(motion, self.properties_height()),
             Action::PropertiesScroll(delta) => self.properties.scroll(delta, self.properties_height()),
             Action::PropertiesClick { row } => self.pick_property(row),
@@ -228,6 +240,7 @@ impl App {
         self.bound();
         match action {
             Action::Scroll(_) => self.snap(),
+            Action::SelectStart { .. } | Action::SelectExtend { .. } | Action::SelectEnd { .. } if self.scrubbing => self.snap(),
             Action::Resize(_) => self.reveal(),
             _ if moves_cursor => self.reveal(),
             _ => {}
@@ -597,6 +610,55 @@ impl App {
         (line < self.lines.len()).then_some(line)
     }
 
+    fn minimap_columns(&self) -> u16 {
+        minimap::reserved(self.area.width, self.minimap_open)
+    }
+
+    fn body_width(&self) -> u16 {
+        self.area.width.saturating_sub(self.minimap_columns())
+    }
+
+    fn remap(&mut self) {
+        self.minimap = match self.minimap_columns() {
+            0 => minimap::Map::default(),
+            _ => minimap::build(&self.lines, self.width, usize::from(minimap::CELLS), self.viewport_height()),
+        };
+    }
+
+    fn toggle_minimap(&mut self) {
+        self.minimap_open = !self.minimap_open;
+        let place = self.place();
+        let width = layout::wrap_width(self.width_override, Some(self.body_width()));
+        match width == self.width {
+            true => self.remap(),
+            false => {
+                self.width = width;
+                self.rerender(place);
+            }
+        }
+    }
+
+    fn on_minimap(&self, column: u16, row: u16) -> bool {
+        if self.minimap.rows.is_empty() || column < self.body_width() + minimap::GAP {
+            return false;
+        }
+        row >= CONTENT_TOP && usize::from(row - CONTENT_TOP) < self.viewport_height()
+    }
+
+    fn minimap_line(&self, column: u16, row: u16) -> Option<usize> {
+        if !self.on_minimap(column, row) {
+            return None;
+        }
+        let row = usize::from(row - CONTENT_TOP).min(self.minimap.scale.rows().saturating_sub(1));
+        Some(self.minimap.scale.line_at(row))
+    }
+
+    fn scrub(&mut self, column: u16, row: u16) {
+        if let Some(line) = self.minimap_line(column, row) {
+            self.go_to(line);
+        }
+    }
+
     fn point(&self, column: u16, row: u16) -> Option<Point> {
         let line = self.clicked_line(row)?;
         let column = usize::from(column).max(layout::GUTTER);
@@ -604,10 +666,20 @@ impl App {
     }
 
     fn select_start(&mut self, column: u16, row: u16) {
+        self.scrubbing = self.on_minimap(column, row);
+        if self.scrubbing {
+            self.remember();
+            self.scrub(column, row);
+            return;
+        }
         self.selection = self.point(column, row).map(|point| Selection { anchor: point, head: point, dragged: false });
     }
 
     fn select_extend(&mut self, column: u16, row: u16) {
+        if self.scrubbing {
+            self.scrub(column, row);
+            return;
+        }
         let Some(point) = self.point(column, row) else { return };
         let Some(selection) = self.selection.as_mut() else { return };
         selection.head = point;
@@ -615,6 +687,11 @@ impl App {
     }
 
     fn select_end(&mut self, column: u16, row: u16) {
+        if self.scrubbing {
+            self.scrub(column, row);
+            self.scrubbing = false;
+            return;
+        }
         self.select_extend(column, row);
         match self.selection.filter(|selection| selection.dragged) {
             Some(_) => self.copy_selection(),
@@ -725,11 +802,13 @@ impl App {
 
     fn resize(&mut self, area: Size) {
         self.area = area;
-        let width = layout::wrap_width(self.width_override, Some(area.width));
+        let width = layout::wrap_width(self.width_override, Some(self.body_width()));
         if width != self.width {
             self.width = width;
             self.relayout();
+            return;
         }
+        self.remap();
     }
 
     fn relayout(&mut self) {
@@ -780,6 +859,7 @@ impl App {
     fn rerender(&mut self, place: Place) {
         self.lines = layout::render(&self.blocks, &Ctx::new(&self.theme, &self.links), self.width);
         self.pulsed = self.pulse.as_ref().map_or_else(Vec::new, |pulse| pulse::marks(&pulse.changed, &self.lines));
+        self.remap();
         self.reoutline();
         if let Some(complaint) = complaint() {
             self.status = complaint;
@@ -887,6 +967,196 @@ mod tests {
     fn noted(height: u16) -> App {
         let source = format!("---\ntitle: Notes\ntags: [inbox]\ncreated: today\n---\n\n# Heading\n\n{}", numbered(40));
         app(&source, height)
+    }
+
+    fn mapped(height: u16) -> App {
+        let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), numbered(200));
+        App::new(document, Theme::default(), &Options { minimap: true, ..Options::default() }, Size::new(60, height))
+    }
+
+    const STRIP: u16 = 60 - minimap::CELLS;
+
+    #[test]
+    fn opening_the_minimap_narrows_the_body_and_closing_it_gives_the_columns_back() {
+        let mut app = mapped(20);
+        assert_eq!(app.width, 45, "60 columns less the strip and the margin");
+        assert!(!app.minimap.rows.is_empty());
+
+        app.apply(Action::ToggleMinimap);
+        assert!(!app.minimap_open);
+        assert_eq!(app.width, 59, "the whole terminal, less the margin");
+        assert!(app.minimap.rows.is_empty(), "a closed strip holds no map");
+
+        app.apply(Action::ToggleMinimap);
+        assert_eq!(app.width, 45);
+    }
+
+    #[test]
+    fn toggling_the_minimap_keeps_the_reading_position() {
+        let source =
+            (1..=20).map(|n| format!("paragraph {n} with enough words in it to wrap twice over\n\n")).collect::<String>();
+        let document = Document::new(Some(PathBuf::from("x.md")), PathBuf::from("."), source);
+        let mut app = App::new(document, Theme::default(), &Options { width: None, ..Options::default() }, Size::new(60, 14));
+
+        app.apply(Action::Move(Motion::Page(1)));
+        while app.lines[app.cursor].is_blank() {
+            app.apply(Action::Move(Motion::Line(1)));
+        }
+        let anchor = app.lines[app.cursor].source_line;
+        let laid_out = app.lines.len();
+        assert!(anchor > 1, "the test needs a cursor well into the document");
+
+        app.apply(Action::ToggleMinimap);
+        assert_ne!(app.lines.len(), laid_out, "the narrower body did not wrap the document again");
+        assert_eq!(app.lines[app.cursor].source_line, anchor, "the re-wrap moved the reader");
+
+        app.apply(Action::ToggleMinimap);
+        assert_eq!(app.lines.len(), laid_out);
+        assert_eq!(app.lines[app.cursor].source_line, anchor);
+    }
+
+    #[test]
+    fn a_pinned_width_the_strip_does_not_reach_leaves_the_document_alone() {
+        let mut app = app(&numbered(200), 20);
+        assert_eq!(app.width, 40);
+        let lines = app.lines.clone();
+
+        app.apply(Action::ToggleMinimap);
+
+        assert!(app.minimap_open);
+        assert_eq!(app.width, 40, "40 still fits beside the strip");
+        assert_eq!(app.lines, lines, "so nothing was laid out again");
+        assert!(!app.minimap.rows.is_empty(), "but the strip is drawn all the same");
+    }
+
+    #[test]
+    fn a_terminal_too_narrow_for_the_strip_reserves_nothing() {
+        let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), numbered(200));
+        let narrow = minimap::FLOOR - 1;
+        let app = App::new(document, Theme::default(), &Options { minimap: true, ..Options::default() }, Size::new(narrow, 20));
+
+        assert_eq!(app.width, usize::from(narrow) - 1, "the body keeps every column it had");
+        assert!(app.minimap_line(narrow - 1, CONTENT_TOP).is_none(), "and nothing is clickable");
+    }
+
+    #[test]
+    fn a_click_on_the_strip_jumps_to_the_lines_that_row_stands_for() {
+        let mut app = mapped(20);
+        let row = 6;
+
+        click(&mut app, STRIP + 2, CONTENT_TOP + row);
+
+        let expected = app.minimap.scale.line_at(usize::from(row));
+        assert_eq!(app.top, expected);
+        assert_eq!(app.cursor, expected);
+    }
+
+    #[test]
+    fn a_click_on_the_strip_is_one_step_back_in_the_history() {
+        let mut app = mapped(20);
+        let (cursor, top) = (app.cursor, app.top);
+
+        click(&mut app, STRIP + 2, CONTENT_TOP + 6);
+        assert_ne!(app.top, top, "the click went nowhere");
+
+        app.apply(Action::History { forward: false });
+        assert_eq!((app.cursor, app.top), (cursor, top));
+    }
+
+    #[test]
+    fn a_drag_down_the_strip_scrubs_and_remembers_only_where_it_started() {
+        let mut app = mapped(20);
+        let (cursor, top) = (app.cursor, app.top);
+
+        app.apply(Action::SelectStart { column: STRIP + 2, row: CONTENT_TOP + 2 });
+        app.apply(Action::SelectExtend { column: STRIP + 2, row: CONTENT_TOP + 6 });
+        app.apply(Action::SelectExtend { column: STRIP + 2, row: CONTENT_TOP + 10 });
+        app.apply(Action::SelectEnd { column: STRIP + 2, row: CONTENT_TOP + 10 });
+
+        assert_eq!(app.top, app.minimap.scale.line_at(10), "the scrub followed the pointer");
+        assert!(app.selection.is_none(), "a scrub is not a text selection");
+        assert!(app.copied.is_none(), "and copies nothing");
+
+        app.apply(Action::History { forward: false });
+        assert_eq!((app.cursor, app.top), (cursor, top));
+        app.apply(Action::History { forward: false });
+        assert_eq!((app.cursor, app.top), (cursor, top), "the drag pushed a second entry");
+    }
+
+    #[test]
+    fn the_strip_fills_the_rows_it_was_given() {
+        for count in [8, 17, 20, 60, 200] {
+            let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), numbered(count));
+            let app = App::new(document, Theme::default(), &Options { minimap: true, ..Options::default() }, Size::new(60, 20));
+            let wanted = app.viewport_height().min(app.lines.len());
+            assert_eq!(app.minimap.rows.len(), wanted, "{count} paragraphs left the strip part empty");
+        }
+    }
+
+    #[test]
+    fn a_press_anywhere_in_the_strip_scrubs_rather_than_selecting_the_body() {
+        let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), numbered(4));
+        let mut app = App::new(document, Theme::default(), &Options { minimap: true, ..Options::default() }, Size::new(60, 20));
+        assert!(app.minimap.rows.len() < app.viewport_height(), "the fixture needs rows the map does not reach");
+
+        let height = app.viewport_height() as u16;
+        for row in 0..height {
+            drag(&mut app, (STRIP + 2, CONTENT_TOP + row), (STRIP + 6, CONTENT_TOP + row + 1));
+            assert!(app.selection.is_none(), "row {row} of the strip painted a body selection");
+            assert!(app.copied.is_none(), "row {row} of the strip copied the body to the clipboard");
+        }
+    }
+
+    #[test]
+    fn a_scrub_past_the_foot_of_the_strip_stops_at_the_last_line() {
+        let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), numbered(4));
+        let mut app = App::new(document, Theme::default(), &Options { minimap: true, ..Options::default() }, Size::new(60, 20));
+
+        let foot = app.viewport_height() as u16 - 1;
+        click(&mut app, STRIP + 2, CONTENT_TOP + foot);
+
+        assert_eq!(app.cursor, app.lines.len() - 1, "the foot of the strip is not the foot of the document");
+    }
+
+    #[test]
+    fn a_scrub_that_has_ended_leaves_the_mouse_to_the_body_again() {
+        let mut app = mapped(20);
+        click(&mut app, STRIP + 2, CONTENT_TOP + 4);
+        assert!(!app.scrubbing, "the scrub never let go");
+
+        app.apply(Action::SelectExtend { column: 4, row: CONTENT_TOP });
+        assert!(app.selection.is_none(), "a stray drag was still routed to the strip");
+    }
+
+    #[test]
+    fn a_click_beside_the_strip_still_selects_text() {
+        let mut app = mapped(20);
+        drag(&mut app, (0, CONTENT_TOP), (4, CONTENT_TOP));
+
+        assert!(!app.scrubbing);
+        assert!(app.copied.is_some(), "the drag copied nothing");
+    }
+
+    #[test]
+    fn a_scrub_to_the_foot_of_the_document_leaves_the_cursor_on_screen() {
+        let mut app = mapped(20);
+
+        click(&mut app, STRIP + 2, CONTENT_TOP + 19);
+
+        let height = app.viewport_height();
+        assert!(app.cursor >= app.top && app.cursor < app.top + height, "cursor {} top {}", app.cursor, app.top);
+    }
+
+    #[test]
+    fn a_shorter_terminal_rescales_the_strip_without_relaying_the_document_out() {
+        let mut app = mapped(20);
+        let lines = app.lines.clone();
+        let rows = app.minimap.rows.len();
+
+        app.apply(Action::Resize(Size::new(60, 12)));
+
+        assert_eq!(app.lines, lines, "the width did not change, so nothing was laid out again");
+        assert!(app.minimap.rows.len() < rows, "but the strip did not shrink with the terminal");
     }
 
     #[test]

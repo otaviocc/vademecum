@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::render::line::RenderedLine;
 use crate::theme::Element;
 use crate::ui::app::{App, Mode, Status};
+use crate::ui::minimap as map;
 
 const HINTS: &str = "? help  t contents  / search  ⇥ link  ⏎ follow  h/l back/fwd  q quit";
 const TITLE_PREFIX: &str = "vademecum · ";
@@ -17,7 +18,7 @@ const HINT_GAP: usize = 2;
 const EDGE_PAD: u16 = 1;
 const HELP_WIDTH: (u32, u32) = (3, 5);
 const HELP_FLOOR: (u32, u32) = (4, 10);
-const HELP_CEILING: (u32, u32) = (9, 10);
+const HELP_CEILING: (u32, u32) = (19, 20);
 const MARK: &str = "▍";
 const CHEVRON: &str = "›";
 const CHEVRON_COLUMN: u16 = 2;
@@ -38,6 +39,7 @@ const HELP: &[(&str, &str)] = &[
     ("/", "Search (Enter confirms, Esc cancels)"),
     ("n / N", "Next / previous match"),
     ("t", "Table of contents (j/k moves, Enter or a click jumps, t closes)"),
+    ("m", "Minimap: the document's shape, clicked or dragged to jump"),
     ("p", "Properties (j/k moves, y copies the value, p closes)"),
     ("?", "Help overlay"),
     ("Esc", "Close overlay, leave visual mode, clear search highlight"),
@@ -60,11 +62,14 @@ impl Widget for Screen<'_> {
             [Constraint::Length(1), Constraint::Length(1), Constraint::Min(0), Constraint::Length(1), Constraint::Length(1)];
         let [header_row, top_rule, content_rows, bottom_rule, status_row] = Layout::vertical(rows).areas(area);
 
+        let [body_columns, strip] = minimap_split(content_rows, self.app);
+
         let hint = self.app.theme.style(Element::Hint);
         header(header_row, buf, self.app);
         rule(top_rule, buf, hint);
         progress(top_rule, buf, self.app);
-        content(content_rows, buf, self.app);
+        content(body_columns, buf, self.app);
+        minimap(strip, buf, self.app);
         rule(bottom_rule, buf, hint);
         statusbar(status_row, buf, self.app);
 
@@ -152,6 +157,46 @@ fn content(area: Rect, buf: &mut Buffer, app: &App) {
         selection(area, buf, y, app, index, line);
         mark(area, buf, y, app, index);
     }
+}
+
+fn minimap_split(area: Rect, app: &App) -> [Rect; 2] {
+    let reserved = map::reserved(area.width, app.minimap_open);
+    let [body, strip] = Layout::horizontal([Constraint::Min(0), Constraint::Length(reserved)]).areas(area);
+    [body, Rect { x: strip.x + map::GAP.min(strip.width), width: strip.width.saturating_sub(map::GAP), ..strip }]
+}
+
+fn minimap(area: Rect, buf: &mut Buffer, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let base = app.theme.style(Element::Minimap);
+    for (row, cells) in app.minimap.rows.iter().take(area.height as usize).enumerate() {
+        let y = area.y + row as u16;
+        for (column, cell) in cells.iter().take(area.width as usize).enumerate() {
+            let Some(shade) = cell.shade else { continue };
+            let style = match cell.color {
+                Some(color) => base.fg(color),
+                None => base,
+            };
+            buf.set_string(area.x + column as u16, y, shade.to_string(), style);
+        }
+    }
+
+    viewport(area, buf, app);
+}
+
+fn viewport(area: Rect, buf: &mut Buffer, app: &App) {
+    let last = app.lines.len().saturating_sub(1);
+    let bottom = (app.top + app.viewport_height() - 1).min(last);
+    let from = app.minimap.scale.row_of(app.top);
+    let to = app.minimap.scale.row_of(bottom);
+    let height = u16::try_from(to - from + 1).unwrap_or(u16::MAX).min(area.height.saturating_sub(from as u16));
+    let Ok(from) = u16::try_from(from) else { return };
+    if from >= area.height {
+        return;
+    }
+    buf.set_style(Rect::new(area.x, area.y + from, area.width, height), app.theme.style(Element::MinimapViewport));
 }
 
 fn mark(area: Rect, buf: &mut Buffer, y: u16, app: &App, index: usize) {
@@ -827,17 +872,131 @@ mod tests {
         let popup = help_area(area);
         assert_eq!(popup.width, 60);
         assert_eq!(popup.x, 20, "centred");
-        assert_eq!(popup.height, 21);
+        assert_eq!(popup.height, 22);
         assert_eq!(popup.y, 9, "centred");
     }
 
     #[test]
     fn the_overlay_is_clamped_rather_than_scrolled_on_a_short_terminal() {
         let popup = help_area(Rect::new(0, 0, 60, 12));
-        assert_eq!(popup.height, 10);
+        assert_eq!(popup.height, 11);
 
         let popup = help_area(Rect::new(0, 0, 60, 100));
         assert_eq!(popup.height, 40);
+    }
+
+    fn strip(size: Size, source: &str) -> App {
+        let document = Document::new(Some(PathBuf::from("notes/x.md")), PathBuf::from("notes"), source.to_string());
+        App::new(document, Theme::default(), &Options { minimap: true, ..Options::default() }, size)
+    }
+
+    fn flowing(count: usize) -> String {
+        (1..=count).map(|n| format!("paragraph {n} with enough words in it to wrap over a row or two\n\n")).collect()
+    }
+
+    fn banded(buffer: &Buffer, app: &App, size: Size) -> Vec<u16> {
+        let band = app.theme.style(Element::MinimapViewport).bg.expect("the band has a colour");
+        (CONTENT_TOP..size.height - 2).filter(|y| buffer[(size.width - 1, *y)].bg == band).collect()
+    }
+
+    #[test]
+    fn the_strip_paints_its_own_columns_and_the_body_reaches_none_of_them() {
+        let size = Size::new(60, 20);
+        let app = strip(size, &flowing(60));
+        let buffer = frame(&app, size);
+
+        let first = size.width - map::CELLS;
+        for y in CONTENT_TOP..size.height - 2 {
+            for x in first - map::GAP..first {
+                assert_eq!(buffer[(x, y)].symbol(), " ", "the gap is not blank on row {y}");
+            }
+        }
+
+        let shaded = (CONTENT_TOP..size.height - 2)
+            .flat_map(|y| (first..size.width).map(move |x| (x, y)))
+            .filter(|at| buffer[*at].symbol() != " ")
+            .count();
+        assert!(shaded > 0, "the strip drew nothing at all");
+    }
+
+    #[test]
+    fn closing_the_strip_gives_the_body_every_column_back() {
+        let size = Size::new(60, 20);
+        let plain = app(&flowing(60), size);
+        let mut open = strip(size, &flowing(60));
+        assert_ne!(row(&frame(&open, size), CONTENT_TOP), row(&frame(&plain, size), CONTENT_TOP));
+
+        open.apply(Action::ToggleMinimap);
+
+        for y in 0..size.height {
+            assert_eq!(raw(&frame(&open, size), y), raw(&frame(&plain, size), y), "row {y} did not come back");
+        }
+    }
+
+    #[test]
+    fn the_band_marks_the_top_of_the_strip_at_the_top_of_the_document() {
+        let size = Size::new(60, 20);
+        let app = strip(size, &flowing(200));
+        let rows = banded(&frame(&app, size), &app, size);
+
+        assert_eq!(rows.first(), Some(&CONTENT_TOP), "the band does not start at the top");
+        assert!(rows.len() < usize::from(size.height) - 4, "the band covers the whole strip");
+    }
+
+    #[test]
+    fn the_band_walks_down_the_strip_as_the_document_scrolls() {
+        let size = Size::new(60, 20);
+        let mut app = strip(size, &flowing(200));
+        let top = banded(&frame(&app, size), &app, size);
+
+        app.apply(Action::Move(Motion::Bottom));
+        let bottom = banded(&frame(&app, size), &app, size);
+
+        assert!(bottom.first() > top.first(), "{top:?} then {bottom:?}");
+        assert_eq!(bottom.last(), Some(&(size.height - 3)), "the band does not reach the foot of the strip");
+    }
+
+    #[test]
+    fn a_heading_carries_its_colour_into_the_strip_and_a_blank_run_carries_none() {
+        let size = Size::new(60, 20);
+        let app = strip(size, "# Heading\n\n\n\n\n\n");
+        let buffer = frame(&app, size);
+        let first = size.width - map::CELLS;
+
+        assert_eq!(buffer[(first, CONTENT_TOP)].fg, app.theme.style(Element::Heading1).fg.expect("a heading colour"));
+        assert_eq!(buffer[(first, CONTENT_TOP + 3)].symbol(), " ", "the blank rows shaded something");
+    }
+
+    #[test]
+    fn a_terminal_too_narrow_for_the_strip_draws_only_the_body() {
+        let size = Size::new(map::FLOOR - 1, 20);
+        let cramped = strip(size, &flowing(60));
+        let plain = app(&flowing(60), size);
+
+        assert!(cramped.minimap.rows.is_empty(), "a strip was built for a terminal with no room for one");
+        for y in 0..size.height {
+            assert_eq!(raw(&frame(&cramped, size), y), raw(&frame(&plain, size), y), "row {y} lost columns to the strip");
+        }
+    }
+
+    #[test]
+    fn a_terminal_too_small_for_the_strip_draws_what_it_can_and_does_not_panic() {
+        for height in 0..=8 {
+            for width in [0, 1, 2, 3, map::CELLS, map::FLOOR, 60] {
+                let size = Size::new(width, height);
+                let mut app = strip(size, &flowing(30));
+                frame(&app, size);
+
+                app.apply(Action::ToggleMinimap);
+                frame(&app, size);
+            }
+        }
+    }
+
+    #[test]
+    fn the_help_table_still_fits_the_terminal_the_pager_is_smoke_tested_at() {
+        let inner = Block::bordered().inner(help_area(Rect::new(0, 0, 80, 24)));
+        assert!(usize::from(inner.height) >= HELP.len(), "{} rows for {} bindings", inner.height, HELP.len());
     }
 
     #[test]
@@ -1194,7 +1353,7 @@ mod tests {
 
     #[test]
     fn the_help_overlay_lists_every_binding_the_readme_names() {
-        for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "v / V", "h / Backspace, l", "t", "p", "Left drag"] {
+        for key in ["Tab / Shift-Tab", "Enter", "o", "y / Y", "v / V", "h / Backspace, l", "t", "p", "m", "Left drag"] {
             assert!(HELP.iter().any(|(row, _)| *row == key), "{key} is not in the help table");
         }
     }
