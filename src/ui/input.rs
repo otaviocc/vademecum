@@ -27,6 +27,7 @@ pub enum Action {
     Resize(Size),
     ToggleHelp,
     ToggleToc,
+    ToggleMinimap,
     ToggleProperties,
     PropertiesMove(Motion),
     PropertiesScroll(isize),
@@ -114,6 +115,7 @@ fn browse(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         KeyCode::Char('t') => Some(Action::ToggleToc),
         KeyCode::Char('p') => Some(Action::ToggleProperties),
+        KeyCode::Char('m') => Some(Action::ToggleMinimap),
         KeyCode::Esc => Some(Action::Dismiss),
         KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
@@ -279,6 +281,17 @@ mod tests {
     }
 
     #[test]
+    fn a_press_in_the_minimap_columns_is_still_a_plain_selection_start() {
+        let press = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 70,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(browsing(&press), Some(Action::SelectStart { column: 70, row: 5 }), "the strip is the reducer's to find");
+    }
+
+    #[test]
     fn every_documented_key_maps_to_its_action() {
         let table = [
             (press(KeyCode::Char('j')), Action::Move(Motion::Line(1))),
@@ -313,6 +326,8 @@ mod tests {
             (press(KeyCode::Char('N')), Action::SearchStep { forward: false }),
             (press(KeyCode::Char('?')), Action::ToggleHelp),
             (press(KeyCode::Char('t')), Action::ToggleToc),
+            (press(KeyCode::Char('p')), Action::ToggleProperties),
+            (press(KeyCode::Char('m')), Action::ToggleMinimap),
             (press(KeyCode::Esc), Action::Dismiss),
             (press(KeyCode::Char('q')), Action::Quit),
             (control('c'), Action::Quit),

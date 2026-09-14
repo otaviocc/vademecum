@@ -50,6 +50,7 @@ fn main() -> Result<()> {
             theme,
             ui::Options {
                 mouse: !cli.no_mouse,
+                minimap: cli.minimap,
                 width: cli.width,
                 root: cli.root,
                 watch: cli.watch,
